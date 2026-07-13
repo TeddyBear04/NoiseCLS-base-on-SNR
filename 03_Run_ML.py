@@ -1,4 +1,4 @@
-"""
+﻿"""
 ML experiments runner with CatBoost and repeated group aware train and test splits
 
 What this script does
@@ -64,7 +64,7 @@ from catboost import CatBoostClassifier
 # =============================================================================
 
 # Must match step-2 outputs
-DATASET_NAME = "AR1"  # later: "ECG", "Lorenz", ...
+DATASET_NAME = "Real"  # "ECG", "Lorenz", "AR1", ...
 add = "ed10_td1_mc300"
 
 ML_TASKS_ROOT = "ML_tasks"
@@ -255,24 +255,13 @@ class TaskSpec:
 
 
 def get_tasks() -> List[TaskSpec]:
+    """Only Task 1 (6-class noise type classification) for Real dataset."""
     return [
         TaskSpec(
             task_key="task1_noise_type",
             csv_filename=f"task1_noise_type_{add}.csv",
             label_col="noise_label_task1",
             is_binary=False,
-        ),
-        TaskSpec(
-            task_key="task2_noise_type_intensity",
-            csv_filename=f"task2_noise_type_intensity_{add}.csv",
-            label_col="noise_label_task2",
-            is_binary=False,
-        ),
-        TaskSpec(
-            task_key="task3_noise_present",
-            csv_filename=f"task3_noise_present_{add}.csv",
-            label_col="noise_present",
-            is_binary=True,
         ),
     ]
 
@@ -494,11 +483,11 @@ def run_task_experiment(
     report_lines.append(f"Splits: {n_splits} (test_size={test_size})")
     report_lines.append(f"Runs: {df['signal_id'].nunique()} | Rows: {len(df)} | Features: {len(feature_cols)}")
     report_lines.append("")
-    report_lines.append("Metrics (mean ± std across splits)")
-    report_lines.append(f"  Accuracy : {agg_metrics['accuracy_mean']:.6f} ± {agg_metrics['accuracy_std']:.6f}")
-    report_lines.append(f"  Precision: {agg_metrics['precision_mean']:.6f} ± {agg_metrics['precision_std']:.6f}")
-    report_lines.append(f"  Recall   : {agg_metrics['recall_mean']:.6f} ± {agg_metrics['recall_std']:.6f}")
-    report_lines.append(f"  F1       : {agg_metrics['f1_mean']:.6f} ± {agg_metrics['f1_std']:.6f}")
+    report_lines.append("Metrics (mean Â± std across splits)")
+    report_lines.append(f"  Accuracy : {agg_metrics['accuracy_mean']:.6f} Â± {agg_metrics['accuracy_std']:.6f}")
+    report_lines.append(f"  Precision: {agg_metrics['precision_mean']:.6f} Â± {agg_metrics['precision_std']:.6f}")
+    report_lines.append(f"  Recall   : {agg_metrics['recall_mean']:.6f} Â± {agg_metrics['recall_std']:.6f}")
+    report_lines.append(f"  F1       : {agg_metrics['f1_mean']:.6f} Â± {agg_metrics['f1_std']:.6f}")
     report_lines.append("")
     report_lines.append("Labels order (confusion matrices):")
     report_lines.append("  " + ", ".join(str(x) for x in labels_all))

@@ -1,4 +1,4 @@
-"""
+﻿"""
 ML dataset construction (step 2)
 
 Loads step-1 generated runs (.npz + metadata/index.csv), slices each run into rolling windows
@@ -51,7 +51,7 @@ from metrics import *  # delay_embed, Fisher, PE, SampEn, LZ, etc.
 # Use-case selection (0..4)
 # 0: Roessler, 1: ECG, 2: Lorenz, 3: Henon, 4: AR1
 # -----------------------------
-USE_CASE = 4  # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+USE_CASE = 5  # 5 = Real-world noise dataset (6 environments)
 
 USE_CASES: Dict[int, Dict[str, str]] = {
     0: {
@@ -84,6 +84,12 @@ USE_CASES: Dict[int, Dict[str, str]] = {
         "folder_suffix": "_ar1_data",
         "file_prefix": "ar1",
     },
+    5: {
+        "name": "Real",
+        "data_base_folder": "Real_Noise_Exp",
+        "folder_suffix": "_real_data",
+        "file_prefix": "real",
+    },
 }
 
 if USE_CASE not in USE_CASES:
@@ -110,7 +116,7 @@ time_delay_DYN = 1
 memory_complexity = 300
 
 # Sliding-window step size (stride between successive window end indices)
-window_step = 100  # 30
+window_step = 300  # default 100, increased for speed on large real dataset
 
 # If you want to explicitly point to a specific dataset root folder, set it here.
 # Otherwise, the script auto-selects the latest dataset folder under DATA_BASE_FOLDER.
@@ -322,7 +328,7 @@ def build_full_feature_dataset(dataset_root: str) -> pd.DataFrame:
         # ONLY identifier used downstream
         signal_id = str(run_id)
 
-        print(f"[2/4] Entry {k}/{len(idx)}: run_id={run_id:04d} split={split} label={noise_type}_{noise_intensity}")
+        print(f"[2/4] Entry {k}/{len(idx)}: run_id={run_id:04d} split={split} label={noise_type} (Task 1: 6-class. SNR={noise_intensity:.2f}dB is metadata only)")
 
         t_eval, signal = load_signal_from_npz(dataset_root, rel_npz, split=split)
 
@@ -363,8 +369,8 @@ def write_task_datasets(full_df: pd.DataFrame, out_root: str, add_tag: str) -> N
     Writes:
       - full dataset
       - Task 1 dataset
-      - Task 2 dataset
-      - Task 3 dataset
+      - Task 2 dataset (skipped for USE_CASE == 5 / Real)
+      - Task 3 dataset (skipped for USE_CASE == 5 / Real)
     """
     paths = ensure_ml_dirs(out_root)
 
@@ -378,6 +384,11 @@ def write_task_datasets(full_df: pd.DataFrame, out_root: str, add_tag: str) -> N
     task1_path = os.path.join(paths["tasks"], f"task1_noise_type_{add_tag}.csv")
     print(f"Save Task 1 dataset: {task1_path}")
     task1.to_csv(task1_path, index=False)
+
+    # Task 2 and Task 3 are skipped for Real dataset
+    if USE_CASE == 5:
+        print("Skipping Task 2 and Task 3 (not applicable for real-world dataset)")
+        return
 
     # Task 2
     task2 = full_df.copy()
