@@ -1,0 +1,7 @@
+{
+  "train_config_path": "config/train_config.json",
+  "checkpoint_path": "checkpoint_36_labels_local_snr/Cnn14MobileV2LocalSNR/audio_best.pt",
+  "output_dir": "outputs/features",
+  "batch_size": 64,
+  "device": "cuda"
+}

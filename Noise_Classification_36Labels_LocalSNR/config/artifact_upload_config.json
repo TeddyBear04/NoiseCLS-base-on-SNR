@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "source_dir": "/marimo/Capstone_2026_Fish_Feeding_Intensity/Noise_Classification_36Labels_LocalSNR/checkpoint_36_labels_local_snr",
+  "zip_path": "/marimo/Noise_Classification_36Labels_LocalSNR_checkpoint.zip",
+  "repo_id": "",
+  "repo_type": "dataset",
+  "path_in_repo": "Noise_Classification_36Labels_LocalSNR_checkpoint.zip",
+  "create_repo": false
+}
