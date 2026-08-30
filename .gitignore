@@ -1,0 +1,21 @@
+# Model checkpoints / weights (qua lon cho GitHub)
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.h5
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+env/
+
+# Notebook
+.ipynb_checkpoints/
+
+# OS
+Thumbs.db
+.DS_Store
