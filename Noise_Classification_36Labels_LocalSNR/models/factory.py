@@ -43,4 +43,7 @@ def build_backbone(model_config: ModelConfig) -> BaseBackbone:
         kwargs["pretrained"] = model_config.pretrained
     elif model_config.pretrained:
         logger.warning("Backbone %s has no pretrained-weight implementation; ignoring pretrained=true", name)
-    return MODEL_REGISTRY[name](**kwargs)
+    backbone = MODEL_REGISTRY[name](**kwargs)
+    if int(getattr(backbone, "feature_channels", 0)) <= 0:
+        raise ValueError(f"Backbone {name!r} does not implement the Local SNR feature contract")
+    return backbone

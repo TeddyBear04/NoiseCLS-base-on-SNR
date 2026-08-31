@@ -63,6 +63,7 @@ class PANNS_Cnn14(BaseBackbone):
     def __init__(self, classes_num: int = 4) -> None:
         super(PANNS_Cnn14, self).__init__()
         self.model_name = "panns_cnn14"
+        self.feature_channels = 2048
         self.conv_block1 = ConvBlock(in_channels=1, out_channels=64)
         self.conv_block2 = ConvBlock(in_channels=64, out_channels=128)
         self.conv_block3 = ConvBlock(in_channels=128, out_channels=256)
@@ -76,7 +77,7 @@ class PANNS_Cnn14(BaseBackbone):
         init_layer(self.fc_audioset)
         init_layer(self.fc1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward_feature_map(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv_block1(x, pool_size=(2, 2), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)
         x = self.conv_block2(x, pool_size=(2, 2), pool_type='avg')
@@ -85,19 +86,19 @@ class PANNS_Cnn14(BaseBackbone):
         x = F.dropout(x, p=0.2, training=self.training)
         x = self.conv_block4(x, pool_size=(2, 2), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)
-        x = self.conv_block5(x, pool_size=(2, 2), pool_type='avg')
+        x = self.conv_block5(x, pool_size=(1, 2), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)
-        x = self.conv_block6(x, pool_size=(2, 2), pool_type='avg')
+        x = self.conv_block6(x, pool_size=(1, 2), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)
-        
-        x = torch.mean(x, dim=3)
-        (x1, _) = torch.max(x, dim=2)
-        x2 = torch.mean(x, dim=2)
-        x = x1 + x2
-        
+        return x
+
+    def classify_temporal(self, temporal: torch.Tensor) -> torch.Tensor:
+        x = self.pool_temporal(temporal)
         x = F.dropout(x, p=0.2, training=self.training)
         x = F.relu_(self.fc1(x))
         x = F.dropout(x, p=0.2, training=self.training)
-        clipwise_output = self.fc_audioset(x)
-        
-        return clipwise_output
+        return self.fc_audioset(x)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feature_map = self.forward_feature_map(x)
+        return self.classify_temporal(self.temporal_features(feature_map))

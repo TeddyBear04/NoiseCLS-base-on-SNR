@@ -34,6 +34,44 @@ total_loss = multi_label_BCE + local_snr.loss_weight * masked_SNR_loss
 Local-SNR targets are normalized only inside the regression loss. All reported
 metrics and inference CSV values remain in dB.
 
+## Supported backbones
+
+Every model in the registry now implements the same time-resolved contract and
+can be selected through `model.backbone`:
+
+```text
+Cnn14MobileV2
+Cnn14MobileV2LocalSNR          # recommended default
+Cnn14MobileV2_1P9M
+MobileNetV1
+MobileNetV2
+ResNet22
+EfficientNetB0
+PANNS_Cnn6
+PANNS_Cnn10
+PANNS_Cnn14
+```
+
+For example:
+
+```json
+"model": {
+  "backbone": "ResNet22",
+  "pretrained": false,
+  "classes_num": 36
+}
+```
+
+The LocalSNR versions preserve time in the final downsampling stage, while
+still reducing frequency. On a four-second input, the adapted backbones retain
+about 25 time steps before alignment to the 15 configured SNR segments. Each
+backbone writes to its own checkpoint subdirectory, so changing the backbone
+does not overwrite another model.
+
+Checkpoints from the classification-only project should not be treated as
+equivalent baselines: the LocalSNR variants change late-stage temporal stride
+and add an SNR head. Train a new checkpoint for each selected backbone.
+
 ## Expected dataset layout
 
 ```text
@@ -198,8 +236,17 @@ the uncovered count is logged rather than silently dropping them.
 - `num_workers`: `-1` auto-selects up to eight workers. Use `0` if the Marimo
   runtime has multiprocessing issues.
 - `cache_audio`: keep `false` for a dataset of this size.
+- `cross_pairing_enabled`: remix every train item from its own noise stem and a
+  clean utterance drawn from anywhere in the split, so the manifest's fixed
+  clean/noise pairing is never replayed. Labels follow the noise stem. Turn it
+  off to reproduce the old fixed-pairing behaviour. Validation and test always
+  replay the stored mixtures and ignore this knob.
+- `noise_time_shift_enabled`: roll the noise stem against the clean stem so
+  onset positions stop lining up.
 - `dynamic_snr_enabled`: enables clean/noise on-the-fly mixing.
 - `dynamic_snr_probability`: fraction of train crops receiving dynamic SNR.
+  Only consulted when `cross_pairing_enabled` is off; cross-paired training
+  remixes every item.
 - `local_snr.segment_seconds` / `segment_hop_seconds`: SNR target resolution.
 - `local_snr.speech_activity_db_below_peak`: clean-energy mask threshold.
 - `local_snr.loss`: `huber` (default) or `mse`.
@@ -217,6 +264,8 @@ the uncovered count is logged rather than silently dropping them.
   Avoid `subset_accuracy` here: it stays flat at 0.0 early in training, so
   early stopping would fire before the model learns anything.
 - `profile_model`: disabled by default because FLOP profiling adds startup time.
+- `model.backbone`: choose any name listed in **Supported backbones**. Keep
+  `Cnn14MobileV2LocalSNR` as the default baseline.
 
 The manifest stores weak clip-level labels, not event timestamps. Per-window
 outputs therefore indicate model confidence over time but are not supervised

@@ -25,10 +25,18 @@ class InvertedResidual(nn.Module):
     Downsampling follows the original PANNs implementation: the depthwise
     convolution uses stride 1 and AvgPool2d performs spatial reduction.
     """
-    def __init__(self, inp: int, oup: int, stride: int, expand_ratio: int) -> None:
+    def __init__(
+        self,
+        inp: int,
+        oup: int,
+        stride: int | tuple[int, int],
+        expand_ratio: int,
+    ) -> None:
         super(InvertedResidual, self).__init__()
-        if stride not in [1, 2]:
-            raise ValueError(f"MobileNetV2 stride must be 1 or 2, got {stride}.")
+        if stride not in [1, 2, (1, 2)]:
+            raise ValueError(
+                f"MobileNetV2 stride must be 1, 2, or frequency-only (1, 2); got {stride}."
+            )
 
         hidden_dim = round(inp * expand_ratio)
         self.use_res_connect = stride == 1 and inp == oup
@@ -93,7 +101,8 @@ class MobileNetV2(BaseBackbone):
             [6, 24, 2, 2],
             [6, 32, 3, 2],
             [6, 64, 4, 2],
-            [6, 96, 3, 2],
+            # Preserve time in the final spatial reduction.
+            [6, 96, 3, (1, 2)],
             [6, 160, 3, 1],
             [6, 320, 1, 1],
         ]
@@ -121,6 +130,7 @@ class MobileNetV2(BaseBackbone):
 
         input_channel = int(input_channel * width_mult)
         self.last_channel = int(last_channel * width_mult) if width_mult > 1.0 else last_channel
+        self.feature_channels = self.last_channel
 
         features = [conv_bn(1, input_channel, 2)]
         for expand_ratio, channels, num_blocks, stride in inverted_residual_setting:
@@ -141,13 +151,14 @@ class MobileNetV2(BaseBackbone):
         init_layer(self.fc1)
         init_layer(self.fc_audioset)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.features(x)
-        x = torch.mean(x, dim=3)
+    def forward_feature_map(self, x: torch.Tensor) -> torch.Tensor:
+        return self.features(x)
 
-        x1, _ = torch.max(x, dim=2)
-        x2 = torch.mean(x, dim=2)
-        x = x1 + x2
-
+    def classify_temporal(self, temporal: torch.Tensor) -> torch.Tensor:
+        x = self.pool_temporal(temporal)
         x = F.relu_(self.fc1(x))
         return self.fc_audioset(x)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feature_map = self.forward_feature_map(x)
+        return self.classify_temporal(self.temporal_features(feature_map))

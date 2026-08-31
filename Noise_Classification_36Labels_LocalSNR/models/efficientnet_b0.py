@@ -20,6 +20,7 @@ class EfficientNetB0(BaseBackbone):
     ) -> None:
         super(EfficientNetB0, self).__init__()
         self.model_name = "efficientnet_b0"
+        self.feature_channels = 1280
 
         try:
             from torchvision.models import EfficientNet_B0_Weights, efficientnet_b0
@@ -34,6 +35,7 @@ class EfficientNetB0(BaseBackbone):
 
         self.features = model.features
         self._replace_first_conv(pretrained=pretrained)
+        self._preserve_final_time_resolution()
         self.dropout = nn.Dropout(p=dropout)
         self.fc_audioset = nn.Linear(1280, classes_num, bias=True)
 
@@ -73,15 +75,25 @@ class EfficientNetB0(BaseBackbone):
 
         self.features[0][0] = new_conv
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.features(x)
+    def _preserve_final_time_resolution(self) -> None:
+        """Change the final 2-D downsampling conv to frequency-only stride."""
+        stride_convs = [
+            module
+            for module in self.features.modules()
+            if isinstance(module, nn.Conv2d) and tuple(module.stride) == (2, 2)
+        ]
+        if not stride_convs:
+            raise RuntimeError("EfficientNet-B0 has no stride-2 convolution to adapt")
+        stride_convs[-1].stride = (1, 2)
 
-        # PANNs-style temporal aggregation: collapse frequency, then combine
-        # max and mean statistics across time.
-        x = torch.mean(x, dim=3)
-        x1, _ = torch.max(x, dim=2)
-        x2 = torch.mean(x, dim=2)
-        x = x1 + x2
+    def forward_feature_map(self, x: torch.Tensor) -> torch.Tensor:
+        return self.features(x)
 
+    def classify_temporal(self, temporal: torch.Tensor) -> torch.Tensor:
+        x = self.pool_temporal(temporal)
         x = self.dropout(x)
         return self.fc_audioset(x)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feature_map = self.forward_feature_map(x)
+        return self.classify_temporal(self.temporal_features(feature_map))

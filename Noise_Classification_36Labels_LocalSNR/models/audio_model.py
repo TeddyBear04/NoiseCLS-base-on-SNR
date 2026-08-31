@@ -84,9 +84,10 @@ class LocalSNRAudioModel(nn.Module):
         segment_count: int,
     ) -> None:
         super().__init__()
-        if not hasattr(backbone, "forward_feature_map") or not hasattr(backbone, "temporal_features"):
+        channels = int(getattr(backbone, "feature_channels", 0))
+        if channels <= 0:
             raise ValueError(
-                "Local SNR requires Cnn14MobileV2LocalSNR or another time-resolved backbone"
+                f"{backbone.__class__.__name__} does not declare time-resolved feature_channels"
             )
         if segment_count <= 0:
             raise ValueError("segment_count must be positive")
@@ -94,7 +95,6 @@ class LocalSNRAudioModel(nn.Module):
         self.backbone = backbone
         self.local_snr_config = local_snr_config
         self.segment_count = segment_count
-        channels = int(getattr(backbone, "feature_channels"))
         self.snr_head = nn.Sequential(
             nn.Linear(channels, local_snr_config.hidden_dim),
             nn.ReLU(),

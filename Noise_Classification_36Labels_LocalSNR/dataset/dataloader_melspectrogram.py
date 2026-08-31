@@ -203,6 +203,13 @@ def fixed_window(waveform: torch.Tensor, start: int, length: int) -> torch.Tenso
     return segment
 
 
+def circular_shift(waveform: torch.Tensor, shift: int) -> torch.Tensor:
+    """Roll a waveform in time, keeping its length and total energy."""
+    if waveform.numel() == 0:
+        return waveform
+    return torch.roll(waveform, shifts=int(shift) % waveform.numel(), dims=0)
+
+
 def sliding_window_starts(total_samples: int, window_samples: int, hop_samples: int) -> List[int]:
     if total_samples <= window_samples:
         return [0]
@@ -294,7 +301,13 @@ def mix_with_dynamic_snr(
 
 
 class NoiseManifestDataset(Dataset):
-    """One random crop per train clip; deterministic sliding windows for val/test."""
+    """Cross-paired remixes for train; deterministic sliding windows for val/test.
+
+    Train items take their noise stem (and therefore their label) from the indexed
+    record and their clean stem from anywhere in the split, so the fixed clean/noise
+    pairing baked into the manifest is never seen twice. Val and test always replay
+    the stored mixtures.
+    """
 
     def __init__(
         self,
@@ -368,22 +381,41 @@ class NoiseManifestDataset(Dataset):
             return 0
         return int(torch.randint(0, max_start + 1, (1,)).item())
 
+    def _draw_clean_record(self) -> ManifestRecord:
+        """Any clean utterance in the split; the label rides on the noise stem."""
+        if len(self.records) == 1:
+            return self.records[0]
+        return self.records[random.randrange(len(self.records))]
+
     def __getitem__(self, index: int) -> Dict[str, object]:
         record_index, predefined_start = self.index[index]
         record = self.records[record_index]
-        use_dynamic_snr = (
+        cross_paired = self.training and self.dataset_config.cross_pairing_enabled
+        use_dynamic_snr = cross_paired or (
             self.training
             and self.dataset_config.dynamic_snr_enabled
             and random.random() < self.dataset_config.dynamic_snr_probability
         )
+        clean_record = record
 
         if use_dynamic_snr:
-            clean = self._load(record.clean_path)
             noise = self._load(record.noise_path)
-            total_samples = min(clean.numel(), noise.numel())
-            start = self._choose_train_start(total_samples)
-            clean_window = fixed_window(clean, start, self.clip_samples)
+            if cross_paired:
+                clean_record = self._draw_clean_record()
+                clean = self._load(clean_record.clean_path)
+                # Independent offsets: the two stems no longer share a timeline.
+                start = self._choose_train_start(noise.numel())
+                clean_start = self._choose_train_start(clean.numel())
+            else:
+                clean = self._load(record.clean_path)
+                start = self._choose_train_start(min(clean.numel(), noise.numel()))
+                clean_start = start
+            clean_window = fixed_window(clean, clean_start, self.clip_samples)
             noise_window = fixed_window(noise, start, self.clip_samples)
+            if self.training and self.dataset_config.noise_time_shift_enabled:
+                noise_window = circular_shift(
+                    noise_window, random.randrange(max(1, noise_window.numel()))
+                )
             waveform, clean_component, noise_component = mix_with_dynamic_snr(
                 clean_window,
                 noise_window,
@@ -405,10 +437,12 @@ class NoiseManifestDataset(Dataset):
             self.audio_config.sample_rate,
             self.local_snr_config,
         )
+        # Times are relative to the noise stem, the only source the label refers to.
         local_centers = local_centers + start / self.audio_config.sample_rate
 
         return {
             "audio_name": record.sample_id,
+            "clean_sample_id": clean_record.sample_id,
             "waveform": waveform,
             "target": torch.tensor(record.target, dtype=torch.float32),
             "target_snr_db": torch.tensor(record.target_snr_db, dtype=torch.float32),

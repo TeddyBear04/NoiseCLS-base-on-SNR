@@ -107,6 +107,7 @@ class Cnn14MobileV2_1P9M(BaseBackbone):
     def __init__(self, classes_num: int = 4) -> None:
         super(Cnn14MobileV2_1P9M, self).__init__()
         self.model_name = "cnn14_mobilev2_1p9m"
+        self.feature_channels = 512
 
         self.conv_block1 = Mobilev2Block(in_channels=1, out_channels=16)
         self.conv_block2 = Mobilev2Block(in_channels=16, out_channels=32)
@@ -125,7 +126,7 @@ class Cnn14MobileV2_1P9M(BaseBackbone):
         init_layer(self.fc1)
         init_layer(self.fc_audioset)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward_feature_map(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv_block1(x, pool_size=(2, 2))
         x = F.dropout(x, p=0.2, training=self.training)
         x = self.conv_block2(x, pool_size=(2, 2))
@@ -134,17 +135,19 @@ class Cnn14MobileV2_1P9M(BaseBackbone):
         x = F.dropout(x, p=0.2, training=self.training)
         x = self.conv_block4(x, pool_size=(2, 2))
         x = F.dropout(x, p=0.2, training=self.training)
-        x = self.conv_block5(x, pool_size=(2, 2))
+        x = self.conv_block5(x, pool_size=(1, 2))
         x = F.dropout(x, p=0.2, training=self.training)
-        x = self.conv_block6(x, pool_size=(2, 2))
+        x = self.conv_block6(x, pool_size=(1, 2))
         x = F.dropout(x, p=0.2, training=self.training)
+        return x
 
-        x = torch.mean(x, dim=3)
-        x1, _ = torch.max(x, dim=2)
-        x2 = torch.mean(x, dim=2)
-        x = x1 + x2
-
+    def classify_temporal(self, temporal: torch.Tensor) -> torch.Tensor:
+        x = self.pool_temporal(temporal)
         x = F.dropout(x, p=0.5, training=self.training)
         x = self.gelu(self.fc1(x))
         x = F.dropout(x, p=0.2, training=self.training)
         return self.fc_audioset(x)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feature_map = self.forward_feature_map(x)
+        return self.classify_temporal(self.temporal_features(feature_map))

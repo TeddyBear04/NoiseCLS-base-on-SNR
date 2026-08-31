@@ -212,6 +212,7 @@ class ResNet22(BaseBackbone):
     def __init__(self, classes_num: int = 4) -> None:
         super(ResNet22, self).__init__()
         self.model_name = "resnet22"
+        self.feature_channels = 2048
 
         self.conv_block1 = ConvBlock(in_channels=1, out_channels=64)
         self.resnet = _ResNet(block=_ResnetBasicBlock, layers=[2, 2, 2, 2])
@@ -225,21 +226,24 @@ class ResNet22(BaseBackbone):
         init_layer(self.fc1)
         init_layer(self.fc_audioset)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward_feature_map(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv_block1(x, pool_size=(2, 2))
         x = F.dropout(x, p=0.2, training=self.training)
         x = self.resnet(x)
-        x = F.avg_pool2d(x, kernel_size=(2, 2))
+        # Preserve time in the last standalone reduction.
+        x = F.avg_pool2d(x, kernel_size=(1, 2))
         x = F.dropout(x, p=0.2, training=self.training)
         x = self.conv_block_after1(x, pool_size=(1, 1))
         x = F.dropout(x, p=0.2, training=self.training)
+        return x
 
-        x = torch.mean(x, dim=3)
-        x1, _ = torch.max(x, dim=2)
-        x2 = torch.mean(x, dim=2)
-        x = x1 + x2
-
+    def classify_temporal(self, temporal: torch.Tensor) -> torch.Tensor:
+        x = self.pool_temporal(temporal)
         x = F.dropout(x, p=0.2, training=self.training)
         x = F.relu_(self.fc1(x))
         x = F.dropout(x, p=0.2, training=self.training)
         return self.fc_audioset(x)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feature_map = self.forward_feature_map(x)
+        return self.classify_temporal(self.temporal_features(feature_map))

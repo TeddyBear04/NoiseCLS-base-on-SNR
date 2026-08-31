@@ -123,6 +123,14 @@ class SplitterConfig(BaseModel):
     dynamic_snr_max_db: float = 20.0
     dynamic_snr_control_seconds: float = Field(default=0.5, gt=0.0)
 
+    # Train items are remixed from this record's noise stem and a clean utterance drawn
+    # from anywhere in the split, breaking the fixed clean/noise pairing baked into the
+    # manifest. Every train item is remixed when this is on, so dynamic_snr_probability
+    # only applies when it is off. Labels always follow the noise stem.
+    cross_pairing_enabled: bool = True
+    # Roll the noise stem against the clean stem so onset positions stop lining up.
+    noise_time_shift_enabled: bool = True
+
     @model_validator(mode="after")
     def validate_dataset_settings(self) -> "SplitterConfig":
         if not self.use_predefined_splits:

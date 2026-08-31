@@ -28,6 +28,7 @@ class MobileNetV1(BaseBackbone):
     def __init__(self, classes_num: int = 4) -> None:
         super(MobileNetV1, self).__init__()
         self.model_name = "mobilenet_v1"
+        self.feature_channels = 1024
 
         def conv_bn(inp: int, oup: int, stride: int) -> nn.Sequential:
             layers = [
@@ -40,7 +41,9 @@ class MobileNetV1(BaseBackbone):
             init_bn(layers[2])
             return nn.Sequential(*layers)
 
-        def conv_dw(inp: int, oup: int, stride: int) -> nn.Sequential:
+        def conv_dw(
+            inp: int, oup: int, stride: int | tuple[int, int]
+        ) -> nn.Sequential:
             layers = [
                 nn.Conv2d(inp, inp, 3, 1, 1, groups=inp, bias=False),
                 nn.AvgPool2d(stride),
@@ -69,7 +72,8 @@ class MobileNetV1(BaseBackbone):
             conv_dw(512, 512, 1),
             conv_dw(512, 512, 1),
             conv_dw(512, 512, 1),
-            conv_dw(512, 1024, 2),
+            # Preserve time in the last reduction; still reduce frequency.
+            conv_dw(512, 1024, (1, 2)),
             conv_dw(1024, 1024, 1),
         )
 
@@ -82,14 +86,15 @@ class MobileNetV1(BaseBackbone):
         init_layer(self.fc1)
         init_layer(self.fc_audioset)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.features(x)
-        x = torch.mean(x, dim=3)
+    def forward_feature_map(self, x: torch.Tensor) -> torch.Tensor:
+        return self.features(x)
 
-        x1, _ = torch.max(x, dim=2)
-        x2 = torch.mean(x, dim=2)
-        x = x1 + x2
-
+    def classify_temporal(self, temporal: torch.Tensor) -> torch.Tensor:
+        x = self.pool_temporal(temporal)
         x = F.dropout(x, p=0.5, training=self.training)
         x = F.relu_(self.fc1(x))
         return self.fc_audioset(x)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feature_map = self.forward_feature_map(x)
+        return self.classify_temporal(self.temporal_features(feature_map))

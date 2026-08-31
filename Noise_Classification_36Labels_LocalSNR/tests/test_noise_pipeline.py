@@ -1,4 +1,5 @@
 import csv
+import gc
 import json
 import sys
 import tempfile
@@ -13,16 +14,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import AudioFeaturesConfig, LocalSNRConfig, SplitterConfig
+from config import AudioFeaturesConfig, LocalSNRConfig, ModelConfig, SplitterConfig
 from dataset import (
     NoiseDataLoaderManager,
+    circular_shift,
     compute_local_snr_targets,
     local_snr_segment_starts,
     mix_with_dynamic_snr,
     sliding_window_starts,
 )
 from features import AudioFrontend
-from models import Cnn14MobileV2LocalSNR, LocalSNRAudioModel
+from models import (
+    MODEL_REGISTRY,
+    Cnn14MobileV2LocalSNR,
+    LocalSNRAudioModel,
+    build_backbone,
+)
 from utils import MultiTaskNoiseSNRLoss
 from utils.evaluate import aggregate_windows, compute_local_snr_metrics, compute_multilabel_metrics
 
@@ -213,6 +220,80 @@ class ManifestLoaderTest(unittest.TestCase):
             )
 
 
+class CrossPairingTest(unittest.TestCase):
+    """Train items must remix a random clean utterance onto this record's noise stem."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        build_multi_hot_dataset(self.root)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def _manager(self, **overrides: object) -> NoiseDataLoaderManager:
+        return NoiseDataLoaderManager(
+            SplitterConfig(dataset_path=str(self.root), **overrides),
+            AUDIO_CONFIG,
+            batch_size=2,
+            num_workers=0,
+            cache_audio=False,
+            pin_memory=False,
+            classes_num=3,
+        )
+
+    def test_cross_pairing_draws_clean_from_the_whole_split(self) -> None:
+        train = self._manager(cross_pairing_enabled=True).datasets["train"]
+        drawn = {train[0]["clean_sample_id"] for _ in range(40)}
+        self.assertGreater(len(drawn), 1)
+        self.assertTrue(drawn.issubset({record.sample_id for record in train.records}))
+
+    def test_cross_pairing_keeps_the_noise_label_of_its_own_record(self) -> None:
+        train = self._manager(cross_pairing_enabled=True).datasets["train"]
+        own_target = train.records[0].target
+        for _ in range(20):
+            item = train[0]
+            self.assertEqual(tuple(item["target"].tolist()), own_target)
+            self.assertEqual(item["audio_name"], train.records[0].sample_id)
+
+    def test_cross_pairing_disabled_keeps_the_recorded_pairing(self) -> None:
+        train = self._manager(cross_pairing_enabled=False).datasets["train"]
+        for _ in range(20):
+            self.assertEqual(train[0]["clean_sample_id"], train.records[0].sample_id)
+
+    def test_validation_is_unaffected_and_deterministic(self) -> None:
+        manager = self._manager(cross_pairing_enabled=True, noise_time_shift_enabled=True)
+        val = manager.datasets["val"]
+        first, second = val[0], val[0]
+        self.assertEqual(first["clean_sample_id"], val.records[0].sample_id)
+        self.assertTrue(torch.equal(first["waveform"], second["waveform"]))
+        self.assertTrue(torch.equal(first["local_snr_db"], second["local_snr_db"]))
+        self.assertFalse(bool(first["dynamic_snr"]))
+
+    def test_cross_paired_items_keep_the_local_snr_contract(self) -> None:
+        train = self._manager(cross_pairing_enabled=True).datasets["train"]
+        expected = len(local_snr_segment_starts(16_000, 16_000, LocalSNRConfig()))
+        for _ in range(10):
+            item = train[0]
+            self.assertEqual(tuple(item["waveform"].shape), (16_000,))
+            self.assertEqual(tuple(item["local_snr_db"].shape), (expected,))
+            self.assertEqual(tuple(item["local_snr_mask"].shape), (expected,))
+            self.assertTrue(bool(torch.isfinite(item["waveform"]).all()))
+            self.assertTrue(bool(torch.isfinite(item["local_snr_db"]).all()))
+            self.assertTrue(bool(item["dynamic_snr"]))
+
+
+class CircularShiftTest(unittest.TestCase):
+    def test_shift_rotates_without_losing_energy(self) -> None:
+        waveform = torch.tensor([1.0, 2.0, 3.0, 4.0])
+        self.assertTrue(torch.equal(circular_shift(waveform, 1), torch.tensor([4.0, 1.0, 2.0, 3.0])))
+        self.assertTrue(torch.equal(circular_shift(waveform, 0), waveform))
+        self.assertTrue(torch.equal(circular_shift(waveform, 4), waveform))
+        self.assertAlmostEqual(
+            float(circular_shift(waveform, 3).square().sum()), float(waveform.square().sum())
+        )
+
+
 class WindowingAndMetricsTest(unittest.TestCase):
     def test_windowing_and_multilabel_metrics(self) -> None:
         self.assertEqual(sliding_window_starts(25, 10, 6), [0, 6, 12, 15])
@@ -283,6 +364,25 @@ class WindowingAndMetricsTest(unittest.TestCase):
             np.ones((2, segment_count), dtype=bool),
         )
         self.assertAlmostEqual(metrics["local_snr_mae_db"], 1.0)
+
+    def test_all_registered_backbones_support_local_snr(self) -> None:
+        local_config = LocalSNRConfig(hidden_dim=16, dropout=0.0)
+        spectrogram = torch.randn(1, 1, 64, 64)
+        for name in MODEL_REGISTRY:
+            with self.subTest(backbone=name):
+                backbone = build_backbone(
+                    ModelConfig(backbone=name, classes_num=3, pretrained=False)
+                )
+                model = LocalSNRAudioModel(
+                    torch.nn.Identity(), backbone, local_config, segment_count=3
+                ).eval()
+                with torch.no_grad():
+                    output = model(spectrogram)
+                self.assertEqual(tuple(output["clipwise_output"].shape), (1, 3))
+                self.assertEqual(tuple(output["local_snr_db"].shape), (1, 3))
+                self.assertEqual(output["segment_features"].shape[-1], backbone.feature_channels)
+                del output, model, backbone
+                gc.collect()
 
 
 if __name__ == "__main__":
