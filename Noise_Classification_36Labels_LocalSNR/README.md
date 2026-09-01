@@ -242,7 +242,28 @@ the uncovered count is logged rather than silently dropping them.
   off to reproduce the old fixed-pairing behaviour. Validation and test always
   replay the stored mixtures and ignore this knob.
 - `noise_time_shift_enabled`: roll the noise stem against the clean stem so
-  onset positions stop lining up.
+  onset positions stop lining up. On its own this is a weak augmentation: a
+  rolled clip moves the pooled mel statistics a global-pooled backbone sees by
+  about 0.05 dB, so it barely slows memorisation of individual stems.
+- `noise_speed_perturb` / `noise_eq_enabled`: resample the noise stem by up to
+  this fraction and tilt its spectrum. These move the pooled mel statistics by
+  roughly 3.5 dB, some seventy times more than rolling alone, and they are what
+  actually stops the classifier memorising the finite set of noise stems. There
+  is deliberately no gain knob: mixing renormalises the stem to hit the target
+  SNR, so any level applied beforehand is divided straight back out.
+- `classification_loss`: `ce` (default) treats the clip as single-label, trains
+  with softmax cross-entropy and decides by argmax. `bce` restores the old
+  multi-label thresholding. Note that argmax alone is not a free win - scored on
+  a BCE-trained checkpoint it raised macro recall from 0.293 to 0.343 but cut
+  macro precision from 0.509 to 0.380, leaving macro-F1 slightly worse.
+- `label_smoothing`: softens the one-hot target, default `0.05`.
+- `mixup_alpha`: Beta parameter for batch mixup, default `0.3`; `0` disables it.
+  Mixup is the main regulariser here, and it needs the soft targets that
+  `classification_loss` accepts.
+- `scheduler` / `min_learning_rate`: cosine decay from `learning_rate` down to
+  `min_learning_rate` across `epochs`.
+- `top1_accuracy`: reported in `history.csv` and `summary.json`. Prefer it and
+  `mAP` over `hamming_accuracy`, which a predict-nothing model scores 35/36 on.
 - `dynamic_snr_enabled`: enables clean/noise on-the-fly mixing.
 - `dynamic_snr_probability`: fraction of train crops receiving dynamic SNR.
   Only consulted when `cross_pairing_enabled` is off; cross-paired training

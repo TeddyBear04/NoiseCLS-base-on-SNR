@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from config import AudioFeaturesConfig, LocalSNRConfig, ModelConfig, SplitterConfig
 from dataset import (
     NoiseDataLoaderManager,
+    augment_noise_stem,
     circular_shift,
     compute_local_snr_targets,
     local_snr_segment_starts,
@@ -30,8 +31,12 @@ from models import (
     LocalSNRAudioModel,
     build_backbone,
 )
-from utils import MultiTaskNoiseSNRLoss
-from utils.evaluate import aggregate_windows, compute_local_snr_metrics, compute_multilabel_metrics
+from utils import MultiTaskNoiseSNRLoss, SingleLabelCELoss, mixup_batch
+from utils.evaluate import (
+    aggregate_windows,
+    compute_local_snr_metrics,
+    compute_multilabel_metrics,
+)
 
 # Both fixtures describe the same three labels and the same two clips per split;
 # only the on-disk encoding differs.
@@ -292,6 +297,112 @@ class CircularShiftTest(unittest.TestCase):
         self.assertAlmostEqual(
             float(circular_shift(waveform, 3).square().sum()), float(waveform.square().sum())
         )
+
+
+class SingleLabelLossTest(unittest.TestCase):
+    def test_cross_entropy_beats_bce_at_ranking_one_hot_targets(self) -> None:
+        loss_fn = SingleLabelCELoss()
+        logits = torch.tensor([[5.0, 0.0, 0.0], [0.0, 5.0, 0.0]])
+        target = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        confident = loss_fn({"clipwise_output": logits}, {"target": target})
+        wrong = loss_fn({"clipwise_output": logits.flip(1)}, {"target": target})
+        self.assertLess(float(confident), float(wrong))
+        self.assertGreater(float(confident), 0.0)
+
+    def test_label_smoothing_raises_the_floor(self) -> None:
+        logits = torch.tensor([[20.0, 0.0, 0.0]])
+        target = torch.tensor([[1.0, 0.0, 0.0]])
+        sharp = SingleLabelCELoss(label_smoothing=0.0)({"clipwise_output": logits}, {"target": target})
+        smooth = SingleLabelCELoss(label_smoothing=0.1)({"clipwise_output": logits}, {"target": target})
+        self.assertGreater(float(smooth), float(sharp))
+
+    def test_soft_targets_from_mixup_are_accepted(self) -> None:
+        loss_fn = SingleLabelCELoss(label_smoothing=0.0)
+        logits = torch.tensor([[2.0, 1.0, 0.0]])
+        soft = torch.tensor([[0.6, 0.4, 0.0]])
+        value = loss_fn({"clipwise_output": logits}, {"target": soft})
+        self.assertTrue(torch.isfinite(value))
+        # A soft target must sit between the two hard targets it interpolates.
+        hard_a = loss_fn({"clipwise_output": logits}, {"target": torch.tensor([[1.0, 0.0, 0.0]])})
+        hard_b = loss_fn({"clipwise_output": logits}, {"target": torch.tensor([[0.0, 1.0, 0.0]])})
+        self.assertGreater(float(value), float(hard_a))
+        self.assertLess(float(value), float(hard_b))
+
+
+class MixupTest(unittest.TestCase):
+    def test_mixup_preserves_shapes_and_target_mass(self) -> None:
+        waveform = torch.randn(8, 1000)
+        target = torch.eye(8, 36)[:, :36]
+        mixed_waveform, mixed_target = mixup_batch(waveform, target, alpha=0.4)
+        self.assertEqual(mixed_waveform.shape, waveform.shape)
+        self.assertEqual(mixed_target.shape, target.shape)
+        # Every row still carries exactly one unit of probability mass.
+        self.assertTrue(torch.allclose(mixed_target.sum(dim=1), torch.ones(8), atol=1e-5))
+
+    def test_alpha_zero_is_a_no_op(self) -> None:
+        waveform = torch.randn(4, 100)
+        target = torch.eye(4, 36)
+        mixed_waveform, mixed_target = mixup_batch(waveform, target, alpha=0.0)
+        self.assertTrue(torch.equal(mixed_waveform, waveform))
+        self.assertTrue(torch.equal(mixed_target, target))
+
+
+class NoiseAugmentTest(unittest.TestCase):
+    def test_augment_changes_the_waveform_but_keeps_its_length(self) -> None:
+        time = torch.arange(16_000, dtype=torch.float32) / 16_000
+        stem = torch.sin(2 * torch.pi * 440 * time)
+        seen = set()
+        for _ in range(12):
+            out = augment_noise_stem(stem, 16_000, speed_perturb=0.1, eq_enabled=True)
+            self.assertEqual(out.numel(), stem.numel())
+            self.assertTrue(bool(torch.isfinite(out).all()))
+            seen.add(float(out.square().mean()))
+        self.assertGreater(len(seen), 1)
+
+    def test_augment_disabled_is_a_no_op(self) -> None:
+        stem = torch.randn(1000)
+        out = augment_noise_stem(stem, 16_000, speed_perturb=0.0, eq_enabled=False)
+        self.assertTrue(torch.equal(out, stem))
+
+    def test_scaling_the_noise_stem_cannot_survive_snr_normalisation(self) -> None:
+        """Why there is no gain knob: mixing renormalises the stem to hit the SNR."""
+        torch.manual_seed(0)
+        clean = torch.randn(8_000)
+        noise = torch.randn(8_000)
+        torch.manual_seed(7)
+        plain, _, _ = mix_with_dynamic_snr(clean, noise, 16_000, -5.0, 20.0, 0.5)
+        torch.manual_seed(7)
+        scaled, _, _ = mix_with_dynamic_snr(clean, noise * 8.0, 16_000, -5.0, 20.0, 0.5)
+        self.assertTrue(torch.allclose(plain, scaled, atol=1e-5))
+
+
+class SingleLabelMetricsTest(unittest.TestCase):
+    def test_argmax_recovers_recall_that_thresholding_throws_away(self) -> None:
+        target = np.asarray([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+        # Correct ranking everywhere, but every score sits below 0.5.
+        probability = np.asarray(
+            [[0.40, 0.30, 0.30], [0.30, 0.40, 0.30], [0.30, 0.30, 0.40]], dtype=np.float32
+        )
+        thresholded = compute_multilabel_metrics(target, probability, 0.5, LABEL_NAMES)
+        argmax = compute_multilabel_metrics(
+            target, probability, 0.5, LABEL_NAMES, single_label=True
+        )
+        self.assertAlmostEqual(thresholded["recall_macro"], 0.0)
+        self.assertAlmostEqual(argmax["recall_macro"], 1.0)
+        self.assertAlmostEqual(argmax["f1_macro"], 1.0)
+        self.assertAlmostEqual(argmax["top1_accuracy"], 1.0)
+        # Ranking metrics are threshold-free and must not move.
+        self.assertAlmostEqual(thresholded["mAP"], argmax["mAP"])
+
+    def test_argmax_predicts_exactly_one_label_per_clip(self) -> None:
+        target = np.asarray([[1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        # Row 0 ranks its true label first; row 1 puts the wrong label on top.
+        probability = np.asarray([[0.9, 0.8, 0.7], [0.1, 0.2, 0.5]], dtype=np.float32)
+        metrics = compute_multilabel_metrics(
+            target, probability, 0.5, LABEL_NAMES, single_label=True
+        )
+        self.assertTrue((metrics["prediction"].sum(axis=1) == 1).all())
+        self.assertAlmostEqual(metrics["top1_accuracy"], 0.5)
 
 
 class WindowingAndMetricsTest(unittest.TestCase):

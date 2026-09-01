@@ -130,6 +130,11 @@ class SplitterConfig(BaseModel):
     cross_pairing_enabled: bool = True
     # Roll the noise stem against the clean stem so onset positions stop lining up.
     noise_time_shift_enabled: bool = True
+    # Perturb the label-bearing noise stem itself. Time shifting alone barely moves
+    # the pooled mel statistics a global-pooled backbone sees, so the classifier can
+    # still memorise individual stems; these two do move them.
+    noise_speed_perturb: float = Field(default=0.1, ge=0.0, lt=1.0)
+    noise_eq_enabled: bool = True
 
     @model_validator(mode="after")
     def validate_dataset_settings(self) -> "SplitterConfig":
@@ -155,6 +160,14 @@ class TrainConfig(BaseModel):
     num_workers: int = Field(default=-1, ge=-1)
     pin_memory: bool = True
     threshold: float = Field(default=0.5, gt=0.0, lt=1.0)
+    # Every clip carries exactly one label, so the classifier head uses softmax
+    # cross-entropy and decides by argmax. "bce" restores the old multi-label setup.
+    classification_loss: Literal["ce", "bce"] = "ce"
+    label_smoothing: float = Field(default=0.05, ge=0.0, lt=1.0)
+    # Beta parameter for batch mixup; 0 disables it.
+    mixup_alpha: float = Field(default=0.3, ge=0.0)
+    scheduler: Literal["cosine", "none"] = "cosine"
+    min_learning_rate: float = Field(default=1e-5, ge=0.0)
     use_pos_weight: bool = True
     max_pos_weight: float = Field(default=20.0, ge=1.0)
     random_seed: int = Field(default=2026, ge=0)

@@ -19,6 +19,7 @@ from utils import (
     InferenceTimer,
     MultiTaskNoiseSNRLoss,
     format_snr_table,
+    mixup_batch,
 )
 from utils.evaluate import compute_local_snr_metrics, compute_multilabel_metrics
 
@@ -75,6 +76,10 @@ class AudioTrainer(BaseTrainer):
         local_snr_target_offset_db: float = 5.0,
         local_snr_target_scale_db: float = 15.0,
         local_snr_loss: str = "huber",
+        classification_loss: str = "ce",
+        label_smoothing: float = 0.0,
+        mixup_alpha: float = 0.0,
+        scheduler: Any | None = None,
     ) -> None:
         self.model = model
         self.optimizer = optimizer
@@ -86,13 +91,26 @@ class AudioTrainer(BaseTrainer):
         self.threshold = threshold
         self.monitor = monitor
         self.clip_samples = clip_samples
+        self.mixup_alpha = float(mixup_alpha)
+        self.scheduler = scheduler
+        # Softmax cross-entropy implies argmax decisions; BCE keeps thresholding.
+        self.single_label = classification_loss == "ce"
         self.loss_fn = MultiTaskNoiseSNRLoss(
             pos_weight=pos_weight,
             snr_weight=local_snr_loss_weight,
             target_offset_db=local_snr_target_offset_db,
             target_scale_db=local_snr_target_scale_db,
             regression=local_snr_loss,
+            classification=classification_loss,
+            label_smoothing=label_smoothing,
         ).to(device)
+        logger.info(
+            "Classifier: loss=%s label_smoothing=%.3f mixup_alpha=%.2f decision=%s",
+            classification_loss,
+            label_smoothing,
+            self.mixup_alpha,
+            "argmax" if self.single_label else f"threshold {threshold}",
+        )
         self.evaluator = AudioEvaluator(
             model=model,
             label_names=self.label_names,
@@ -100,6 +118,7 @@ class AudioTrainer(BaseTrainer):
             loss_fn=self.loss_fn,
             window_reduction="mean",
             snr_bands=snr_bands,
+            single_label=self.single_label,
         )
         self.early_stopper = (
             EarlyStopping(patience=patience, delta=delta, verbose=True) if early_stopping else None
@@ -157,11 +176,13 @@ class AudioTrainer(BaseTrainer):
             target = batch["target"].to(self.device, non_blocking=True)
             local_snr_db = batch["local_snr_db"].to(self.device, non_blocking=True)
             local_snr_mask = batch["local_snr_mask"].to(self.device, non_blocking=True)
-            output = self.model(waveform)
+            # Metrics stay tied to the true label; only the loss sees the mixed one.
+            model_input, loss_target = mixup_batch(waveform, target, self.mixup_alpha)
+            output = self.model(model_input)
             loss = self.loss_fn(
                 output,
                 {
-                    "target": target,
+                    "target": loss_target,
                     "local_snr_db": local_snr_db,
                     "local_snr_mask": local_snr_mask,
                 },
@@ -188,6 +209,7 @@ class AudioTrainer(BaseTrainer):
             self.threshold,
             self.label_names,
             include_report=False,
+            single_label=self.single_label,
         )
         statistics.update(
             compute_local_snr_metrics(
@@ -248,6 +270,8 @@ class AudioTrainer(BaseTrainer):
                 val_statistics["local_snr_mae_db"],
                 val_statistics["local_snr_rmse_db"],
             )
+            if self.scheduler is not None:
+                self.scheduler.step()
             if self.early_stopper is not None and self.early_stopper.step(score):
                 break
 

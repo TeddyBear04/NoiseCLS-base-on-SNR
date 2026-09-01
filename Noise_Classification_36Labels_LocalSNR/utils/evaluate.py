@@ -52,9 +52,26 @@ def compute_multilabel_metrics(
     threshold: float,
     label_names: Sequence[str],
     include_report: bool = True,
+    single_label: bool = False,
 ) -> Dict[str, Any]:
+    """Score clip predictions, either by thresholding or by argmax.
+
+    Every clip in this dataset carries exactly one label, so ``single_label=True``
+    decides with argmax. Thresholding at 0.5 makes a model that ranks correctly but
+    scores conservatively look far worse than it is, and it lets a predict-nothing
+    model score 35/36 on Hamming accuracy.
+    """
     target = target.astype(np.int32, copy=False)
-    prediction = (probability >= threshold).astype(np.int32)
+    if single_label:
+        prediction = np.zeros_like(target, dtype=np.int32)
+        prediction[np.arange(len(probability)), probability.argmax(axis=1)] = 1
+    else:
+        prediction = (probability >= threshold).astype(np.int32)
+    top1_accuracy = (
+        float(np.mean(probability.argmax(axis=1) == target.argmax(axis=1)))
+        if len(target)
+        else float("nan")
+    )
     average_precision = _per_class_average_precision(target, probability)
     auc = _per_class_auc(target, probability)
     precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
@@ -84,6 +101,7 @@ def compute_multilabel_metrics(
         "auc": auc,
         "macro_auc": float(np.nanmean(auc)),
         "subset_accuracy": float(accuracy_score(target, prediction)),
+        "top1_accuracy": top1_accuracy,
         "accuracy": float(accuracy_score(target, prediction)),
         "hamming_accuracy": float(1.0 - hamming_loss(target, prediction)),
         "per_label_accuracy": per_label_accuracy,
@@ -188,6 +206,7 @@ def compute_snr_band_metrics(
     threshold: float,
     label_names: Sequence[str],
     snr_bands: Sequence[tuple[str, float, float]] = DEFAULT_SNR_BANDS,
+    single_label: bool = False,
 ) -> Dict[str, Dict[str, Any]]:
     """Break the clip-level metrics down by target SNR band."""
     band_metrics: Dict[str, Dict[str, Any]] = {}
@@ -204,6 +223,7 @@ def compute_snr_band_metrics(
             threshold,
             label_names,
             include_report=False,
+            single_label=single_label,
         )
         band_metrics[name] = {
             "samples": int(mask.sum()),
@@ -249,10 +269,12 @@ class AudioEvaluator(BaseEvaluator):
         loss_fn: nn.Module | None = None,
         window_reduction: str = "mean",
         snr_bands: Sequence[tuple[str, float, float]] | None = None,
+        single_label: bool = False,
     ) -> None:
         super().__init__(model)
         self.label_names = list(label_names)
         self.threshold = threshold
+        self.single_label = single_label
         self.loss_fn = loss_fn
         self.window_reduction = window_reduction
         self.snr_bands = tuple(snr_bands) if snr_bands else DEFAULT_SNR_BANDS
@@ -309,6 +331,7 @@ class AudioEvaluator(BaseEvaluator):
             clip_probability,
             self.threshold,
             self.label_names,
+            single_label=self.single_label,
         )
         statistics["loss"] = loss_sum / max(window_count, 1)
         statistics["sample_ids"] = clip_ids
@@ -330,5 +353,6 @@ class AudioEvaluator(BaseEvaluator):
             self.threshold,
             self.label_names,
             self.snr_bands,
+            single_label=self.single_label,
         )
         return statistics

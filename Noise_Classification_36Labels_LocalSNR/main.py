@@ -153,6 +153,13 @@ def run_training(config_path: str, device_name: Optional[str] = None) -> dict:
     optimizer = optim.AdamW(
         model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
     )
+    scheduler = (
+        optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=config.epochs, eta_min=config.min_learning_rate
+        )
+        if config.scheduler == "cosine"
+        else None
+    )
     pos_weight = (
         loaders.positive_class_weights(config.max_pos_weight).to(device)
         if config.use_pos_weight
@@ -183,6 +190,10 @@ def run_training(config_path: str, device_name: Optional[str] = None) -> dict:
         local_snr_target_offset_db=config.local_snr.target_offset_db,
         local_snr_target_scale_db=config.local_snr.target_scale_db,
         local_snr_loss=config.local_snr.loss,
+        classification_loss=config.classification_loss,
+        label_smoothing=config.label_smoothing,
+        mixup_alpha=config.mixup_alpha,
+        scheduler=scheduler,
     )
     return trainer.train(train_loader, val_loader, test_loader, config.epochs)
 

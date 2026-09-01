@@ -52,6 +52,7 @@ class HistoryLogger:
             "train_micro_f1",
             "train_hamming_accuracy",
             "train_subset_accuracy",
+            "train_top1_accuracy",
             "train_local_snr_mae_db",
             "train_local_snr_rmse_db",
             "val_loss",
@@ -60,6 +61,7 @@ class HistoryLogger:
             "val_micro_f1",
             "val_hamming_accuracy",
             "val_subset_accuracy",
+            "val_top1_accuracy",
             "val_local_snr_mae_db",
             "val_local_snr_rmse_db",
             "val_local_snr_pearson",
@@ -84,6 +86,7 @@ class HistoryLogger:
             "train_micro_f1": f"{train_statistics['f1_micro']:.6f}",
             "train_hamming_accuracy": f"{train_statistics['hamming_accuracy']:.6f}",
             "train_subset_accuracy": f"{train_statistics['subset_accuracy']:.6f}",
+            "train_top1_accuracy": f"{train_statistics['top1_accuracy']:.6f}",
             "train_local_snr_mae_db": f"{train_statistics['local_snr_mae_db']:.6f}",
             "train_local_snr_rmse_db": f"{train_statistics['local_snr_rmse_db']:.6f}",
             "val_loss": f"{val_statistics['loss']:.6f}",
@@ -92,6 +95,7 @@ class HistoryLogger:
             "val_micro_f1": f"{val_statistics['f1_micro']:.6f}",
             "val_hamming_accuracy": f"{val_statistics['hamming_accuracy']:.6f}",
             "val_subset_accuracy": f"{val_statistics['subset_accuracy']:.6f}",
+            "val_top1_accuracy": f"{val_statistics['top1_accuracy']:.6f}",
             "val_local_snr_mae_db": f"{val_statistics['local_snr_mae_db']:.6f}",
             "val_local_snr_rmse_db": f"{val_statistics['local_snr_rmse_db']:.6f}",
             "val_local_snr_pearson": f"{val_statistics['local_snr_pearson']:.6f}",
@@ -203,6 +207,7 @@ class HistoryLogger:
             f"{prefix}_macro_auc": statistics["macro_auc"],
             f"{prefix}_hamming_accuracy": statistics["hamming_accuracy"],
             f"{prefix}_subset_accuracy": statistics["subset_accuracy"],
+            f"{prefix}_top1_accuracy": statistics["top1_accuracy"],
             f"{prefix}_clips": statistics["num_clips"],
             f"{prefix}_windows": statistics["num_windows"],
             f"{prefix}_local_snr_mae_db": statistics["local_snr_mae_db"],
@@ -240,6 +245,7 @@ class HistoryLogger:
     @staticmethod
     def _format_overall_metrics(statistics: Dict[str, Any]) -> str:
         rows = [
+            ("top-1 accuracy (argmax)", statistics["top1_accuracy"]),
             ("subset accuracy (exact match)", statistics["subset_accuracy"]),
             ("hamming accuracy", statistics["hamming_accuracy"]),
             ("mAP", statistics["mAP"]),

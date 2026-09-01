@@ -1,11 +1,11 @@
 {
   "epochs": 100,
   "batch_size": 32,
-  "learning_rate": 0.001,
-  "weight_decay": 0.0001,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.0005,
   "monitor": "macro_f1",
   "early_stopping": true,
-  "patience": 15,
+  "patience": 10,
   "delta": 0.0001,
   "cache_audio": false,
   "num_workers": -1,
@@ -87,7 +87,11 @@
     "dynamic_snr_max_db": 20.0,
     "dynamic_snr_control_seconds": 0.5,
     "clean_directory": "clean",
-    "noise_directory": "noise"
+    "noise_directory": "noise",
+    "cross_pairing_enabled": true,
+    "noise_time_shift_enabled": true,
+    "noise_speed_perturb": 0.1,
+    "noise_eq_enabled": true
   },
   "audio_features": {
     "sample_rate": 16000,
@@ -102,5 +106,10 @@
     "time_stripes_num": 2,
     "freq_drop_width": 8,
     "freq_stripes_num": 2
-  }
+  },
+  "classification_loss": "ce",
+  "label_smoothing": 0.05,
+  "mixup_alpha": 0.3,
+  "scheduler": "cosine",
+  "min_learning_rate": 1e-05
 }

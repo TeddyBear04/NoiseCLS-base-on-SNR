@@ -1,4 +1,11 @@
-from .losses import ClipBCELoss, ClipCELoss, MultiLabelBCELoss, MultiTaskNoiseSNRLoss
+from .losses import (
+    ClipBCELoss,
+    ClipCELoss,
+    MultiLabelBCELoss,
+    MultiTaskNoiseSNRLoss,
+    SingleLabelCELoss,
+    mixup_batch,
+)
 from .evaluate import (
     BaseEvaluator,
     AudioEvaluator,
@@ -15,6 +22,8 @@ __all__ = [
     "ClipBCELoss",
     "MultiLabelBCELoss",
     "MultiTaskNoiseSNRLoss",
+    "SingleLabelCELoss",
+    "mixup_batch",
     "BaseEvaluator",
     "AudioEvaluator",
     "DEFAULT_SNR_BANDS",

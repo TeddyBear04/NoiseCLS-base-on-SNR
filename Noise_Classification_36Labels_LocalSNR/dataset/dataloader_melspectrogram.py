@@ -210,6 +210,54 @@ def circular_shift(waveform: torch.Tensor, shift: int) -> torch.Tensor:
     return torch.roll(waveform, shifts=int(shift) % waveform.numel(), dims=0)
 
 
+def _resample_linear(waveform: torch.Tensor, factor: float) -> torch.Tensor:
+    """Stretch a waveform in time by ``factor`` and restore its original length."""
+    length = waveform.numel()
+    stretched_length = max(2, int(round(length / factor)))
+    positions = torch.linspace(0, length - 1, stretched_length, dtype=waveform.dtype)
+    lower = positions.floor().long().clamp(0, length - 1)
+    upper = (lower + 1).clamp(0, length - 1)
+    weight = (positions - lower.to(waveform.dtype))
+    stretched = waveform[lower] * (1.0 - weight) + waveform[upper] * weight
+    return fixed_window(stretched, 0, length)
+
+
+def _random_spectral_tilt(waveform: torch.Tensor, max_tilt_db: float) -> torch.Tensor:
+    """Tilt the spectrum by a random slope, a cheap stand-in for a shelving EQ."""
+    spectrum = torch.fft.rfft(waveform)
+    slope_db = float(torch.empty(1).uniform_(-max_tilt_db, max_tilt_db))
+    ramp = torch.linspace(0.0, 1.0, spectrum.numel(), dtype=waveform.dtype)
+    gain = torch.pow(10.0, (slope_db * (ramp - 0.5)) / 20.0)
+    return torch.fft.irfft(spectrum * gain, n=waveform.numel()).to(waveform.dtype)
+
+
+def augment_noise_stem(
+    waveform: torch.Tensor,
+    sample_rate: int,
+    speed_perturb: float,
+    eq_enabled: bool,
+    max_tilt_db: float = 6.0,
+) -> torch.Tensor:
+    """Perturb the label-bearing stem so the same waveform is never seen twice.
+
+    The classifier's label comes from this stem alone, and every epoch replays the
+    same finite set of them. Speed and spectral tilt move the pooled mel statistics
+    the backbone actually sees, which time shifting alone does not.
+
+    There is deliberately no gain knob: mixing renormalises the stem to hit the
+    target SNR, so any level applied here is divided straight back out.
+    """
+    if waveform.numel() < 2:
+        return waveform
+    augmented = waveform
+    if speed_perturb > 0.0:
+        factor = float(torch.empty(1).uniform_(1.0 - speed_perturb, 1.0 + speed_perturb))
+        augmented = _resample_linear(augmented, factor)
+    if eq_enabled:
+        augmented = _random_spectral_tilt(augmented, max_tilt_db)
+    return augmented
+
+
 def sliding_window_starts(total_samples: int, window_samples: int, hop_samples: int) -> List[int]:
     if total_samples <= window_samples:
         return [0]
@@ -415,6 +463,13 @@ class NoiseManifestDataset(Dataset):
             if self.training and self.dataset_config.noise_time_shift_enabled:
                 noise_window = circular_shift(
                     noise_window, random.randrange(max(1, noise_window.numel()))
+                )
+            if self.training:
+                noise_window = augment_noise_stem(
+                    noise_window,
+                    self.audio_config.sample_rate,
+                    speed_perturb=self.dataset_config.noise_speed_perturb,
+                    eq_enabled=self.dataset_config.noise_eq_enabled,
                 )
             waveform, clean_component, noise_component = mix_with_dynamic_snr(
                 clean_window,
