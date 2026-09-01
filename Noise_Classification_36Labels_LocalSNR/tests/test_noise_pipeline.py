@@ -1,6 +1,7 @@
 import csv
 import gc
 import json
+import math
 import sys
 import tempfile
 import unittest
@@ -14,7 +15,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import AudioFeaturesConfig, LocalSNRConfig, ModelConfig, SplitterConfig
+from config import (
+    AudioFeaturesConfig,
+    FilterConfig,
+    LocalSNRConfig,
+    ModelConfig,
+    SplitterConfig,
+)
 from dataset import (
     NoiseDataLoaderManager,
     augment_noise_stem,
@@ -27,11 +34,17 @@ from dataset import (
 from features import AudioFrontend
 from models import (
     MODEL_REGISTRY,
+    NoiseMaskFilter,
     Cnn14MobileV2LocalSNR,
     LocalSNRAudioModel,
     build_backbone,
 )
-from utils import MultiTaskNoiseSNRLoss, SingleLabelCELoss, mixup_batch
+from utils import (
+    MultiTaskNoiseSNRLoss,
+    SingleLabelCELoss,
+    mixup_batch,
+    multi_resolution_stft_loss,
+)
 from utils.evaluate import (
     aggregate_windows,
     compute_local_snr_metrics,
@@ -403,6 +416,112 @@ class SingleLabelMetricsTest(unittest.TestCase):
         )
         self.assertTrue((metrics["prediction"].sum(axis=1) == 1).all())
         self.assertAlmostEqual(metrics["top1_accuracy"], 0.5)
+
+
+class AdaptiveGainTest(unittest.TestCase):
+    """soft_threshold must flatten every clip above the threshold to the same level."""
+
+    def _filter(self, **overrides) -> NoiseMaskFilter:
+        return NoiseMaskFilter(FilterConfig(**overrides), AUDIO_CONFIG)
+
+    def _gain_at(self, filt: NoiseMaskFilter, snr_db: float) -> float:
+        # One flat-spectrum clip whose speech/noise energies realise the target SNR.
+        noise = torch.full((1, 8, 16), 1.0)
+        speech_scale = 10.0 ** (snr_db / 20.0)
+        mixture = noise * (1.0 + speech_scale)
+        gain, _ = filt.estimate_gain(noise.to(torch.complex64), mixture.to(torch.complex64))
+        return float(gain.reshape(-1)[0])
+
+    def test_soft_threshold_leaves_low_snr_untouched(self) -> None:
+        filt = self._filter(gain_mode="soft_threshold", snr_threshold_db=10.0)
+        for snr in (-5.0, 0.0, 5.0, 10.0):
+            self.assertAlmostEqual(self._gain_at(filt, snr), 1.0, places=4)
+
+    def test_soft_threshold_lifts_high_snr_to_the_threshold_level(self) -> None:
+        filt = self._filter(gain_mode="soft_threshold", snr_threshold_db=10.0)
+        # Gain in dB should equal how far above the threshold the clip sits.
+        for snr, expected_db in ((15.0, 5.0), (20.0, 10.0)):
+            measured = 20.0 * math.log10(self._gain_at(filt, snr))
+            self.assertAlmostEqual(measured, expected_db, places=1)
+
+    def test_gain_is_capped(self) -> None:
+        filt = self._filter(gain_mode="soft_threshold", gain_max_db=12.0, snr_threshold_db=10.0)
+        self.assertLessEqual(self._gain_at(filt, 40.0), 10.0 ** (12.0 / 20.0) + 1e-4)
+
+    def test_sigmoid_mode_still_available(self) -> None:
+        filt = self._filter(gain_mode="sigmoid", snr_threshold_db=10.0, snr_temperature_db=2.0)
+        # At the threshold the sigmoid sits halfway between 1 and G_max.
+        self.assertAlmostEqual(self._gain_at(filt, 10.0), 1.0 + (10 ** 0.6 - 1.0) / 2.0, places=2)
+
+    def test_gain_carries_no_gradient(self) -> None:
+        """Without this the filter could shrink the noise to earn a larger gain."""
+        filt = self._filter()
+        noise = torch.full((1, 8, 16), 1.0, requires_grad=True)
+        mixture = torch.full((1, 8, 16), 4.0)
+        gain, snr = filt.estimate_gain(noise.to(torch.complex64), mixture.to(torch.complex64))
+        self.assertFalse(gain.requires_grad)
+        self.assertFalse(snr.requires_grad)
+
+    def test_disabling_adaptive_gain_is_a_no_op(self) -> None:
+        filt = self._filter(adaptive_gain=False)
+        self.assertAlmostEqual(self._gain_at(filt, 20.0), 1.0, places=5)
+
+
+class NoiseMaskFilterTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.filt = NoiseMaskFilter(FilterConfig(), AUDIO_CONFIG)
+
+    def test_round_trip_shapes(self) -> None:
+        waveform = torch.randn(2, 16_000)
+        out = self.filt(waveform)
+        for key in ("est_noise", "est_speech", "gain", "snr_db", "condition"):
+            self.assertIn(key, out)
+        self.assertEqual(tuple(out["est_noise"].shape), (2, 16_000))
+        self.assertEqual(tuple(out["est_speech"].shape), (2, 16_000))
+        self.assertEqual(tuple(out["condition"].shape), (2, 2))
+        self.assertTrue(bool(torch.isfinite(out["est_noise"]).all()))
+
+    def test_mask_is_bounded(self) -> None:
+        """tanh bounds each component to 1, so the magnitude is bounded by sqrt(2)."""
+        spectrum = self.filt.stft(torch.randn(2, 16_000))
+        with torch.no_grad():
+            mask = self.filt.predict_mask(spectrum)
+        self.assertLessEqual(float(mask.real.abs().max()), 1.0 + 1e-5)
+        self.assertLessEqual(float(mask.imag.abs().max()), 1.0 + 1e-5)
+        self.assertLessEqual(float(mask.abs().max()), math.sqrt(2.0) + 1e-5)
+
+    def test_identity_mask_reproduces_the_mixture(self) -> None:
+        waveform = torch.randn(1, 16_000)
+        spectrum = self.filt.stft(waveform)
+        identity = torch.ones_like(spectrum)
+        rebuilt = self.filt.istft(spectrum * identity, length=waveform.shape[-1])
+        self.assertTrue(torch.allclose(rebuilt, waveform, atol=2e-4))
+
+    def test_analytic_local_snr_matches_the_dataloader_targets(self) -> None:
+        """An oracle split must reproduce the labels the dataloader writes."""
+        snr_config = LocalSNRConfig(segment_seconds=0.5, segment_hop_seconds=0.25)
+        time = torch.arange(16_000, dtype=torch.float32) / 16_000
+        clean = 0.2 * torch.sin(2 * torch.pi * 300 * time)
+        noise = 0.05 * torch.sin(2 * torch.pi * 900 * time)
+        expected, _, _ = compute_local_snr_targets(clean, noise, 16_000, snr_config)
+        measured = NoiseMaskFilter.segment_snr_db(
+            clean.unsqueeze(0), noise.unsqueeze(0), 16_000, snr_config
+        )
+        self.assertEqual(tuple(measured.shape), (1, expected.numel()))
+        self.assertTrue(torch.allclose(measured[0], expected, atol=1e-3))
+
+
+class MultiResolutionSTFTLossTest(unittest.TestCase):
+    def test_identical_signals_give_almost_zero_loss(self) -> None:
+        waveform = torch.randn(2, 8_000)
+        loss, _, _ = multi_resolution_stft_loss(waveform, waveform.clone())
+        self.assertLess(float(loss), 1e-4)
+
+    def test_a_wrong_estimate_costs_more_than_a_close_one(self) -> None:
+        target = torch.randn(2, 8_000)
+        close, _, _ = multi_resolution_stft_loss(target + 0.01 * torch.randn_like(target), target)
+        far, _, _ = multi_resolution_stft_loss(torch.randn_like(target), target)
+        self.assertLess(float(close), float(far))
 
 
 class WindowingAndMetricsTest(unittest.TestCase):

@@ -5,6 +5,7 @@ from .losses import (
     MultiTaskNoiseSNRLoss,
     SingleLabelCELoss,
     mixup_batch,
+    multi_resolution_stft_loss,
 )
 from .evaluate import (
     BaseEvaluator,
@@ -24,6 +25,7 @@ __all__ = [
     "MultiTaskNoiseSNRLoss",
     "SingleLabelCELoss",
     "mixup_batch",
+    "multi_resolution_stft_loss",
     "BaseEvaluator",
     "AudioEvaluator",
     "DEFAULT_SNR_BANDS",

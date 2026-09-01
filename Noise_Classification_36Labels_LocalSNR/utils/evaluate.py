@@ -290,6 +290,7 @@ class AudioEvaluator(BaseEvaluator):
         loss_sum = 0.0
         window_count = 0
         self.model.eval()
+        filter_loss_sum = 0.0
 
         with torch.no_grad():
             for batch in tqdm(data_loader, desc="Evaluating", unit="batch", dynamic_ncols=True):
@@ -306,7 +307,14 @@ class AudioEvaluator(BaseEvaluator):
                             self.device, non_blocking=True
                         ),
                     }
-                    loss_sum += float(self.loss_fn(output, loss_targets).item()) * batch_size
+                    if "noise_waveform" in batch:
+                        loss_targets["noise_waveform"] = batch["noise_waveform"].to(
+                            self.device, non_blocking=True
+                        )
+                    components = self.loss_fn.components(output, loss_targets)
+                    loss_sum += float(components["total"].item()) * batch_size
+                    if "filter" in components:
+                        filter_loss_sum += float(components["filter"].item()) * batch_size
                     window_count += batch_size
                 sample_ids.extend(list(batch["audio_name"]))
                 probabilities.append(torch.sigmoid(logits).cpu().numpy())
@@ -334,6 +342,9 @@ class AudioEvaluator(BaseEvaluator):
             single_label=self.single_label,
         )
         statistics["loss"] = loss_sum / max(window_count, 1)
+        # The first number to watch when the filter is on: if it does not fall, the mask
+        # has learned nothing and everything downstream of it is meaningless.
+        statistics["filter_loss"] = filter_loss_sum / max(window_count, 1)
         statistics["sample_ids"] = clip_ids
         statistics["target_snr_db"] = clip_snr
         statistics["num_clips"] = len(clip_ids)

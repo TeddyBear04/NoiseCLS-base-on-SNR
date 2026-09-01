@@ -499,6 +499,7 @@ class NoiseManifestDataset(Dataset):
             "audio_name": record.sample_id,
             "clean_sample_id": clean_record.sample_id,
             "waveform": waveform,
+            "noise_waveform": noise_component,
             "target": torch.tensor(record.target, dtype=torch.float32),
             "target_snr_db": torch.tensor(record.target_snr_db, dtype=torch.float32),
             "window_start_seconds": torch.tensor(start / self.audio_config.sample_rate, dtype=torch.float32),

@@ -145,6 +145,34 @@ class SplitterConfig(BaseModel):
         return self
 
 
+class FilterConfig(BaseModel):
+    """U-Net complex-ratio-mask filter that extracts the noise before classification.
+
+    The classifier's label rides on the noise, so pulling the noise out of the mixture
+    and handing the classifier that instead removes the speech it would otherwise have
+    to learn to ignore.
+    """
+
+    enabled: bool = False
+    loss_weight: float = Field(default=1.0, ge=0.0)
+    # Epochs spent training the filter alone. Training everything from epoch one feeds
+    # the classifier the output of a randomly initialised mask.
+    warmup_epochs: int = Field(default=10, ge=0)
+    base_channels: int = Field(default=16, gt=0)
+
+    # Amplify the extracted noise back to a consistent level. Without it the classifier
+    # sees a signal whose loudness tracks the mixture SNR, and the high-SNR bands - the
+    # weakest ones - arrive quietest.
+    adaptive_gain: bool = True
+    gain_mode: Literal["soft_threshold", "sigmoid"] = "soft_threshold"
+    gain_max_db: float = Field(default=12.0, ge=0.0)
+    snr_threshold_db: float = 10.0
+    snr_temperature_db: float = Field(default=2.0, gt=0.0)
+
+    mrstft_sc_weight: float = Field(default=1.0, ge=0.0)
+    mrstft_logmag_weight: float = Field(default=1.0, ge=0.0)
+
+
 class TrainConfig(BaseModel):
     epochs: int = Field(default=100, gt=0)
     batch_size: int = Field(default=32, gt=0)
@@ -180,6 +208,7 @@ class TrainConfig(BaseModel):
     dataset_splitter: SplitterConfig = Field(default_factory=SplitterConfig)
     audio_features: AudioFeaturesConfig = Field(default_factory=AudioFeaturesConfig)
     local_snr: LocalSNRConfig = Field(default_factory=LocalSNRConfig)
+    filter: FilterConfig = Field(default_factory=FilterConfig)
 
     @model_validator(mode="after")
     def validate_multitask_settings(self) -> "TrainConfig":

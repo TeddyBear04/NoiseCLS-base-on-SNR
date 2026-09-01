@@ -262,6 +262,26 @@ the uncovered count is logged rather than silently dropping them.
   `classification_loss` accepts.
 - `scheduler` / `min_learning_rate`: cosine decay from `learning_rate` down to
   `min_learning_rate` across `epochs`.
+- `filter.enabled`: put a U-Net complex-ratio-mask filter in front of the
+  classifier. It extracts the noise from the mixture and the backbone classifies
+  that instead, so the speech the label does not depend on is removed before the
+  classifier ever sees it. The filter is supervised with a multi-resolution STFT
+  loss against `noise_component`, which the dataloader already computes.
+- `filter.warmup_epochs`: epochs spent on the filter loss alone. Training
+  everything from epoch one feeds the classifier the output of a randomly
+  initialised mask.
+- `filter.gain_mode`: `soft_threshold` (default) lifts every clip above
+  `snr_threshold_db` to the noise level it would have had at that threshold, so
+  the 10, 15 and 20 dB bands all arrive equally loud. `sigmoid` is the smoother
+  alternative but is not monotonic at these constants - it leaves the 20 dB band
+  about 6 dB quieter than the 10 dB band, which is the wrong way round given
+  those are the weakest bands.
+- `filter.gain_max_db`: ceiling on the amplification, default `12.0` (3.98x).
+  The gain and the SNR that sets it are detached: with a live gradient the mask
+  could shrink the noise it reports purely to earn a larger gain.
+- `val_filter_loss`: the first number to check when the filter is on. If it does
+  not fall, the mask has learned nothing and every result behind it is
+  meaningless.
 - `top1_accuracy`: reported in `history.csv` and `summary.json`. Prefer it and
   `mAP` over `hamming_accuracy`, which a predict-nothing model scores 35/36 on.
 - `dynamic_snr_enabled`: enables clean/noise on-the-fly mixing.

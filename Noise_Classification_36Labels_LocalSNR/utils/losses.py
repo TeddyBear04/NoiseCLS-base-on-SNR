@@ -26,6 +26,39 @@ class MultiLabelBCELoss(BaseLoss):
         )
 
 
+MRSTFT_RESOLUTIONS = ((256, 64, 256), (512, 160, 512), (1024, 256, 1024))
+
+
+def multi_resolution_stft_loss(
+    estimate: torch.Tensor,
+    target: torch.Tensor,
+    sc_weight: float = 1.0,
+    logmag_weight: float = 1.0,
+    eps: float = 1e-7,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Spectral convergence plus log-magnitude distance at three STFT resolutions.
+
+    Comparing at several resolutions keeps the mask from trading transient detail for
+    a good average spectrum, which a single resolution lets it do.
+    """
+    convergence, log_magnitude = [], []
+    for n_fft, hop_length, win_length in MRSTFT_RESOLUTIONS:
+        window = torch.hann_window(win_length, device=estimate.device, dtype=estimate.dtype)
+        estimate_mag = torch.stft(
+            estimate, n_fft, hop_length, win_length, window, return_complex=True
+        ).abs().clamp_min(eps)
+        target_mag = torch.stft(
+            target, n_fft, hop_length, win_length, window, return_complex=True
+        ).abs().clamp_min(eps)
+        numerator = (target_mag - estimate_mag).flatten(1).norm(dim=1)
+        denominator = target_mag.flatten(1).norm(dim=1).clamp_min(eps)
+        convergence.append((numerator / denominator).mean())
+        log_magnitude.append((torch.log(target_mag) - torch.log(estimate_mag)).abs().mean())
+    sc_loss = torch.stack(convergence).mean()
+    logmag_loss = torch.stack(log_magnitude).mean()
+    return sc_weight * sc_loss + logmag_weight * logmag_loss, sc_loss, logmag_loss
+
+
 class SingleLabelCELoss(BaseLoss):
     """Softmax cross-entropy for one-label-per-clip data.
 
@@ -88,6 +121,9 @@ class MultiTaskNoiseSNRLoss(BaseLoss):
         regression: str = "huber",
         classification: str = "ce",
         label_smoothing: float = 0.0,
+        filter_weight: float = 0.0,
+        mrstft_sc_weight: float = 1.0,
+        mrstft_logmag_weight: float = 1.0,
     ) -> None:
         super().__init__()
         if regression not in {"mse", "huber"}:
@@ -104,6 +140,9 @@ class MultiTaskNoiseSNRLoss(BaseLoss):
         self.target_offset_db = float(target_offset_db)
         self.target_scale_db = float(target_scale_db)
         self.regression = regression
+        self.filter_weight = float(filter_weight)
+        self.mrstft_sc_weight = float(mrstft_sc_weight)
+        self.mrstft_logmag_weight = float(mrstft_logmag_weight)
 
     def components(self, output_dict: dict, target_dict: dict) -> dict[str, torch.Tensor]:
         classification_loss = self.classification(output_dict, target_dict)
@@ -122,8 +161,21 @@ class MultiTaskNoiseSNRLoss(BaseLoss):
             element_loss = F.smooth_l1_loss(predicted, target, reduction="none")
         valid = mask.to(element_loss.dtype)
         snr_loss = (element_loss * valid).sum() / valid.sum().clamp_min(1.0)
+        components = {"classification": classification_loss, "snr": snr_loss}
         total = classification_loss + self.snr_weight * snr_loss
-        return {"total": total, "classification": classification_loss, "snr": snr_loss}
+
+        if self.filter_weight > 0.0 and "est_noise" in output_dict:
+            filter_loss, _, _ = multi_resolution_stft_loss(
+                output_dict["est_noise"].float(),
+                target_dict["noise_waveform"].to(torch.float32),
+                self.mrstft_sc_weight,
+                self.mrstft_logmag_weight,
+            )
+            components["filter"] = filter_loss
+            total = total + self.filter_weight * filter_loss
+
+        components["total"] = total
+        return components
 
     def forward(self, output_dict: dict, target_dict: dict) -> torch.Tensor:
         return self.components(output_dict, target_dict)["total"]

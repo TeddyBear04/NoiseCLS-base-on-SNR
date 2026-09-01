@@ -80,6 +80,10 @@ class AudioTrainer(BaseTrainer):
         label_smoothing: float = 0.0,
         mixup_alpha: float = 0.0,
         scheduler: Any | None = None,
+        filter_weight: float = 0.0,
+        filter_warmup_epochs: int = 0,
+        mrstft_sc_weight: float = 1.0,
+        mrstft_logmag_weight: float = 1.0,
     ) -> None:
         self.model = model
         self.optimizer = optimizer
@@ -103,7 +107,18 @@ class AudioTrainer(BaseTrainer):
             regression=local_snr_loss,
             classification=classification_loss,
             label_smoothing=label_smoothing,
+            filter_weight=filter_weight,
+            mrstft_sc_weight=mrstft_sc_weight,
+            mrstft_logmag_weight=mrstft_logmag_weight,
         ).to(device)
+        self.filter_warmup_epochs = int(filter_warmup_epochs)
+        if filter_weight > 0.0:
+            logger.info(
+                "Noise filter: weight=%.2f warmup=%d epochs (classifier and local-SNR "
+                "losses are held back until the mask is worth classifying)",
+                filter_weight,
+                self.filter_warmup_epochs,
+            )
         logger.info(
             "Classifier: loss=%s label_smoothing=%.3f mixup_alpha=%.2f decision=%s",
             classification_loss,
@@ -179,14 +194,20 @@ class AudioTrainer(BaseTrainer):
             # Metrics stay tied to the true label; only the loss sees the mixed one.
             model_input, loss_target = mixup_batch(waveform, target, self.mixup_alpha)
             output = self.model(model_input)
-            loss = self.loss_fn(
-                output,
-                {
-                    "target": loss_target,
-                    "local_snr_db": local_snr_db,
-                    "local_snr_mask": local_snr_mask,
-                },
-            )
+            loss_inputs = {
+                "target": loss_target,
+                "local_snr_db": local_snr_db,
+                "local_snr_mask": local_snr_mask,
+            }
+            if "noise_waveform" in batch:
+                loss_inputs["noise_waveform"] = batch["noise_waveform"].to(
+                    self.device, non_blocking=True
+                )
+            components = self.loss_fn.components(output, loss_inputs)
+            if epoch <= self.filter_warmup_epochs and "filter" in components:
+                loss = components["filter"]
+            else:
+                loss = components["total"]
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
             self.optimizer.step()

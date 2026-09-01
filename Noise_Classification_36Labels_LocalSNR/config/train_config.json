@@ -111,5 +111,18 @@
   "label_smoothing": 0.05,
   "mixup_alpha": 0.3,
   "scheduler": "cosine",
-  "min_learning_rate": 1e-05
+  "min_learning_rate": 1e-05,
+  "filter": {
+    "enabled": true,
+    "loss_weight": 1.0,
+    "warmup_epochs": 10,
+    "base_channels": 16,
+    "adaptive_gain": true,
+    "gain_mode": "soft_threshold",
+    "gain_max_db": 12.0,
+    "snr_threshold_db": 10.0,
+    "snr_temperature_db": 2.0,
+    "mrstft_sc_weight": 1.0,
+    "mrstft_logmag_weight": 1.0
+  }
 }

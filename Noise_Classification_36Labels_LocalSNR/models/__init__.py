@@ -5,6 +5,7 @@ from .mobilenet_v1 import MobileNetV1
 from .mobilenet_v2 import MobileNetV2
 from .resnet22 import ResNet22
 from .efficientnet_b0 import EfficientNetB0
+from .noise_mask_filter import NoiseMaskFilter, NoiseMaskUNet
 from .audio_model import AudioModel, LocalSNRAudioModel
 from .panns_cnn10 import PANNS_Cnn10
 from .panns_cnn6 import PANNS_Cnn6
@@ -22,6 +23,8 @@ __all__ = [
     "EfficientNetB0",
     "AudioModel",
     "LocalSNRAudioModel",
+    "NoiseMaskFilter",
+    "NoiseMaskUNet",
     "PANNS_Cnn10",
     "PANNS_Cnn6",
     "PANNS_Cnn14",

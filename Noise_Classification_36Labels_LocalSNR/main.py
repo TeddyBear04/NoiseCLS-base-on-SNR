@@ -14,7 +14,7 @@ import torch.optim as optim
 from config import TrainConfig
 from dataset import NoiseDataLoaderManager, local_snr_segment_starts
 from features import AudioFrontend
-from models import LocalSNRAudioModel, build_backbone
+from models import NoiseMaskFilter, LocalSNRAudioModel, build_backbone
 from tasks import AudioTrainer
 from utils import log_model_profile
 
@@ -132,12 +132,25 @@ def run_training(config_path: str, device_name: Optional[str] = None) -> dict:
             config.local_snr,
         )
     )
+    noise_filter = (
+        NoiseMaskFilter(config.filter, config.audio_features) if config.filter.enabled else None
+    )
     model = LocalSNRAudioModel(
         frontend,
         backbone,
         config.local_snr,
         segment_count,
+        noise_filter=noise_filter,
+        sample_rate=config.audio_features.sample_rate,
     ).to(device)
+    if noise_filter is not None:
+        logger.info(
+            "Noise filter on: gain=%s theta=%.1f dB G_max=%.2fx, classifier sees the "
+            "extracted noise instead of the mixture",
+            config.filter.gain_mode if config.filter.adaptive_gain else "off",
+            config.filter.snr_threshold_db,
+            10.0 ** (config.filter.gain_max_db / 20.0),
+        )
     logger.info(
         "Local SNR: %d segments, %.3fs window, %.3fs hop, loss=%s, lambda=%.3f",
         segment_count,
@@ -194,6 +207,10 @@ def run_training(config_path: str, device_name: Optional[str] = None) -> dict:
         label_smoothing=config.label_smoothing,
         mixup_alpha=config.mixup_alpha,
         scheduler=scheduler,
+        filter_weight=config.filter.loss_weight if config.filter.enabled else 0.0,
+        filter_warmup_epochs=config.filter.warmup_epochs,
+        mrstft_sc_weight=config.filter.mrstft_sc_weight,
+        mrstft_logmag_weight=config.filter.mrstft_logmag_weight,
     )
     return trainer.train(train_loader, val_loader, test_loader, config.epochs)
 
