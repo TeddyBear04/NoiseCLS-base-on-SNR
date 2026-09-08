@@ -5,7 +5,7 @@ import logging
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, List, Sequence
 
 import numpy as np
 import torch
@@ -49,6 +49,35 @@ def _guard_existing_results(ckpt_dir: Path, label_names: Sequence[str]) -> None:
     )
 
 
+def split_decay_parameters(
+    model: nn.Module, exclude_bias_and_norm: bool = True
+) -> tuple[List[nn.Parameter], List[nn.Parameter]]:
+    """Split trainable parameters into the penalised group and the exempt one.
+
+    Conv and linear weights carry the capacity worth shrinking. Biases and
+    BatchNorm scale/shift are 1-D; penalising them moves the normalisation
+    statistics rather than the decision boundary, so they stay exempt from both
+    L1 and L2 unless the caller asks otherwise.
+    """
+    decayed: List[nn.Parameter] = []
+    skipped: List[nn.Parameter] = []
+    for parameter in model.parameters():
+        if not parameter.requires_grad:
+            continue
+        if exclude_bias_and_norm and parameter.ndim <= 1:
+            skipped.append(parameter)
+        else:
+            decayed.append(parameter)
+    return decayed, skipped
+
+
+def l1_penalty(parameters: Sequence[nn.Parameter], l1_lambda: float) -> torch.Tensor:
+    """Scaled sum of absolute weights, or a detached zero when L1 is off."""
+    if l1_lambda <= 0.0 or not parameters:
+        return torch.zeros((), device=parameters[0].device if parameters else None)
+    return l1_lambda * torch.stack([parameter.abs().sum() for parameter in parameters]).sum()
+
+
 class BaseTrainer:
     def train(self, train_loader: Any, val_loader: Any, test_loader: Any, max_epoch: int) -> Dict[str, Any]:
         raise NotImplementedError
@@ -70,6 +99,9 @@ class AudioTrainer(BaseTrainer):
         clip_samples: int = 64_000,
         train_config_path: str = "config/train_config.json",
         snr_bands: Sequence[tuple[str, float, float]] | None = None,
+        l1_lambda: float = 0.0,
+        l1_parameters: Sequence[nn.Parameter] | None = None,
+        exclude_bias_and_norm: bool = True,
     ) -> None:
         self.model = model
         self.optimizer = optimizer
@@ -82,6 +114,15 @@ class AudioTrainer(BaseTrainer):
         self.monitor = monitor
         self.clip_samples = clip_samples
         self.loss_fn = SingleLabelCELoss().to(device)
+        self.l1_lambda = float(l1_lambda)
+        # L2 lives in the optimizer's parameter groups; L1 has no such hook, so
+        # the trainer keeps the same weight list and adds the penalty by hand.
+        if self.l1_lambda <= 0.0:
+            self.l1_parameters: List[nn.Parameter] = []
+        elif l1_parameters is None:
+            self.l1_parameters = split_decay_parameters(model, exclude_bias_and_norm)[0]
+        else:
+            self.l1_parameters = list(l1_parameters)
         self.evaluator = AudioEvaluator(
             model=model,
             label_names=self.label_names,
@@ -146,8 +187,12 @@ class AudioTrainer(BaseTrainer):
             target = batch["target"].to(self.device, non_blocking=True)
             output = self.model(waveform)
             loss = self.loss_fn(output, {"target": target})
+            # Only the gradient sees the penalty. The reported number stays pure
+            # cross-entropy so it remains comparable with the validation loss and
+            # with runs that use a different l1_lambda.
+            objective = loss + l1_penalty(self.l1_parameters, self.l1_lambda)
             self.optimizer.zero_grad(set_to_none=True)
-            loss.backward()
+            objective.backward()
             self.optimizer.step()
 
             batch_size = waveform.size(0)

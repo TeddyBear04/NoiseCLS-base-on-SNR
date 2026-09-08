@@ -15,10 +15,13 @@ is unchanged.
   dataset's label catalog.
 - Trains a single-label classifier with softmax `CrossEntropyLoss`; the
   prediction is the argmax over the 36 labels.
-- Uses 16 kHz audio, random 4-second train crops, and deterministic 4-second
+- Uses 16 kHz audio, augmented 4-second train crops, and deterministic 4-second
   sliding windows with a 2-second hop for validation, test, and inference.
-- Optionally creates controlled time-varying SNR mixtures from the `clean` and
-  noise stems during training.
+- Builds train mixtures online from the `clean` and `noise` stems. Validation
+  and test always use their unchanged, deterministic mixture files.
+- Supports random speech replacement, speed/gain/reverb augmentation, noise
+  shift/gain/EQ/reverb/stretch/polarity transforms, same-class noise Mixup,
+  pad-and-crop, and controlled time-varying SNR.
 - Reports top-1/top-3/balanced accuracy, mAP, macro/micro F1, per-label metrics,
   and metrics for each SNR band.
 
@@ -199,6 +202,25 @@ the uncovered count is logged rather than silently dropping them.
 - `cache_audio`: keep `false` for a dataset of this size.
 - `dynamic_snr_enabled`: enables clean/noise on-the-fly mixing.
 - `dynamic_snr_probability`: fraction of train crops receiving dynamic SNR.
+- `augmentation.enabled`: enables the train-only online augmentation pipeline.
+- `augmentation.random_crop_padding_seconds`: zero-pads a fixed-length source
+  before cropping, so the four-second files receive a real random time offset.
+- `augmentation.random_clean_probability`: replaces the clean stem with a
+  different train utterance. Noise labels and split boundaries are unchanged.
+- `augmentation.same_class_mixup_probability`: mixes the current noise with a
+  different train noise carrying the exact same target, so the hard label stays
+  valid. `same_class_mixup_alpha` controls the Beta mixing coefficient.
+- The remaining `clean_*` and `noise_*` probabilities control speed, gain,
+  reverb, time shift, EQ, stretch, and polarity augmentation independently.
+  Set an individual probability to `0` for an ablation without changing code.
+- `regularization.l2_lambda`: AdamW decoupled weight decay, applied only to the
+  conv/linear weights. It supersedes the older top-level `weight_decay`, which is
+  still read as the default when no `regularization` block is present.
+- `regularization.l1_lambda`: absolute-weight penalty added to the training
+  objective. It reaches the gradients only; the logged train loss stays pure
+  cross-entropy so it remains comparable with the validation loss.
+- `regularization.exclude_bias_and_norm`: keeps biases and BatchNorm scale/shift
+  out of both penalties, which is what you want unless you are ablating it.
 - `threshold`: no longer used for training or evaluation, which predict the
   argmax. `inference.py` still reads it to flag a winning probability as
   confident or not, and it is stored in the checkpoint for that purpose.

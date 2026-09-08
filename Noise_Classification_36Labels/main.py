@@ -15,7 +15,7 @@ from config import TrainConfig
 from dataset import NoiseDataLoaderManager
 from features import AudioFrontend
 from models import AudioModel, build_backbone
-from tasks import AudioTrainer
+from tasks import AudioTrainer, split_decay_parameters
 from utils import log_model_profile
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -63,6 +63,7 @@ def check_dataset(config_path: str) -> None:
         pin_memory=False,
         seed=config.random_seed,
         classes_num=config.model.classes_num,
+        augmentation_config=config.augmentation,
     )
     logger.info("Labels (%d): %s", len(manager.label_names), manager.label_names)
     for split in ("train", "val", "test"):
@@ -99,8 +100,9 @@ def run_training(config_path: str, device_name: Optional[str] = None) -> dict:
     )
     logger.info(
         "Task: %d-class single-label classification (cross-entropy); "
-        "dynamic-SNR augmentation=%s (p=%.2f)",
+        "waveform augmentation=%s; dynamic-SNR augmentation=%s (p=%.2f)",
         config.model.classes_num,
+        config.augmentation.enabled,
         config.dataset_splitter.dynamic_snr_enabled,
         config.dataset_splitter.dynamic_snr_probability,
     )
@@ -114,6 +116,7 @@ def run_training(config_path: str, device_name: Optional[str] = None) -> dict:
         pin_memory=config.pin_memory,
         seed=config.random_seed,
         classes_num=config.model.classes_num,
+        augmentation_config=config.augmentation,
     )
     train_loader = loaders.get_dataloader("train", shuffle=True)
     val_loader = loaders.get_dataloader("val", shuffle=False)
@@ -127,8 +130,23 @@ def run_training(config_path: str, device_name: Optional[str] = None) -> dict:
         dummy = torch.zeros(1, clip_samples, device=device)
         log_model_profile(model, dummy, backbone.get_name())
 
+    # AdamW's decoupled weight decay is the L2 term. Restricting it to the
+    # decayed group keeps biases and BatchNorm parameters unpenalised.
+    regularization = config.regularization
+    decayed, skipped = split_decay_parameters(model, regularization.exclude_bias_and_norm)
     optimizer = optim.AdamW(
-        model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
+        [
+            {"params": decayed, "weight_decay": regularization.l2_lambda},
+            {"params": skipped, "weight_decay": 0.0},
+        ],
+        lr=config.learning_rate,
+    )
+    logger.info(
+        "Regularization: L2=%.2e on %d weight tensors (%d exempt), L1=%.2e",
+        regularization.l2_lambda,
+        len(decayed),
+        len(skipped),
+        regularization.l1_lambda,
     )
     if config.use_pos_weight:
         # pos_weight re-weights the positive side of an independent binary
@@ -153,6 +171,8 @@ def run_training(config_path: str, device_name: Optional[str] = None) -> dict:
         clip_samples=clip_samples,
         train_config_path=config_path,
         snr_bands=[(band.name, band.min_db, band.max_db) for band in config.snr_bands],
+        l1_lambda=regularization.l1_lambda,
+        l1_parameters=decayed,
     )
     return trainer.train(train_loader, val_loader, test_loader, config.epochs)
 

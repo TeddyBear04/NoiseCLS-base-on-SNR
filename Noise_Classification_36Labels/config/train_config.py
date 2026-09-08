@@ -62,6 +62,73 @@ class ModelConfig(BaseModel):
     classes_num: int = Field(default=36, gt=0)
 
 
+class TrainAugmentationConfig(BaseModel):
+    """Label-preserving waveform augmentation applied only to the train split."""
+
+    enabled: bool = False
+
+    # Real random cropping for clips that are exactly ``clip_seconds`` long is
+    # implemented as pad-and-crop. Longer source files use an ordinary crop.
+    random_crop_padding_seconds: float = Field(default=0.5, ge=0.0)
+
+    # Replace the clean speech stem with another clean utterance from train.
+    random_clean_probability: float = Field(default=1.0, ge=0.0, le=1.0)
+    clean_speed_probability: float = Field(default=0.3, ge=0.0, le=1.0)
+    clean_speed_min_rate: float = Field(default=0.9, gt=0.0)
+    clean_speed_max_rate: float = Field(default=1.1, gt=0.0)
+    clean_gain_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+    clean_gain_min_db: float = -6.0
+    clean_gain_max_db: float = 6.0
+    clean_reverb_probability: float = Field(default=0.3, ge=0.0, le=1.0)
+
+    # Noise-class-preserving transformations.
+    noise_time_shift_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+    noise_time_shift_max_seconds: float = Field(default=0.5, ge=0.0)
+    noise_gain_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+    noise_gain_min_db: float = -6.0
+    noise_gain_max_db: float = 6.0
+    noise_eq_probability: float = Field(default=0.3, ge=0.0, le=1.0)
+    noise_reverb_probability: float = Field(default=0.3, ge=0.0, le=1.0)
+    noise_time_stretch_probability: float = Field(default=0.3, ge=0.0, le=1.0)
+    noise_time_stretch_min_rate: float = Field(default=0.9, gt=0.0)
+    noise_time_stretch_max_rate: float = Field(default=1.1, gt=0.0)
+    noise_polarity_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    # Both sources carry the same hard label, so the target remains unchanged.
+    same_class_mixup_probability: float = Field(default=0.3, ge=0.0, le=1.0)
+    same_class_mixup_alpha: float = Field(default=0.4, gt=0.0)
+
+    @model_validator(mode="after")
+    def validate_augmentation_ranges(self) -> "TrainAugmentationConfig":
+        ranges = (
+            ("clean_speed", self.clean_speed_min_rate, self.clean_speed_max_rate),
+            ("noise_time_stretch", self.noise_time_stretch_min_rate, self.noise_time_stretch_max_rate),
+            ("clean_gain", self.clean_gain_min_db, self.clean_gain_max_db),
+            ("noise_gain", self.noise_gain_min_db, self.noise_gain_max_db),
+        )
+        for name, minimum, maximum in ranges:
+            if minimum > maximum:
+                raise ValueError(f"{name}_min must not exceed {name}_max")
+        return self
+
+
+class RegularizationConfig(BaseModel):
+    """Weight-space penalties that shrink capacity when augmentation is not enough.
+
+    L2 rides on AdamW's decoupled weight decay; L1 is added to the training loss.
+    Both look at the same parameters, so a single ``exclude_bias_and_norm`` switch
+    governs the two of them.
+    """
+
+    l1_lambda: float = Field(default=0.0, ge=0.0)
+    l2_lambda: float = Field(default=1e-4, ge=0.0)
+
+    # Biases and BatchNorm scale/shift are 1-D. Penalising them shifts the
+    # normalisation statistics instead of removing capacity, which hurts
+    # accuracy long before it curbs overfitting.
+    exclude_bias_and_norm: bool = True
+
+
 class SplitterConfig(BaseModel):
     """Dataset settings; the supplied train/validation/test manifests are authoritative."""
 
@@ -108,6 +175,8 @@ class TrainConfig(BaseModel):
     epochs: int = Field(default=100, gt=0)
     batch_size: int = Field(default=32, gt=0)
     learning_rate: float = Field(default=1e-3, gt=0.0)
+    # Kept for configs written before the regularization block existed; it seeds
+    # regularization.l2_lambda and is then rewritten to match it.
     weight_decay: float = Field(default=1e-4, ge=0.0)
     monitor: Literal[
         "macro_f1",
@@ -137,6 +206,22 @@ class TrainConfig(BaseModel):
     model: ModelConfig = Field(default_factory=ModelConfig)
     dataset_splitter: SplitterConfig = Field(default_factory=SplitterConfig)
     audio_features: AudioFeaturesConfig = Field(default_factory=AudioFeaturesConfig)
+    augmentation: TrainAugmentationConfig = Field(default_factory=TrainAugmentationConfig)
+    regularization: RegularizationConfig = Field(default_factory=RegularizationConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def seed_regularization_from_weight_decay(cls, data: object) -> object:
+        """Let an old config's ``weight_decay`` stand in for ``l2_lambda``."""
+        if isinstance(data, dict) and "weight_decay" in data and "regularization" not in data:
+            return {**data, "regularization": {"l2_lambda": data["weight_decay"]}}
+        return data
+
+    @model_validator(mode="after")
+    def align_weight_decay_with_l2(self) -> "TrainConfig":
+        # One L2 strength, two names. The block is authoritative when both are set.
+        self.weight_decay = self.regularization.l2_lambda
+        return self
 
     @classmethod
     def from_json(cls, path: str = "config/train_config.json") -> "TrainConfig":
