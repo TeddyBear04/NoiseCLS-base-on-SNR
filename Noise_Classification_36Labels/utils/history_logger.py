@@ -40,11 +40,10 @@ def format_snr_table(snr_metrics: Dict[str, Dict[str, Any]]) -> str:
 
 
 class HistoryLogger:
-    def __init__(self, log_dir: str, label_names: Sequence[str], threshold: float = 0.5) -> None:
+    def __init__(self, log_dir: str, label_names: Sequence[str]) -> None:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.label_names = list(label_names)
-        self.threshold = threshold
         self.history_path = self.log_dir / "history.csv"
         self.headers = [
             "epoch",
@@ -221,7 +220,7 @@ class HistoryLogger:
     ) -> str:
         """Bundle the per-label report, headline metrics and SNR breakdown in one file."""
         sections = [
-            f"Test classification report (threshold={self.threshold:.2f})",
+            f"Test classification report (argmax over {len(self.label_names)} labels)",
             "=" * 78,
             test_statistics["message"].strip("\n"),
             "",
@@ -284,7 +283,8 @@ class HistoryLogger:
             "summary": summary,
             "validation_snr_metrics": val_statistics["snr_metrics"],
             "test_snr_metrics": test_statistics["snr_metrics"],
-            "threshold": self.threshold,
+            "loss": "cross_entropy",
+            "prediction_rule": "argmax",
         }
         with (self.log_dir / "summary.json").open("w", encoding="utf-8") as handle:
             json.dump(details, handle, indent=2, ensure_ascii=False)

@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config import AudioFeaturesConfig, SplitterConfig
 from dataset import NoiseDataLoaderManager, sliding_window_starts
-from utils.evaluate import aggregate_windows, compute_multilabel_metrics
+from utils.evaluate import aggregate_windows, compute_metrics
 
 # Both fixtures describe the same three labels and the same two clips per split;
 # only the on-disk encoding differs.
@@ -39,8 +39,11 @@ def _write_clip(split_path: Path, sample_id: str, duration: float, noise_directo
 
 def build_multi_hot_dataset(root: Path) -> None:
     """labels.txt + a multi_hot_<N> manifest column, as in the 36-label dataset."""
+    # With labels.txt the line order is the label index, so the multi-hot row is
+    # as wide as the catalog and its flags sit at those positions - not at the
+    # AudioSet indices, which only the selected_labels.csv layout uses.
     (root / "labels.txt").write_text("\n".join(LABEL_NAMES) + "\n", encoding="utf-8")
-    multi_hot_width = max(ORIGINAL_INDICES) + 1
+    multi_hot_width = len(LABEL_NAMES)
 
     for split in ("train", "validation", "test"):
         split_path = root / split
@@ -53,7 +56,7 @@ def build_multi_hot_dataset(root: Path) -> None:
             _write_clip(split_path, sample_id, duration, "noise")
             multi_hot = [0] * multi_hot_width
             for original_index in labels:
-                multi_hot[original_index] = 1
+                multi_hot[ORIGINAL_INDICES.index(original_index)] = 1
             rows.append(
                 {
                     "sample_id": sample_id,
@@ -202,13 +205,33 @@ class ManifestLoaderTest(unittest.TestCase):
 
 
 class WindowingAndMetricsTest(unittest.TestCase):
-    def test_windowing_and_multilabel_metrics(self) -> None:
+    def test_windowing_and_single_label_metrics(self) -> None:
         self.assertEqual(sliding_window_starts(25, 10, 6), [0, 6, 12, 15])
-        target = np.asarray([[1, 0, 0], [0, 1, 1]], dtype=np.float32)
-        probability = np.asarray([[0.9, 0.1, 0.2], [0.1, 0.8, 0.9]], dtype=np.float32)
-        metrics = compute_multilabel_metrics(target, probability, 0.5, LABEL_NAMES)
+        # One label per clip, and the argmax picks the right one every time.
+        target = np.asarray([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+        # Real softmax rows: they sum to one and no winner clears 0.5.
+        probability = np.asarray(
+            [[0.45, 0.35, 0.20], [0.30, 0.42, 0.28], [0.33, 0.25, 0.42]], dtype=np.float32
+        )
+        metrics = compute_metrics(target, probability, LABEL_NAMES)
         self.assertAlmostEqual(metrics["mAP"], 1.0)
         self.assertAlmostEqual(metrics["f1_macro"], 1.0)
+        self.assertAlmostEqual(metrics["top1_accuracy"], 1.0)
+        # Softmax outputs rarely clear 0.5, so the prediction must come from the
+        # argmax: a threshold rule would have scored these three clips as zero.
+        self.assertAlmostEqual(metrics["subset_accuracy"], 1.0)
+
+    def test_argmax_metrics_on_a_wrong_prediction(self) -> None:
+        target = np.asarray([[1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        # Clip 2 is wrong: B is the truth but C wins, with B ranked second.
+        probability = np.asarray([[0.48, 0.30, 0.22], [0.10, 0.42, 0.48]], dtype=np.float32)
+        metrics = compute_metrics(target, probability, LABEL_NAMES)
+        self.assertAlmostEqual(metrics["top1_accuracy"], 0.5)
+        self.assertAlmostEqual(metrics["top3_accuracy"], 1.0)
+        # Under a single label per clip these three collapse onto top-1.
+        self.assertAlmostEqual(metrics["subset_accuracy"], metrics["top1_accuracy"])
+        self.assertAlmostEqual(metrics["f1_micro"], metrics["top1_accuracy"])
+        self.assertAlmostEqual(metrics["balanced_accuracy"], metrics["top1_accuracy"])
         ids, clip_probability, _, _ = aggregate_windows(
             ["one", "one", "two"],
             np.ones((3, 3), dtype=np.float32),

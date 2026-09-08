@@ -98,7 +98,8 @@ def run_training(config_path: str, device_name: Optional[str] = None) -> dict:
         config.audio_features.inference_hop_seconds,
     )
     logger.info(
-        "Task: %d-label multi-label classification; dynamic-SNR augmentation=%s (p=%.2f)",
+        "Task: %d-class single-label classification (cross-entropy); "
+        "dynamic-SNR augmentation=%s (p=%.2f)",
         config.model.classes_num,
         config.dataset_splitter.dynamic_snr_enabled,
         config.dataset_splitter.dynamic_snr_probability,
@@ -129,13 +130,11 @@ def run_training(config_path: str, device_name: Optional[str] = None) -> dict:
     optimizer = optim.AdamW(
         model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
     )
-    pos_weight = (
-        loaders.positive_class_weights(config.max_pos_weight).to(device)
-        if config.use_pos_weight
-        else None
-    )
-    if pos_weight is not None:
-        logger.info("Positive-class weights: %s", [round(value, 3) for value in pos_weight.tolist()])
+    if config.use_pos_weight:
+        # pos_weight re-weights the positive side of an independent binary
+        # decision, which cross-entropy does not have. Class weights would be
+        # the equivalent knob, and the balanced 36-label splits do not need one.
+        logger.warning("use_pos_weight has no effect with cross-entropy; ignoring it")
 
     # Use the registry/config name so training, feature extraction, and inference
     # resolve exactly the same checkpoint directory on every platform.
@@ -151,7 +150,6 @@ def run_training(config_path: str, device_name: Optional[str] = None) -> dict:
         early_stopping=config.early_stopping,
         patience=config.patience,
         delta=config.delta,
-        pos_weight=pos_weight,
         clip_samples=clip_samples,
         train_config_path=config_path,
         snr_bands=[(band.name, band.min_db, band.max_db) for band in config.snr_bands],

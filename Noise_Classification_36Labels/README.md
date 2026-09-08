@@ -13,7 +13,8 @@ is unchanged.
   manifests are ignored.
 - Maps the original AudioSet label indices to contiguous model outputs using the
   dataset's label catalog.
-- Trains a multi-label model with `BCEWithLogitsLoss` and optional class weights.
+- Trains a single-label classifier with softmax `CrossEntropyLoss`; the
+  prediction is the argmax over the 36 labels.
 - Uses 16 kHz audio, random 4-second train crops, and deterministic 4-second
   sliding windows with a 2-second hop for validation, test, and inference.
 - Optionally creates controlled time-varying SNR mixtures from the `clean` and
@@ -135,37 +136,34 @@ window, plus a JSON clip-level summary.
 
 ## Accuracy metrics
 
-`36_labels` gives every clip exactly one label, so the headline number is
-ordinary single-label accuracy. The model is still trained with a multi-label
-head, which means several accuracy definitions coexist. All of them are reported
+`36_labels` gives every clip exactly one label, so the model is trained with
+softmax cross-entropy and the prediction is the argmax of the 36 outputs. There
+is no decision threshold in training or evaluation. Every metric below appears
 in the per-epoch log, `history.csv`, `summary.csv`/`summary.json`,
 `classification_report_test.txt`, and per SNR band:
 
 - `top1_accuracy` — the clip counts as correct when the highest-scoring of the
-  36 outputs is its true label. This is the accuracy to quote for a single-label
-  task, and it does not depend on `threshold`. Logged as `top1`.
+  36 outputs is its true label. This is the number to quote. Logged as `top1`.
 - `top3_accuracy` — the true label is among the three highest-scoring outputs.
-  Also threshold-free; useful for showing how close a wrong prediction was.
+  Useful for showing how close a wrong prediction was.
 - `balanced_accuracy` — `top1_accuracy` computed per label and then averaged, so
   every label weighs the same. On the balanced `36_labels` splits it tracks
   `top1_accuracy` closely; a gap between them means the errors are concentrated
   in a few labels.
-- `hamming_accuracy` — fraction of the 36 label decisions that are correct,
-  averaged over every clip. Because only one label is positive, predicting
-  all-zero already scores about 0.97, so this number is nearly uninformative
-  here and is kept only for comparison with the multi-label runs.
-- `subset_accuracy` — fraction of clips where the thresholded label set matches
-  exactly. It punishes both an empty prediction and two labels above the
-  threshold, so it reads far lower than `top1_accuracy`. Logged as
-  `exact-match`.
+- `f1_macro` — per-label F1 averaged over labels. This is the default `monitor`:
+  unlike accuracy it drops when the model neglects a few labels, which is the
+  failure mode worth catching early.
+
+Three multi-label metrics survive so that runs stay comparable with the older
+BCE results, but under a single predicted label they carry no new information:
+`subset_accuracy` and `f1_micro` are both exactly equal to `top1_accuracy`, and
+`hamming_accuracy` is a linear function of it (`1 - 2(1 - top1)/36`), which is
+why it sits near 0.97 whatever happens.
 
 `test_per_label.csv` and `validation_per_label_best.csv` carry two per-label
 columns: `top1_recall` (accuracy restricted to the clips of that label, whose
 mean is `balanced_accuracy`) and `accuracy` (element-wise correctness, whose
 mean is `hamming_accuracy`).
-
-`hamming_accuracy` and `subset_accuracy` move when you tune `threshold`.
-`top1_accuracy`, `top3_accuracy`, `balanced_accuracy`, `mAP`, and `auc` do not.
 
 ## Results by SNR band
 
@@ -201,19 +199,21 @@ the uncovered count is logged rather than silently dropping them.
 - `cache_audio`: keep `false` for a dataset of this size.
 - `dynamic_snr_enabled`: enables clean/noise on-the-fly mixing.
 - `dynamic_snr_probability`: fraction of train crops receiving dynamic SNR.
-- `threshold`: initial multi-label decision threshold. Tune it on validation
-  predictions after the first training run.
-- `use_pos_weight`: leave `false` on `36_labels`. That dataset is single-label
-  and perfectly balanced (840 train clips per label), so neg/pos is 35 for every
-  label; a positive weight would not correct any imbalance and would only push
-  the model to over-predict.
+- `threshold`: no longer used for training or evaluation, which predict the
+  argmax. `inference.py` still reads it to flag a winning probability as
+  confident or not, and it is stored in the checkpoint for that purpose.
+- `use_pos_weight`: ignored. `pos_weight` re-weights the positive side of an
+  independent binary decision, which cross-entropy does not have; a run with it
+  enabled logs a warning and continues unweighted. The `36_labels` splits are
+  perfectly balanced (840 train clips per label), so no class weighting is
+  needed anyway.
 - `monitor`: metric that drives best-checkpoint selection and early stopping.
   One of `macro_f1`, `mAP`, `accuracy` (an alias of `top1_accuracy`),
   `top1_accuracy`, `balanced_accuracy`, `hamming_accuracy`, `subset_accuracy`,
   `loss`. `macro_f1` is the default; `top1_accuracy` is a reasonable choice
-  when accuracy is the number you report. Avoid `subset_accuracy`: it stays
-  flat at 0.0 early in training, so early stopping would fire before the model
-  learns anything.
+  when accuracy is the number you report. `subset_accuracy` and
+  `hamming_accuracy` now track `top1_accuracy` exactly, so there is no reason
+  to pick them.
 - `profile_model`: disabled by default because FLOP profiling adds startup time.
 
 The manifest stores weak clip-level labels, not event timestamps. Per-window

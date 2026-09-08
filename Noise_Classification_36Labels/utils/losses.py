@@ -26,12 +26,23 @@ class MultiLabelBCELoss(BaseLoss):
         )
 
 
-class ClipCELoss(BaseLoss):
-    """Legacy single-label loss retained only for old notebooks."""
+class SingleLabelCELoss(BaseLoss):
+    """Softmax cross-entropy over the competing labels.
+
+    Every clip carries exactly one label, so the 36 outputs compete instead of
+    being 36 independent decisions. The loader stores the label as a float
+    one-hot row, which ``F.cross_entropy`` accepts directly as a probability
+    target, so nothing upstream has to change. A 1-D tensor of class indices
+    also works, which is what the older notebooks pass.
+    """
 
     def forward(self, output_dict: dict, target_dict: dict) -> torch.Tensor:
-        return F.cross_entropy(output_dict["clipwise_output"], target_dict["target"])
+        target = target_dict["target"]
+        if target.ndim > 1:
+            target = target.to(torch.float32)
+        return F.cross_entropy(output_dict["clipwise_output"], target)
 
 
-# Backwards-compatible name now points to the correct logits-based implementation.
+# Backwards-compatible names for notebooks written against the earlier API.
+ClipCELoss = SingleLabelCELoss
 ClipBCELoss = MultiLabelBCELoss

@@ -17,9 +17,10 @@ from utils import (
     EarlyStopping,
     HistoryLogger,
     InferenceTimer,
-    MultiLabelBCELoss,    format_snr_table,
+    SingleLabelCELoss,
+    format_snr_table,
 )
-from utils.evaluate import compute_multilabel_metrics
+from utils.evaluate import compute_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,6 @@ class AudioTrainer(BaseTrainer):
         early_stopping: bool = True,
         patience: int = 15,
         delta: float = 0.0,
-        pos_weight: torch.Tensor | None = None,
         clip_samples: int = 64_000,
         train_config_path: str = "config/train_config.json",
         snr_bands: Sequence[tuple[str, float, float]] | None = None,
@@ -81,11 +81,10 @@ class AudioTrainer(BaseTrainer):
         self.threshold = threshold
         self.monitor = monitor
         self.clip_samples = clip_samples
-        self.loss_fn = MultiLabelBCELoss(pos_weight=pos_weight).to(device)
+        self.loss_fn = SingleLabelCELoss().to(device)
         self.evaluator = AudioEvaluator(
             model=model,
             label_names=self.label_names,
-            threshold=threshold,
             loss_fn=self.loss_fn,
             window_reduction="mean",
             snr_bands=snr_bands,
@@ -93,7 +92,7 @@ class AudioTrainer(BaseTrainer):
         self.early_stopper = (
             EarlyStopping(patience=patience, delta=delta, verbose=True) if early_stopping else None
         )
-        self.history = HistoryLogger(str(self.ckpt_dir), self.label_names, threshold=self.threshold)
+        self.history = HistoryLogger(str(self.ckpt_dir), self.label_names)
         config_path = Path(train_config_path)
         if config_path.is_file():
             shutil.copy2(config_path, self.ckpt_dir / "train_config.json")
@@ -154,16 +153,17 @@ class AudioTrainer(BaseTrainer):
             batch_size = waveform.size(0)
             loss_sum += float(loss.item()) * batch_size
             sample_count += batch_size
-            probabilities.append(torch.sigmoid(output["clipwise_output"]).detach().cpu().numpy())
+            probabilities.append(
+                torch.softmax(output["clipwise_output"], dim=-1).detach().cpu().numpy()
+            )
             targets.append(target.detach().cpu().numpy())
             progress.set_postfix(loss=f"{loss.item():.4f}")
 
         probability = np.concatenate(probabilities, axis=0)
         target = np.concatenate(targets, axis=0)
-        statistics = compute_multilabel_metrics(
+        statistics = compute_metrics(
             target,
             probability,
-            self.threshold,
             self.label_names,
             include_report=False,
         )

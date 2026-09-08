@@ -102,7 +102,7 @@ def predict_audio(
                 [fixed_window(waveform, start, clip_samples) for start in batch_starts]
             ).to(device)
             logits = model(batch)["clipwise_output"]
-            probabilities.append(torch.sigmoid(logits).cpu().numpy())
+            probabilities.append(torch.softmax(logits, dim=-1).cpu().numpy())
     window_probability = np.concatenate(probabilities, axis=0)
     clip_probability = window_probability.mean(axis=0)
 
@@ -128,27 +128,38 @@ def predict_audio(
         writer.writeheader()
         writer.writerows(rows)
 
-    detected = [
-        {"label": label, "probability": float(value)}
-        for label, value in sorted(
-            zip(label_names, clip_probability), key=lambda item: item[1], reverse=True
-        )
-        if value >= threshold
-    ]
+    # The model is trained with cross-entropy, so the 36 outputs are a single
+    # distribution: the prediction is the argmax, and the threshold only says
+    # whether that winner is confident enough to act on.
+    ranking = sorted(
+        ({"label": label, "probability": float(value)} for label, value in zip(label_names, clip_probability)),
+        key=lambda item: item["probability"],
+        reverse=True,
+    )
+    predicted = ranking[0]
     result = {
         "audio_path": str(Path(audio_path).expanduser().resolve()),
         "checkpoint_path": str(checkpoint),
         "sample_rate": config.audio_features.sample_rate,
         "window_seconds": config.audio_features.clip_seconds,
         "hop_seconds": config.audio_features.inference_hop_seconds,
-        "threshold": threshold,
         "num_windows": len(starts),
-        "detected_labels": detected,
+        "predicted_label": predicted["label"],
+        "predicted_probability": predicted["probability"],
+        "confidence_threshold": threshold,
+        "confident": predicted["probability"] >= threshold,
+        "top_labels": ranking[:5],
         "window_predictions_csv": str(csv_path),
     }
     summary_path = csv_path.with_suffix(".summary.json")
     summary_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
-    logger.info("Detected labels: %s", detected)
+    logger.info(
+        "Predicted label: %s (p=%.4f)%s",
+        predicted["label"],
+        predicted["probability"],
+        "" if result["confident"] else f" - below the {threshold:.2f} confidence threshold",
+    )
+    logger.info("Top labels: %s", ranking[:5])
     logger.info("Window predictions: %s", csv_path)
     return result
 
