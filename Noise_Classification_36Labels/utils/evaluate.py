@@ -46,6 +46,34 @@ def _per_class_auc(target: np.ndarray, probability: np.ndarray) -> np.ndarray:
     return np.asarray(values, dtype=np.float64)
 
 
+def top_k_accuracy(target: np.ndarray, probability: np.ndarray, k: int = 1) -> float:
+    """Single-label accuracy: is a true label among the k highest-scoring outputs?
+
+    Every clip in the dataset carries exactly one label, so k=1 is ordinary
+    multi-class accuracy. Reading the hit out of the target row instead of
+    comparing argmax indices keeps the number meaningful if a clip ever ends up
+    with more than one positive, and it never depends on the decision threshold.
+    """
+    if target.size == 0:
+        return float("nan")
+    k = max(1, min(int(k), probability.shape[1]))
+    top_k = np.argpartition(-probability, kth=k - 1, axis=1)[:, :k]
+    hits = np.take_along_axis(target, top_k, axis=1).max(axis=1)
+    return float((hits > 0).mean())
+
+
+def per_label_top1_recall(target: np.ndarray, probability: np.ndarray) -> np.ndarray:
+    """Top-1 accuracy restricted to the clips of each label."""
+    predicted = probability.argmax(axis=1)
+    values = []
+    for class_index in range(target.shape[1]):
+        mask = target[:, class_index] > 0
+        values.append(
+            float("nan") if not mask.any() else float((predicted[mask] == class_index).mean())
+        )
+    return np.asarray(values, dtype=np.float64)
+
+
 def compute_multilabel_metrics(
     target: np.ndarray,
     probability: np.ndarray,
@@ -69,6 +97,12 @@ def compute_multilabel_metrics(
     # Element-wise correctness per label. Its mean over labels equals
     # hamming_accuracy, so it is kept only for the per-label report.
     per_label_accuracy = (target == prediction).mean(axis=0).astype(np.float64)
+    # Single-label view of the same predictions: the task assigns exactly one
+    # label per clip, so top-1 accuracy is the headline number and neither it
+    # nor top-3 depends on the threshold.
+    top1 = top_k_accuracy(target, probability, 1)
+    top3 = top_k_accuracy(target, probability, 3)
+    label_top1_recall = per_label_top1_recall(target, probability)
     report = ""
     if include_report:
         report = classification_report(
@@ -84,7 +118,13 @@ def compute_multilabel_metrics(
         "auc": auc,
         "macro_auc": float(np.nanmean(auc)),
         "subset_accuracy": float(accuracy_score(target, prediction)),
-        "accuracy": float(accuracy_score(target, prediction)),
+        # "accuracy" means the single-label top-1 accuracy of this task, not the
+        # multi-label exact-match rate that lives in "subset_accuracy".
+        "accuracy": top1,
+        "top1_accuracy": top1,
+        "top3_accuracy": top3,
+        "balanced_accuracy": float(np.nanmean(label_top1_recall)),
+        "per_label_top1_recall": label_top1_recall,
         "hamming_accuracy": float(1.0 - hamming_loss(target, prediction)),
         "per_label_accuracy": per_label_accuracy,
         "precision_macro": float(precision_macro),
@@ -181,6 +221,9 @@ def compute_snr_band_metrics(
             "samples": int(mask.sum()),
             "snr_min_db": float(min_db),
             "snr_max_db": float(max_db),
+            "top1_accuracy": metrics["top1_accuracy"],
+            "top3_accuracy": metrics["top3_accuracy"],
+            "balanced_accuracy": metrics["balanced_accuracy"],
             "mAP": metrics["mAP"],
             "macro_auc": metrics["macro_auc"],
             "macro_f1": metrics["f1_macro"],

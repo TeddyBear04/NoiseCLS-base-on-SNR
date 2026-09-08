@@ -11,6 +11,8 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 SNR_TABLE_COLUMNS = [
+    ("top-1 acc", "top1_accuracy"),
+    ("top-3 acc", "top3_accuracy"),
     ("mAP", "mAP"),
     ("macro-AUC", "macro_auc"),
     ("macro-F1", "macro_f1"),
@@ -47,12 +49,16 @@ class HistoryLogger:
         self.headers = [
             "epoch",
             "train_loss",
+            "train_top1_accuracy",
+            "train_top3_accuracy",
             "train_mAP",
             "train_macro_f1",
             "train_micro_f1",
             "train_hamming_accuracy",
             "train_subset_accuracy",
             "val_loss",
+            "val_top1_accuracy",
+            "val_top3_accuracy",
             "val_mAP",
             "val_macro_f1",
             "val_micro_f1",
@@ -74,12 +80,16 @@ class HistoryLogger:
         row = {
             "epoch": epoch,
             "train_loss": f"{train_loss:.6f}",
+            "train_top1_accuracy": f"{train_statistics['top1_accuracy']:.6f}",
+            "train_top3_accuracy": f"{train_statistics['top3_accuracy']:.6f}",
             "train_mAP": f"{train_statistics['mAP']:.6f}",
             "train_macro_f1": f"{train_statistics['f1_macro']:.6f}",
             "train_micro_f1": f"{train_statistics['f1_micro']:.6f}",
             "train_hamming_accuracy": f"{train_statistics['hamming_accuracy']:.6f}",
             "train_subset_accuracy": f"{train_statistics['subset_accuracy']:.6f}",
             "val_loss": f"{val_statistics['loss']:.6f}",
+            "val_top1_accuracy": f"{val_statistics['top1_accuracy']:.6f}",
+            "val_top3_accuracy": f"{val_statistics['top3_accuracy']:.6f}",
             "val_mAP": f"{val_statistics['mAP']:.6f}",
             "val_macro_f1": f"{val_statistics['f1_macro']:.6f}",
             "val_micro_f1": f"{val_statistics['f1_micro']:.6f}",
@@ -104,6 +114,7 @@ class HistoryLogger:
                     "label": label,
                     "average_precision": statistics["average_precision"][index],
                     "auc": statistics["auc"][index],
+                    "top1_recall": statistics["per_label_top1_recall"][index],
                     "accuracy": statistics["per_label_accuracy"][index],
                     "tn": int(matrix[0, 0]),
                     "fp": int(matrix[0, 1]),
@@ -121,6 +132,9 @@ class HistoryLogger:
         "snr_min_db",
         "snr_max_db",
         "samples",
+        "top1_accuracy",
+        "top3_accuracy",
+        "balanced_accuracy",
         "mAP",
         "macro_auc",
         "macro_f1",
@@ -157,10 +171,10 @@ class HistoryLogger:
 
         names = list(bands)
         series = [
+            ("Top-1 acc", "top1_accuracy"),
             ("mAP", "mAP"),
             ("Macro F1", "macro_f1"),
             ("Micro F1", "micro_f1"),
-            ("Hamming acc", "hamming_accuracy"),
         ]
         positions = np.arange(len(names), dtype=float)
         width = 0.8 / len(series)
@@ -187,6 +201,9 @@ class HistoryLogger:
     def _summary_values(prefix: str, statistics: Dict[str, Any]) -> Dict[str, Any]:
         return {
             f"{prefix}_loss": statistics["loss"],
+            f"{prefix}_top1_accuracy": statistics["top1_accuracy"],
+            f"{prefix}_top3_accuracy": statistics["top3_accuracy"],
+            f"{prefix}_balanced_accuracy": statistics["balanced_accuracy"],
             f"{prefix}_mAP": statistics["mAP"],
             f"{prefix}_macro_f1": statistics["f1_macro"],
             f"{prefix}_micro_f1": statistics["f1_micro"],
@@ -226,6 +243,9 @@ class HistoryLogger:
     @staticmethod
     def _format_overall_metrics(statistics: Dict[str, Any]) -> str:
         rows = [
+            ("top-1 accuracy", statistics["top1_accuracy"]),
+            ("top-3 accuracy", statistics["top3_accuracy"]),
+            ("balanced accuracy (top-1)", statistics["balanced_accuracy"]),
             ("subset accuracy (exact match)", statistics["subset_accuracy"]),
             ("hamming accuracy", statistics["hamming_accuracy"]),
             ("mAP", statistics["mAP"]),
@@ -295,7 +315,7 @@ class HistoryLogger:
             ("Loss", "train_loss", "val_loss"),
             ("mAP", "train_mAP", "val_mAP"),
             ("Macro F1", "train_macro_f1", "val_macro_f1"),
-            ("Hamming accuracy", "train_hamming_accuracy", "val_hamming_accuracy"),
+            ("Top-1 accuracy", "train_top1_accuracy", "val_top1_accuracy"),
         ]
         for axis, (title, train_key, val_key) in zip(axes.ravel(), pairs):
             axis.plot(epochs, [float(row[train_key]) for row in rows], label="train")

@@ -110,7 +110,14 @@ class TrainConfig(BaseModel):
     learning_rate: float = Field(default=1e-3, gt=0.0)
     weight_decay: float = Field(default=1e-4, ge=0.0)
     monitor: Literal[
-        "macro_f1", "mAP", "hamming_accuracy", "subset_accuracy", "loss"
+        "macro_f1",
+        "mAP",
+        "accuracy",
+        "top1_accuracy",
+        "balanced_accuracy",
+        "hamming_accuracy",
+        "subset_accuracy",
+        "loss",
     ] = "macro_f1"
     early_stopping: bool = True
     patience: int = Field(default=15, gt=0)
