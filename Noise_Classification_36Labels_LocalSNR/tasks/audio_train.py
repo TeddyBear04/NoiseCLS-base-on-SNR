@@ -5,7 +5,7 @@ import logging
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, List, Sequence
 
 import numpy as np
 import torch
@@ -17,10 +17,10 @@ from utils import (
     EarlyStopping,
     HistoryLogger,
     InferenceTimer,
-    MultiTaskNoiseSNRLoss,
+    SingleLabelCELoss,
     format_snr_table,
 )
-from utils.evaluate import compute_local_snr_metrics, compute_multilabel_metrics
+from utils.evaluate import compute_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,35 @@ def _guard_existing_results(ckpt_dir: Path, label_names: Sequence[str]) -> None:
     )
 
 
+def split_decay_parameters(
+    model: nn.Module, exclude_bias_and_norm: bool = True
+) -> tuple[List[nn.Parameter], List[nn.Parameter]]:
+    """Split trainable parameters into the penalised group and the exempt one.
+
+    Conv and linear weights carry the capacity worth shrinking. Biases and
+    BatchNorm scale/shift are 1-D; penalising them moves the normalisation
+    statistics rather than the decision boundary, so they stay exempt from both
+    L1 and L2 unless the caller asks otherwise.
+    """
+    decayed: List[nn.Parameter] = []
+    skipped: List[nn.Parameter] = []
+    for parameter in model.parameters():
+        if not parameter.requires_grad:
+            continue
+        if exclude_bias_and_norm and parameter.ndim <= 1:
+            skipped.append(parameter)
+        else:
+            decayed.append(parameter)
+    return decayed, skipped
+
+
+def l1_penalty(parameters: Sequence[nn.Parameter], l1_lambda: float) -> torch.Tensor:
+    """Scaled sum of absolute weights, or a detached zero when L1 is off."""
+    if l1_lambda <= 0.0 or not parameters:
+        return torch.zeros((), device=parameters[0].device if parameters else None)
+    return l1_lambda * torch.stack([parameter.abs().sum() for parameter in parameters]).sum()
+
+
 class BaseTrainer:
     def train(self, train_loader: Any, val_loader: Any, test_loader: Any, max_epoch: int) -> Dict[str, Any]:
         raise NotImplementedError
@@ -67,14 +96,12 @@ class AudioTrainer(BaseTrainer):
         early_stopping: bool = True,
         patience: int = 15,
         delta: float = 0.0,
-        pos_weight: torch.Tensor | None = None,
         clip_samples: int = 64_000,
         train_config_path: str = "config/train_config.json",
         snr_bands: Sequence[tuple[str, float, float]] | None = None,
-        local_snr_loss_weight: float = 0.1,
-        local_snr_target_offset_db: float = 5.0,
-        local_snr_target_scale_db: float = 15.0,
-        local_snr_loss: str = "huber",
+        l1_lambda: float = 0.0,
+        l1_parameters: Sequence[nn.Parameter] | None = None,
+        exclude_bias_and_norm: bool = True,
     ) -> None:
         self.model = model
         self.optimizer = optimizer
@@ -86,17 +113,19 @@ class AudioTrainer(BaseTrainer):
         self.threshold = threshold
         self.monitor = monitor
         self.clip_samples = clip_samples
-        self.loss_fn = MultiTaskNoiseSNRLoss(
-            pos_weight=pos_weight,
-            snr_weight=local_snr_loss_weight,
-            target_offset_db=local_snr_target_offset_db,
-            target_scale_db=local_snr_target_scale_db,
-            regression=local_snr_loss,
-        ).to(device)
+        self.loss_fn = SingleLabelCELoss().to(device)
+        self.l1_lambda = float(l1_lambda)
+        # L2 lives in the optimizer's parameter groups; L1 has no such hook, so
+        # the trainer keeps the same weight list and adds the penalty by hand.
+        if self.l1_lambda <= 0.0:
+            self.l1_parameters: List[nn.Parameter] = []
+        elif l1_parameters is None:
+            self.l1_parameters = split_decay_parameters(model, exclude_bias_and_norm)[0]
+        else:
+            self.l1_parameters = list(l1_parameters)
         self.evaluator = AudioEvaluator(
             model=model,
             label_names=self.label_names,
-            threshold=threshold,
             loss_fn=self.loss_fn,
             window_reduction="mean",
             snr_bands=snr_bands,
@@ -104,7 +133,7 @@ class AudioTrainer(BaseTrainer):
         self.early_stopper = (
             EarlyStopping(patience=patience, delta=delta, verbose=True) if early_stopping else None
         )
-        self.history = HistoryLogger(str(self.ckpt_dir), self.label_names, threshold=self.threshold)
+        self.history = HistoryLogger(str(self.ckpt_dir), self.label_names)
         config_path = Path(train_config_path)
         if config_path.is_file():
             shutil.copy2(config_path, self.ckpt_dir / "train_config.json")
@@ -117,6 +146,10 @@ class AudioTrainer(BaseTrainer):
             return float(statistics["f1_macro"])
         if self.monitor == "mAP":
             return float(statistics["mAP"])
+        if self.monitor in ("accuracy", "top1_accuracy"):
+            return float(statistics["top1_accuracy"])
+        if self.monitor == "balanced_accuracy":
+            return float(statistics["balanced_accuracy"])
         if self.monitor == "hamming_accuracy":
             return float(statistics["hamming_accuracy"])
         if self.monitor == "subset_accuracy":
@@ -148,53 +181,36 @@ class AudioTrainer(BaseTrainer):
         sample_count = 0
         probabilities = []
         targets = []
-        snr_predictions = []
-        snr_targets = []
-        snr_masks = []
         progress = tqdm(train_loader, desc=f"Epoch {epoch}", unit="batch", dynamic_ncols=True)
         for batch in progress:
             waveform = batch["waveform"].to(self.device, non_blocking=True)
             target = batch["target"].to(self.device, non_blocking=True)
-            local_snr_db = batch["local_snr_db"].to(self.device, non_blocking=True)
-            local_snr_mask = batch["local_snr_mask"].to(self.device, non_blocking=True)
             output = self.model(waveform)
-            loss = self.loss_fn(
-                output,
-                {
-                    "target": target,
-                    "local_snr_db": local_snr_db,
-                    "local_snr_mask": local_snr_mask,
-                },
-            )
+            loss = self.loss_fn(output, {"target": target})
+            # Only the gradient sees the penalty. The reported number stays pure
+            # cross-entropy so it remains comparable with the validation loss and
+            # with runs that use a different l1_lambda.
+            objective = loss + l1_penalty(self.l1_parameters, self.l1_lambda)
             self.optimizer.zero_grad(set_to_none=True)
-            loss.backward()
+            objective.backward()
             self.optimizer.step()
 
             batch_size = waveform.size(0)
             loss_sum += float(loss.item()) * batch_size
             sample_count += batch_size
-            probabilities.append(torch.sigmoid(output["clipwise_output"]).detach().cpu().numpy())
+            probabilities.append(
+                torch.softmax(output["clipwise_output"], dim=-1).detach().cpu().numpy()
+            )
             targets.append(target.detach().cpu().numpy())
-            snr_predictions.append(output["local_snr_db"].detach().cpu().numpy())
-            snr_targets.append(local_snr_db.detach().cpu().numpy())
-            snr_masks.append(local_snr_mask.detach().cpu().numpy())
             progress.set_postfix(loss=f"{loss.item():.4f}")
 
         probability = np.concatenate(probabilities, axis=0)
         target = np.concatenate(targets, axis=0)
-        statistics = compute_multilabel_metrics(
+        statistics = compute_metrics(
             target,
             probability,
-            self.threshold,
             self.label_names,
             include_report=False,
-        )
-        statistics.update(
-            compute_local_snr_metrics(
-                np.concatenate(snr_targets, axis=0),
-                np.concatenate(snr_predictions, axis=0),
-                np.concatenate(snr_masks, axis=0),
-            )
         )
         return loss_sum / max(sample_count, 1), statistics
 
@@ -231,22 +247,21 @@ class AudioTrainer(BaseTrainer):
                 is_best=is_best,
             )
             logger.info(
-                "Epoch %d | train loss %.4f mAP %.4f macro-F1 %.4f acc %.4f | "
-                "val loss %.4f mAP %.4f macro-F1 %.4f micro-F1 %.4f "
-                "acc %.4f exact-match %.4f | local-SNR MAE %.3f dB RMSE %.3f dB",
+                "Epoch %d | train loss %.4f top1 %.4f mAP %.4f macro-F1 %.4f | "
+                "val loss %.4f top1 %.4f top3 %.4f mAP %.4f macro-F1 %.4f "
+                "micro-F1 %.4f hamming %.4f",
                 epoch,
                 train_loss,
+                train_statistics["top1_accuracy"],
                 train_statistics["mAP"],
                 train_statistics["f1_macro"],
-                train_statistics["hamming_accuracy"],
                 val_statistics["loss"],
+                val_statistics["top1_accuracy"],
+                val_statistics["top3_accuracy"],
                 val_statistics["mAP"],
                 val_statistics["f1_macro"],
                 val_statistics["f1_micro"],
                 val_statistics["hamming_accuracy"],
-                val_statistics["subset_accuracy"],
-                val_statistics["local_snr_mae_db"],
-                val_statistics["local_snr_rmse_db"],
             )
             if self.early_stopper is not None and self.early_stopper.step(score):
                 break
@@ -277,7 +292,11 @@ class AudioTrainer(BaseTrainer):
         self.history.plot_history()
         logger.info("Test report:%s", test_statistics["message"])
         logger.info(
-            "Test accuracy: subset=%.4f hamming=%.4f | mAP=%.4f macro_f1=%.4f macro_auc=%.4f",
+            "Test accuracy: top1=%.4f top3=%.4f balanced=%.4f | subset=%.4f hamming=%.4f "
+            "| mAP=%.4f macro_f1=%.4f macro_auc=%.4f",
+            test_statistics["top1_accuracy"],
+            test_statistics["top3_accuracy"],
+            test_statistics["balanced_accuracy"],
             test_statistics["subset_accuracy"],
             test_statistics["hamming_accuracy"],
             test_statistics["mAP"],
@@ -285,13 +304,6 @@ class AudioTrainer(BaseTrainer):
             test_statistics["macro_auc"],
         )
         logger.info("Test metrics by SNR band:\n%s", format_snr_table(test_statistics["snr_metrics"]))
-        logger.info(
-            "Test local SNR: MAE=%.3f dB RMSE=%.3f dB Pearson=%.4f valid_segments=%d",
-            test_statistics["local_snr_mae_db"],
-            test_statistics["local_snr_rmse_db"],
-            test_statistics["local_snr_pearson"],
-            test_statistics["local_snr_valid_segments"],
-        )
         return {
             "best_epoch": best_epoch,
             "best_validation": best_val_statistics,

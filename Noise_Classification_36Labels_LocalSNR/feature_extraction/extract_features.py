@@ -18,9 +18,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import TrainConfig
-from dataset import NoiseDataLoaderManager, local_snr_segment_starts
+from dataset import NoiseDataLoaderManager
 from features import AudioFrontend
-from models import LocalSNRAudioModel, build_backbone
+from models import AudioModel, build_backbone
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -99,18 +99,8 @@ def run(feature_config_path: str) -> None:
         pin_memory=config.pin_memory,
         seed=config.random_seed,
         classes_num=config.model.classes_num,
-        local_snr_config=config.local_snr,
     )
-    clip_samples = int(round(config.audio_features.sample_rate * config.audio_features.clip_seconds))
-    segment_count = len(
-        local_snr_segment_starts(clip_samples, config.audio_features.sample_rate, config.local_snr)
-    )
-    model = LocalSNRAudioModel(
-        AudioFrontend(config.audio_features),
-        build_backbone(config.model),
-        config.local_snr,
-        segment_count,
-    ).to(device)
+    model = AudioModel(AudioFrontend(config.audio_features), build_backbone(config.model)).to(device)
     checkpoint_path = resolve_project_path(str(feature_config["checkpoint_path"]))
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)

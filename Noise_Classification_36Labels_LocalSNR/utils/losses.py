@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from config import MultiTaskLossConfig
+
 
 class BaseLoss(nn.Module):
     def forward(self, output_dict: dict, target_dict: dict) -> torch.Tensor:
@@ -26,56 +28,178 @@ class MultiLabelBCELoss(BaseLoss):
         )
 
 
-class MultiTaskNoiseSNRLoss(BaseLoss):
-    """Clip-level BCE plus masked, normalized local-SNR regression loss."""
+class SingleLabelCELoss(BaseLoss):
+    """Softmax cross-entropy over the competing labels.
+
+    Every clip carries exactly one label, so the 36 outputs compete instead of
+    being 36 independent decisions. The loader stores the label as a float
+    one-hot row, which ``F.cross_entropy`` accepts directly as a probability
+    target, so nothing upstream has to change. A 1-D tensor of class indices
+    also works, which is what the older notebooks pass.
+    """
+
+    def forward(self, output_dict: dict, target_dict: dict) -> torch.Tensor:
+        target = target_dict["target"]
+        if target.ndim > 1:
+            target = target.to(torch.float32)
+        return F.cross_entropy(output_dict["clipwise_output"], target)
+
+
+# Backwards-compatible names for notebooks written against the earlier API.
+ClipCELoss = SingleLabelCELoss
+ClipBCELoss = MultiLabelBCELoss
+
+
+def relative_l1_loss(estimate: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Per-sample relative waveform error so weak high-SNR noise is not ignored."""
+    numerator = (estimate - target).abs().mean(dim=-1)
+    denominator = target.abs().mean(dim=-1).clamp_min(1e-5)
+    return (numerator / denominator).mean()
+
+
+def si_sdr(estimate: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Scale-invariant SDR in dB, returned independently for every sample."""
+    eps = torch.finfo(estimate.dtype).eps
+    estimate = estimate - estimate.mean(dim=-1, keepdim=True)
+    target = target - target.mean(dim=-1, keepdim=True)
+    scale = (estimate * target).sum(dim=-1, keepdim=True) / (
+        target.square().sum(dim=-1, keepdim=True) + eps
+    )
+    projection = scale * target
+    residual = estimate - projection
+    ratio = projection.square().sum(dim=-1) / (residual.square().sum(dim=-1) + eps)
+    return 10.0 * torch.log10(ratio + eps)
+
+
+class MultiResolutionSTFTLoss(nn.Module):
+    """Spectral convergence plus log-magnitude error at several resolutions."""
 
     def __init__(
         self,
-        pos_weight: torch.Tensor | None = None,
-        snr_weight: float = 0.1,
-        target_offset_db: float = 5.0,
-        target_scale_db: float = 15.0,
-        regression: str = "huber",
+        resolutions: tuple[tuple[int, int, int], ...] = (
+            (256, 64, 256),
+            (512, 128, 512),
+            (1024, 256, 1024),
+        ),
     ) -> None:
         super().__init__()
-        if regression not in {"mse", "huber"}:
-            raise ValueError(f"Unsupported SNR regression loss: {regression}")
-        self.classification = MultiLabelBCELoss(pos_weight=pos_weight)
-        self.snr_weight = float(snr_weight)
-        self.target_offset_db = float(target_offset_db)
-        self.target_scale_db = float(target_scale_db)
-        self.regression = regression
+        self.resolutions = resolutions
 
-    def components(self, output_dict: dict, target_dict: dict) -> dict[str, torch.Tensor]:
-        classification_loss = self.classification(output_dict, target_dict)
-        predicted = output_dict["local_snr_normalized"]
-        target = (
-            target_dict["local_snr_db"].to(torch.float32) - self.target_offset_db
-        ) / self.target_scale_db
-        mask = target_dict["local_snr_mask"].to(torch.bool)
-        if predicted.shape != target.shape:
-            raise ValueError(
-                f"Local SNR prediction/target shapes differ: {predicted.shape} vs {target.shape}"
+    def forward(self, estimate: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        total = estimate.new_zeros(())
+        for n_fft, hop, win_length in self.resolutions:
+            window = torch.hann_window(win_length, device=estimate.device, dtype=estimate.dtype)
+            estimate_magnitude = torch.stft(
+                estimate,
+                n_fft=n_fft,
+                hop_length=hop,
+                win_length=win_length,
+                window=window,
+                return_complex=True,
+            ).abs()
+            target_magnitude = torch.stft(
+                target,
+                n_fft=n_fft,
+                hop_length=hop,
+                win_length=win_length,
+                window=window,
+                return_complex=True,
+            ).abs()
+            difference = estimate_magnitude - target_magnitude
+            spectral_convergence = torch.linalg.vector_norm(
+                difference.flatten(1), dim=-1
+            ) / torch.linalg.vector_norm(target_magnitude.flatten(1), dim=-1).clamp_min(1e-5)
+            log_magnitude = F.l1_loss(
+                torch.log(estimate_magnitude.clamp_min(1e-5)),
+                torch.log(target_magnitude.clamp_min(1e-5)),
             )
-        if self.regression == "mse":
-            element_loss = F.mse_loss(predicted, target, reduction="none")
+            total = total + spectral_convergence.mean() + log_magnitude
+        return total / len(self.resolutions)
+
+
+def masked_huber_loss(
+    estimate: torch.Tensor,
+    target: torch.Tensor,
+    mask: torch.Tensor,
+    delta: float,
+) -> torch.Tensor:
+    if estimate.shape != target.shape or estimate.shape != mask.shape:
+        raise ValueError(
+            "Local-SNR estimate, target and mask must have identical shapes; "
+            f"got {tuple(estimate.shape)}, {tuple(target.shape)}, {tuple(mask.shape)}"
+        )
+    error = (estimate - target).abs()
+    delta_tensor = torch.as_tensor(delta, dtype=error.dtype, device=error.device)
+    loss = torch.where(
+        error <= delta_tensor,
+        0.5 * error.square() / delta_tensor,
+        error - 0.5 * delta_tensor,
+    )
+    weight = mask.to(loss.dtype)
+    return (loss * weight).sum() / weight.sum().clamp_min(1.0)
+
+
+class BlackFeatherMultiTaskLoss(nn.Module):
+    """CE + supervised separation + masked Local-SNR regression."""
+
+    def __init__(self, config: MultiTaskLossConfig) -> None:
+        super().__init__()
+        self.config = config
+        self.mrstft = MultiResolutionSTFTLoss()
+
+    def forward(
+        self,
+        output: dict,
+        target: dict,
+        stage: str = "joint",
+    ) -> dict[str, torch.Tensor]:
+        estimate_noise = output["estimated_noise"].float()
+        target_noise = target["noise_waveform"].float()
+        zero = estimate_noise.new_zeros(())
+        mrstft = zero
+        relative_l1 = zero
+        mean_si_sdr = zero
+        separation = zero
+        if stage != "heads":
+            mrstft = self.mrstft(estimate_noise, target_noise)
+            relative_l1 = relative_l1_loss(estimate_noise, target_noise)
+            mean_si_sdr = si_sdr(estimate_noise, target_noise).mean()
+            separation = (
+                self.config.mrstft_weight * mrstft
+                + self.config.relative_l1_weight * relative_l1
+                - self.config.sisdr_weight * mean_si_sdr
+            )
+        classification = zero
+        local_snr = zero
+        if stage == "extractor":
+            total = self.config.lambda_sep * separation
+        elif stage in {"heads", "joint"}:
+            classification = F.cross_entropy(output["clipwise_output"], target["target"])
+            local_snr = masked_huber_loss(
+                output["local_snr_output"],
+                target["local_snr_db"],
+                target["local_snr_mask"],
+                self.config.snr_huber_delta_db,
+            )
+            if stage == "heads":
+                total = (
+                    self.config.lambda_cls * classification
+                    + self.config.lambda_snr * local_snr
+                )
+            else:
+                total = (
+                    self.config.lambda_cls * classification
+                    + self.config.lambda_sep * separation
+                    + self.config.lambda_snr * local_snr
+                )
         else:
-            element_loss = F.smooth_l1_loss(predicted, target, reduction="none")
-        valid = mask.to(element_loss.dtype)
-        snr_loss = (element_loss * valid).sum() / valid.sum().clamp_min(1.0)
-        total = classification_loss + self.snr_weight * snr_loss
-        return {"total": total, "classification": classification_loss, "snr": snr_loss}
-
-    def forward(self, output_dict: dict, target_dict: dict) -> torch.Tensor:
-        return self.components(output_dict, target_dict)["total"]
-
-
-class ClipCELoss(BaseLoss):
-    """Legacy single-label loss retained only for old notebooks."""
-
-    def forward(self, output_dict: dict, target_dict: dict) -> torch.Tensor:
-        return F.cross_entropy(output_dict["clipwise_output"], target_dict["target"])
-
-
-# Backwards-compatible name now points to the correct logits-based implementation.
-ClipBCELoss = MultiLabelBCELoss
+            raise ValueError(f"Unknown loss stage: {stage}")
+        return {
+            "loss": total,
+            "classification_loss": classification,
+            "separation_loss": separation,
+            "mrstft_loss": mrstft,
+            "relative_l1_loss": relative_l1,
+            "si_sdr_db": mean_si_sdr,
+            "local_snr_loss": local_snr,
+        }

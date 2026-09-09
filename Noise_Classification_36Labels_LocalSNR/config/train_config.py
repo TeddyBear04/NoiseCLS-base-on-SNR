@@ -20,6 +20,8 @@ class AudioFeaturesConfig(BaseModel):
     time_stripes_num: int = Field(default=2, ge=0)
     freq_drop_width: int = Field(default=8, ge=0)
     freq_stripes_num: int = Field(default=2, ge=0)
+    local_snr_segment_seconds: float = Field(default=0.5, gt=0.0)
+    speech_activity_threshold_db: float = Field(default=-40.0, le=0.0)
 
     @model_validator(mode="after")
     def validate_audio_settings(self) -> "AudioFeaturesConfig":
@@ -27,6 +29,8 @@ class AudioFeaturesConfig(BaseModel):
             raise ValueError("audio_features.fmax must not exceed the Nyquist frequency")
         if self.inference_hop_seconds > self.clip_seconds:
             raise ValueError("inference_hop_seconds must be <= clip_seconds")
+        if self.local_snr_segment_seconds > self.clip_seconds:
+            raise ValueError("local_snr_segment_seconds must be <= clip_seconds")
         return self
 
 
@@ -57,37 +61,118 @@ DEFAULT_SNR_BANDS = [
 
 
 class ModelConfig(BaseModel):
-    backbone: str = "Cnn14MobileV2LocalSNR"
+    backbone: str = "Cnn14MobileV2"
     pretrained: bool = False
     classes_num: int = Field(default=36, gt=0)
+    embedding_dim: int = Field(default=192, gt=0)
+    encoder_channels: int = Field(default=48, gt=0)
+    extractor_channels: int = Field(default=32, gt=0)
+    extractor_depth: int = Field(default=4, gt=0)
+    mixture_branch_dropout: float = Field(default=0.25, ge=0.0, lt=1.0)
+    max_snr_correction_db: float = Field(default=10.0, gt=0.0)
 
 
-class LocalSNRConfig(BaseModel):
-    """Time-local SNR targets, regression head, and masked-loss settings."""
+class MultiTaskLossConfig(BaseModel):
+    """Weights for classification, supervised extraction and Local-SNR."""
 
-    enabled: bool = True
-    segment_seconds: float = Field(default=0.5, gt=0.0)
-    segment_hop_seconds: float = Field(default=0.25, gt=0.0)
-    speech_activity_db_below_peak: float = Field(default=-40.0, lt=0.0)
-    min_target_db: float = -20.0
-    max_target_db: float = 30.0
-    target_offset_db: float = 5.0
-    target_scale_db: float = Field(default=15.0, gt=0.0)
-    hidden_dim: int = Field(default=128, gt=0)
-    dropout: float = Field(default=0.2, ge=0.0, lt=1.0)
-    loss: Literal["mse", "huber"] = "huber"
-    loss_weight: float = Field(default=0.1, ge=0.0)
-    inference_smoothing_points: int = Field(default=3, ge=1)
+    lambda_cls: float = Field(default=1.0, ge=0.0)
+    lambda_sep: float = Field(default=1.0, ge=0.0)
+    lambda_snr: float = Field(default=0.25, ge=0.0)
+    mrstft_weight: float = Field(default=1.0, ge=0.0)
+    relative_l1_weight: float = Field(default=1.0, ge=0.0)
+    sisdr_weight: float = Field(default=0.1, ge=0.0)
+    snr_huber_delta_db: float = Field(default=3.0, gt=0.0)
 
     @model_validator(mode="after")
-    def validate_local_snr(self) -> "LocalSNRConfig":
-        if self.segment_hop_seconds > self.segment_seconds:
-            raise ValueError("local_snr.segment_hop_seconds must be <= segment_seconds")
-        if self.min_target_db >= self.max_target_db:
-            raise ValueError("local_snr.min_target_db must be smaller than max_target_db")
-        if self.inference_smoothing_points % 2 == 0:
-            raise ValueError("local_snr.inference_smoothing_points must be odd")
+    def validate_objective(self) -> "MultiTaskLossConfig":
+        if self.lambda_cls + self.lambda_sep + self.lambda_snr <= 0.0:
+            raise ValueError("at least one multi-task loss weight must be positive")
+        if self.mrstft_weight + self.relative_l1_weight + self.sisdr_weight <= 0.0:
+            raise ValueError("at least one separation loss component must be positive")
         return self
+
+
+class TrainingStagesConfig(BaseModel):
+    """Three-stage schedule: extractor, task heads, then end-to-end."""
+
+    extractor_epochs: int = Field(default=10, ge=0)
+    heads_epochs: int = Field(default=10, ge=0)
+    joint_epochs: int = Field(default=40, ge=0)
+    joint_lr_scale: float = Field(default=0.1, gt=0.0, le=1.0)
+    oracle_noise_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_stages(self) -> "TrainingStagesConfig":
+        if self.extractor_epochs + self.heads_epochs + self.joint_epochs <= 0:
+            raise ValueError("at least one training stage must contain an epoch")
+        return self
+
+
+class TrainAugmentationConfig(BaseModel):
+    """Label-preserving waveform augmentation applied only to the train split."""
+
+    enabled: bool = False
+
+    # Real random cropping for clips that are exactly ``clip_seconds`` long is
+    # implemented as pad-and-crop. Longer source files use an ordinary crop.
+    random_crop_padding_seconds: float = Field(default=0.5, ge=0.0)
+
+    # Replace the clean speech stem with another clean utterance from train.
+    random_clean_probability: float = Field(default=1.0, ge=0.0, le=1.0)
+    clean_speed_probability: float = Field(default=0.3, ge=0.0, le=1.0)
+    clean_speed_min_rate: float = Field(default=0.9, gt=0.0)
+    clean_speed_max_rate: float = Field(default=1.1, gt=0.0)
+    clean_gain_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+    clean_gain_min_db: float = -6.0
+    clean_gain_max_db: float = 6.0
+    clean_reverb_probability: float = Field(default=0.3, ge=0.0, le=1.0)
+
+    # Noise-class-preserving transformations.
+    noise_time_shift_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+    noise_time_shift_max_seconds: float = Field(default=0.5, ge=0.0)
+    noise_gain_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+    noise_gain_min_db: float = -6.0
+    noise_gain_max_db: float = 6.0
+    noise_eq_probability: float = Field(default=0.3, ge=0.0, le=1.0)
+    noise_reverb_probability: float = Field(default=0.3, ge=0.0, le=1.0)
+    noise_time_stretch_probability: float = Field(default=0.3, ge=0.0, le=1.0)
+    noise_time_stretch_min_rate: float = Field(default=0.9, gt=0.0)
+    noise_time_stretch_max_rate: float = Field(default=1.1, gt=0.0)
+    noise_polarity_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    # Both sources carry the same hard label, so the target remains unchanged.
+    same_class_mixup_probability: float = Field(default=0.3, ge=0.0, le=1.0)
+    same_class_mixup_alpha: float = Field(default=0.4, gt=0.0)
+
+    @model_validator(mode="after")
+    def validate_augmentation_ranges(self) -> "TrainAugmentationConfig":
+        ranges = (
+            ("clean_speed", self.clean_speed_min_rate, self.clean_speed_max_rate),
+            ("noise_time_stretch", self.noise_time_stretch_min_rate, self.noise_time_stretch_max_rate),
+            ("clean_gain", self.clean_gain_min_db, self.clean_gain_max_db),
+            ("noise_gain", self.noise_gain_min_db, self.noise_gain_max_db),
+        )
+        for name, minimum, maximum in ranges:
+            if minimum > maximum:
+                raise ValueError(f"{name}_min must not exceed {name}_max")
+        return self
+
+
+class RegularizationConfig(BaseModel):
+    """Weight-space penalties that shrink capacity when augmentation is not enough.
+
+    L2 rides on AdamW's decoupled weight decay; L1 is added to the training loss.
+    Both look at the same parameters, so a single ``exclude_bias_and_norm`` switch
+    governs the two of them.
+    """
+
+    l1_lambda: float = Field(default=0.0, ge=0.0)
+    l2_lambda: float = Field(default=1e-4, ge=0.0)
+
+    # Biases and BatchNorm scale/shift are 1-D. Penalising them shifts the
+    # normalisation statistics instead of removing capacity, which hurts
+    # accuracy long before it curbs overfitting.
+    exclude_bias_and_norm: bool = True
 
 
 class SplitterConfig(BaseModel):
@@ -136,9 +221,18 @@ class TrainConfig(BaseModel):
     epochs: int = Field(default=100, gt=0)
     batch_size: int = Field(default=32, gt=0)
     learning_rate: float = Field(default=1e-3, gt=0.0)
+    # Kept for configs written before the regularization block existed; it seeds
+    # regularization.l2_lambda and is then rewritten to match it.
     weight_decay: float = Field(default=1e-4, ge=0.0)
     monitor: Literal[
-        "macro_f1", "mAP", "hamming_accuracy", "subset_accuracy", "loss"
+        "macro_f1",
+        "mAP",
+        "accuracy",
+        "top1_accuracy",
+        "balanced_accuracy",
+        "hamming_accuracy",
+        "subset_accuracy",
+        "loss",
     ] = "macro_f1"
     early_stopping: bool = True
     patience: int = Field(default=15, gt=0)
@@ -152,20 +246,29 @@ class TrainConfig(BaseModel):
     random_seed: int = Field(default=2026, ge=0)
     # Runs on the 36-label dataset write here. The 21-label results in
     # "checkpoint" are kept as-is and are never overwritten.
-    ckpt_dir: str = "checkpoint_36_labels_local_snr"
+    ckpt_dir: str = "checkpoint_36_labels"
     profile_model: bool = False
     snr_bands: List[SnrBandConfig] = Field(default_factory=lambda: list(DEFAULT_SNR_BANDS))
     model: ModelConfig = Field(default_factory=ModelConfig)
     dataset_splitter: SplitterConfig = Field(default_factory=SplitterConfig)
     audio_features: AudioFeaturesConfig = Field(default_factory=AudioFeaturesConfig)
-    local_snr: LocalSNRConfig = Field(default_factory=LocalSNRConfig)
+    augmentation: TrainAugmentationConfig = Field(default_factory=TrainAugmentationConfig)
+    regularization: RegularizationConfig = Field(default_factory=RegularizationConfig)
+    multitask_loss: MultiTaskLossConfig = Field(default_factory=MultiTaskLossConfig)
+    stages: TrainingStagesConfig = Field(default_factory=TrainingStagesConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def seed_regularization_from_weight_decay(cls, data: object) -> object:
+        """Let an old config's ``weight_decay`` stand in for ``l2_lambda``."""
+        if isinstance(data, dict) and "weight_decay" in data and "regularization" not in data:
+            return {**data, "regularization": {"l2_lambda": data["weight_decay"]}}
+        return data
 
     @model_validator(mode="after")
-    def validate_multitask_settings(self) -> "TrainConfig":
-        if self.local_snr.enabled and self.dataset_splitter.signal_type != "mixture":
-            raise ValueError("local SNR training requires dataset_splitter.signal_type='mixture'")
-        if self.local_snr.segment_seconds > self.audio_features.clip_seconds:
-            raise ValueError("local_snr.segment_seconds must be <= audio_features.clip_seconds")
+    def align_weight_decay_with_l2(self) -> "TrainConfig":
+        # One L2 strength, two names. The block is authoritative when both are set.
+        self.weight_decay = self.regularization.l2_lambda
         return self
 
     @classmethod

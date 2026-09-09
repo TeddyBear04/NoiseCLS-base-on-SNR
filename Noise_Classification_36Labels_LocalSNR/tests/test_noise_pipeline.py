@@ -13,18 +13,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import AudioFeaturesConfig, LocalSNRConfig, SplitterConfig
+from config import AudioFeaturesConfig, SplitterConfig, TrainAugmentationConfig, TrainConfig
 from dataset import (
     NoiseDataLoaderManager,
-    compute_local_snr_targets,
-    local_snr_segment_starts,
-    mix_with_dynamic_snr,
+    mix_with_snr,
+    random_pad_crop,
+    random_time_shift,
+    same_class_mixup,
     sliding_window_starts,
 )
-from features import AudioFrontend
-from models import Cnn14MobileV2LocalSNR, LocalSNRAudioModel
-from utils import MultiTaskNoiseSNRLoss
-from utils.evaluate import aggregate_windows, compute_local_snr_metrics, compute_multilabel_metrics
+from tasks.audio_train import AudioTrainer, l1_penalty, split_decay_parameters
+from utils import SingleLabelCELoss
+from utils.evaluate import aggregate_windows, compute_metrics
 
 # Both fixtures describe the same three labels and the same two clips per split;
 # only the on-disk encoding differs.
@@ -48,6 +48,9 @@ def _write_clip(split_path: Path, sample_id: str, duration: float, noise_directo
 
 def build_multi_hot_dataset(root: Path) -> None:
     """labels.txt + a multi_hot_<N> manifest column, as in the 36-label dataset."""
+    # With labels.txt the line order is the label index, so the multi-hot row is
+    # as wide as the catalog and its flags sit at those positions - not at the
+    # AudioSet indices, which only the selected_labels.csv layout uses.
     (root / "labels.txt").write_text("\n".join(LABEL_NAMES) + "\n", encoding="utf-8")
     multi_hot_width = len(LABEL_NAMES)
 
@@ -153,9 +156,6 @@ class ManifestLoaderTest(unittest.TestCase):
         train_item = manager.datasets["train"][0]
         self.assertEqual(tuple(train_item["waveform"].shape), (16_000,))
         self.assertEqual(tuple(train_item["target"].shape), (3,))
-        self.assertEqual(tuple(train_item["local_snr_db"].shape), (3,))
-        self.assertEqual(tuple(train_item["local_snr_mask"].shape), (3,))
-        self.assertTrue(bool(torch.isfinite(train_item["local_snr_db"]).all()))
         self.assertTrue(bool(train_item["dynamic_snr"]))
         self.assertTrue(bool(torch.isfinite(train_item["waveform"]).all()))
         # The first clip carries label A, the second carries B and C.
@@ -214,13 +214,105 @@ class ManifestLoaderTest(unittest.TestCase):
 
 
 class WindowingAndMetricsTest(unittest.TestCase):
-    def test_windowing_and_multilabel_metrics(self) -> None:
+    def test_waveform_augmentation_helpers_preserve_shape_and_finiteness(self) -> None:
+        torch.manual_seed(7)
+        np.random.seed(7)
+        waveform = torch.linspace(-0.25, 0.25, 16_000)
+        shifted = random_time_shift(waveform, max_shift_samples=2_000)
+        cropped = random_pad_crop(waveform, length=16_000, padding_samples=2_000)
+        mixed, coefficient = same_class_mixup(waveform, waveform.flip(0), alpha=0.4)
+        mixture = mix_with_snr(waveform, mixed, snr_db=5.0)
+
+        for result in (shifted, cropped, mixed, mixture):
+            self.assertEqual(tuple(result.shape), (16_000,))
+            self.assertTrue(bool(torch.isfinite(result).all()))
+        self.assertGreaterEqual(coefficient, 0.0)
+        self.assertLessEqual(coefficient, 1.0)
+        self.assertFalse(torch.equal(shifted, waveform))
+        self.assertFalse(torch.equal(cropped, waveform))
+
+    def test_online_augmentation_is_train_only_and_keeps_same_class_label(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            build_multi_hot_dataset(root)
+
+            # Give both train records label A so same-class Mixup has a valid,
+            # distinct partner while validation/test remain untouched.
+            manifest_path = root / "train" / "manifest.csv"
+            with manifest_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+                fieldnames = list(rows[0])
+            rows[1]["multi_hot_3"] = json.dumps([1, 0, 0])
+            with manifest_path.open("w", encoding="utf-8-sig", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            augmentation = TrainAugmentationConfig(
+                enabled=True,
+                random_clean_probability=1.0,
+                clean_speed_probability=0.0,
+                clean_gain_probability=0.0,
+                clean_reverb_probability=0.0,
+                noise_time_shift_probability=0.0,
+                noise_gain_probability=0.0,
+                noise_eq_probability=0.0,
+                noise_reverb_probability=0.0,
+                noise_time_stretch_probability=0.0,
+                noise_polarity_probability=0.0,
+                same_class_mixup_probability=1.0,
+            )
+            manager = NoiseDataLoaderManager(
+                SplitterConfig(
+                    dataset_path=str(root),
+                    dynamic_snr_enabled=True,
+                    dynamic_snr_probability=1.0,
+                ),
+                AUDIO_CONFIG,
+                batch_size=2,
+                num_workers=0,
+                pin_memory=False,
+                classes_num=3,
+                augmentation_config=augmentation,
+            )
+
+            train_item = manager.datasets["train"][0]
+            validation_item = manager.datasets["val"][0]
+            self.assertTrue(bool(train_item["waveform_augmented"]))
+            self.assertTrue(bool(train_item["clean_replaced"]))
+            self.assertTrue(bool(train_item["same_class_mixup"]))
+            self.assertEqual(train_item["target"].tolist(), [1.0, 0.0, 0.0])
+            self.assertFalse(bool(validation_item["waveform_augmented"]))
+            self.assertFalse(bool(validation_item["clean_replaced"]))
+            self.assertFalse(bool(validation_item["same_class_mixup"]))
+
+    def test_windowing_and_single_label_metrics(self) -> None:
         self.assertEqual(sliding_window_starts(25, 10, 6), [0, 6, 12, 15])
-        target = np.asarray([[1, 0, 0], [0, 1, 1]], dtype=np.float32)
-        probability = np.asarray([[0.9, 0.1, 0.2], [0.1, 0.8, 0.9]], dtype=np.float32)
-        metrics = compute_multilabel_metrics(target, probability, 0.5, LABEL_NAMES)
+        # One label per clip, and the argmax picks the right one every time.
+        target = np.asarray([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+        # Real softmax rows: they sum to one and no winner clears 0.5.
+        probability = np.asarray(
+            [[0.45, 0.35, 0.20], [0.30, 0.42, 0.28], [0.33, 0.25, 0.42]], dtype=np.float32
+        )
+        metrics = compute_metrics(target, probability, LABEL_NAMES)
         self.assertAlmostEqual(metrics["mAP"], 1.0)
         self.assertAlmostEqual(metrics["f1_macro"], 1.0)
+        self.assertAlmostEqual(metrics["top1_accuracy"], 1.0)
+        # Softmax outputs rarely clear 0.5, so the prediction must come from the
+        # argmax: a threshold rule would have scored these three clips as zero.
+        self.assertAlmostEqual(metrics["subset_accuracy"], 1.0)
+
+    def test_argmax_metrics_on_a_wrong_prediction(self) -> None:
+        target = np.asarray([[1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        # Clip 2 is wrong: B is the truth but C wins, with B ranked second.
+        probability = np.asarray([[0.48, 0.30, 0.22], [0.10, 0.42, 0.48]], dtype=np.float32)
+        metrics = compute_metrics(target, probability, LABEL_NAMES)
+        self.assertAlmostEqual(metrics["top1_accuracy"], 0.5)
+        self.assertAlmostEqual(metrics["top3_accuracy"], 1.0)
+        # Under a single label per clip these three collapse onto top-1.
+        self.assertAlmostEqual(metrics["subset_accuracy"], metrics["top1_accuracy"])
+        self.assertAlmostEqual(metrics["f1_micro"], metrics["top1_accuracy"])
+        self.assertAlmostEqual(metrics["balanced_accuracy"], metrics["top1_accuracy"])
         ids, clip_probability, _, _ = aggregate_windows(
             ["one", "one", "two"],
             np.ones((3, 3), dtype=np.float32),
@@ -230,59 +322,118 @@ class WindowingAndMetricsTest(unittest.TestCase):
         self.assertEqual(ids, ["one", "two"])
         self.assertEqual(clip_probability.shape, (2, 3))
 
-    def test_local_snr_targets_and_dynamic_mix_are_aligned(self) -> None:
-        sample_rate = 16_000
-        time = torch.arange(sample_rate, dtype=torch.float32) / sample_rate
-        clean = 0.2 * torch.sin(2 * torch.pi * 300 * time)
-        noise = 0.05 * torch.sin(2 * torch.pi * 900 * time)
-        mixture, clean_component, noise_component = mix_with_dynamic_snr(
-            clean, noise, sample_rate, -5.0, 20.0, 0.5
-        )
-        self.assertTrue(torch.allclose(mixture, clean_component + noise_component, atol=1e-6))
-        config = LocalSNRConfig()
-        target, mask, centers = compute_local_snr_targets(
-            clean_component, noise_component, sample_rate, config
-        )
-        self.assertEqual(target.shape, mask.shape)
-        self.assertEqual(target.shape, centers.shape)
-        self.assertEqual(target.numel(), 3)
-        self.assertTrue(bool(mask.all()))
 
-    def test_multitask_model_and_loss_shapes(self) -> None:
-        local_config = LocalSNRConfig()
-        clip_samples = int(AUDIO_CONFIG.sample_rate * AUDIO_CONFIG.clip_seconds)
-        segment_count = len(
-            local_snr_segment_starts(clip_samples, AUDIO_CONFIG.sample_rate, local_config)
+class _TinyClassifier(torch.nn.Module):
+    """Conv + BatchNorm + Linear, i.e. one of every parameter shape that matters."""
+
+    def __init__(self, classes_num: int = 3, input_size: int = 4) -> None:
+        super().__init__()
+        self.conv = torch.nn.Conv1d(1, 2, kernel_size=1)
+        self.norm = torch.nn.BatchNorm1d(2)
+        self.linear = torch.nn.Linear(2 * input_size, classes_num)
+
+    def forward(self, waveform: torch.Tensor) -> dict:
+        hidden = self.norm(self.conv(waveform.unsqueeze(1)))
+        return {"clipwise_output": self.linear(hidden.flatten(1))}
+
+
+class RegularizationTest(unittest.TestCase):
+    def test_regularization_defaults_to_the_legacy_weight_decay(self) -> None:
+        # Configs written before the regularization block still have to train
+        # with the L2 strength they asked for.
+        config = TrainConfig(weight_decay=0.02)
+        self.assertAlmostEqual(config.regularization.l2_lambda, 0.02)
+        self.assertAlmostEqual(config.regularization.l1_lambda, 0.0)
+        self.assertTrue(config.regularization.exclude_bias_and_norm)
+
+    def test_regularization_block_overrides_the_legacy_weight_decay(self) -> None:
+        config = TrainConfig(
+            weight_decay=0.02,
+            regularization={"l1_lambda": 1e-5, "l2_lambda": 0.01},
         )
-        model = LocalSNRAudioModel(
-            AudioFrontend(AUDIO_CONFIG),
-            Cnn14MobileV2LocalSNR(classes_num=3),
-            local_config,
-            segment_count,
+        self.assertAlmostEqual(config.regularization.l2_lambda, 0.01)
+        self.assertAlmostEqual(config.regularization.l1_lambda, 1e-5)
+        # weight_decay is kept in step so nothing reads a stale L2 strength.
+        self.assertAlmostEqual(config.weight_decay, 0.01)
+
+    def test_decayed_group_excludes_bias_and_normalisation(self) -> None:
+        model = _TinyClassifier()
+        decayed, skipped = split_decay_parameters(model, exclude_bias_and_norm=True)
+        self.assertEqual([tuple(p.shape) for p in decayed], [(2, 1, 1), (3, 8)])
+        # conv bias, BatchNorm weight, BatchNorm bias, linear bias.
+        self.assertEqual(len(skipped), 4)
+        self.assertTrue(all(p.ndim == 1 for p in skipped))
+        total = sum(1 for _ in model.parameters())
+        self.assertEqual(len(decayed) + len(skipped), total)
+
+    def test_decayed_group_can_cover_every_parameter(self) -> None:
+        model = _TinyClassifier()
+        decayed, skipped = split_decay_parameters(model, exclude_bias_and_norm=False)
+        self.assertEqual(skipped, [])
+        self.assertEqual(len(decayed), sum(1 for _ in model.parameters()))
+
+    def test_l1_penalty_sums_absolute_weights(self) -> None:
+        parameters = [
+            torch.nn.Parameter(torch.tensor([[1.0, -2.0]])),
+            torch.nn.Parameter(torch.tensor([[-3.0]])),
+        ]
+        self.assertAlmostEqual(float(l1_penalty(parameters, 0.5).detach()), 3.0)
+        # A disabled penalty must not build a graph node at all.
+        zero = l1_penalty(parameters, 0.0)
+        self.assertAlmostEqual(float(zero), 0.0)
+        self.assertFalse(zero.requires_grad)
+
+    def test_l1_penalty_reaches_gradients_but_not_the_logged_loss(self) -> None:
+        torch.manual_seed(0)
+        model = _TinyClassifier()
+        waveform = torch.randn(4, 4)
+        target = torch.eye(3)[torch.tensor([0, 1, 2, 0])]
+        batches = [{"waveform": waveform, "target": target}]
+
+        # BatchNorm normalises with batch statistics in train mode and running
+        # statistics in eval mode, so the reference has to use the same mode the
+        # training loop does or the two losses are not comparable.
+        model.train()
+        with torch.no_grad():
+            expected_ce = float(
+                SingleLabelCELoss()(model(waveform), {"target": target})
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            trainer = AudioTrainer(
+                model=model,
+                optimizer=torch.optim.AdamW(model.parameters(), lr=0.0),
+                device=torch.device("cpu"),
+                ckpt_dir=directory,
+                label_names=LABEL_NAMES,
+                early_stopping=False,
+                l1_lambda=1.0,
+            )
+            logged_loss, _ = trainer._train_epoch(batches, epoch=1)
+
+        # A learning rate of zero keeps the weights fixed, so the logged number
+        # is comparable with the reference cross-entropy above.
+        self.assertAlmostEqual(logged_loss, expected_ce, places=5)
+        # The penalty still has to steer training: its gradient is the sign of
+        # each decayed weight, which cross-entropy alone would never produce.
+        gradients = [p.grad for p in trainer.l1_parameters]
+        self.assertTrue(all(gradient is not None for gradient in gradients))
+        self.assertTrue(
+            any(torch.all(gradient.abs() >= 1.0 - 1e-6) for gradient in gradients)
         )
-        waveform = torch.randn(2, clip_samples)
-        output = model(waveform)
-        self.assertEqual(tuple(output["clipwise_output"].shape), (2, 3))
-        self.assertEqual(tuple(output["local_snr_db"].shape), (2, segment_count))
-        loss = MultiTaskNoiseSNRLoss(
-            snr_weight=local_config.loss_weight,
-            target_offset_db=local_config.target_offset_db,
-            target_scale_db=local_config.target_scale_db,
-        )(
-            output,
-            {
-                "target": torch.zeros(2, 3),
-                "local_snr_db": torch.zeros(2, segment_count),
-                "local_snr_mask": torch.ones(2, segment_count, dtype=torch.bool),
-            },
-        )
-        self.assertTrue(bool(torch.isfinite(loss)))
-        metrics = compute_local_snr_metrics(
-            np.zeros((2, segment_count), dtype=np.float32),
-            np.ones((2, segment_count), dtype=np.float32),
-            np.ones((2, segment_count), dtype=bool),
-        )
-        self.assertAlmostEqual(metrics["local_snr_mae_db"], 1.0)
+
+    def test_trainer_without_l1_leaves_the_parameter_list_empty(self) -> None:
+        model = _TinyClassifier()
+        with tempfile.TemporaryDirectory() as directory:
+            trainer = AudioTrainer(
+                model=model,
+                optimizer=torch.optim.AdamW(model.parameters(), lr=0.0),
+                device=torch.device("cpu"),
+                ckpt_dir=directory,
+                label_names=LABEL_NAMES,
+                early_stopping=False,
+            )
+        self.assertEqual(trainer.l1_parameters, [])
 
 
 if __name__ == "__main__":

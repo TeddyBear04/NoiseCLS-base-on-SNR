@@ -159,8 +159,6 @@ class Cnn14MobileV2(BaseBackbone):
     def __init__(self, classes_num: int = 4) -> None:
         super(Cnn14MobileV2, self).__init__()
         self.model_name = "cnn14_mobilev2"
-        self.feature_channels = 256
-        self.final_pool_size = (2, 2)
 
         self.conv_block1 = Mobilev2Block(in_channels=1, out_channels=16)
         self.conv_block2 = Mobilev2Block(in_channels=16, out_channels=32)
@@ -177,8 +175,10 @@ class Cnn14MobileV2(BaseBackbone):
         init_layer(self.fc1)
         init_layer(self.fc_audioset)
 
-    def forward_feature_map(self, x: torch.Tensor) -> torch.Tensor:
-        """Return the shared time-frequency map before global pooling."""
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward Pass of the CNN14MobileV2 backbone model.
+        """
         x = self.conv_block1(x, pool_size=(2, 2), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)
         
@@ -191,34 +191,17 @@ class Cnn14MobileV2(BaseBackbone):
         x = self.conv_block4(x, pool_size=(2, 2), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)
         
-        x = self.conv_block5(x, pool_size=self.final_pool_size, pool_type='avg')
+        x = self.conv_block5(x, pool_size=(2, 2), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)
-        return x
 
-    @staticmethod
-    def temporal_features(feature_map: torch.Tensor) -> torch.Tensor:
-        """Collapse frequency while preserving time: [B, C, T, F] -> [B, T, C]."""
-        return torch.mean(feature_map, dim=3).transpose(1, 2)
-
-    def classify_temporal(self, temporal: torch.Tensor) -> torch.Tensor:
-        """Use the original mean+max temporal pooling classification head."""
-        x = temporal.transpose(1, 2)
-        x = torch.max(x, dim=2).values + torch.mean(x, dim=2)
+        # Global average and max pooling along time and frequency axes
+        x = torch.mean(x, dim=3)
+        (x1, _) = torch.max(x, dim=2)
+        x2 = torch.mean(x, dim=2)
+        x = x1 + x2
+        
         x = F.dropout(x, p=0.2, training=self.training)
         x = F.leaky_relu_(self.fc1(x), negative_slope=0.01)
-        return self.fc_audioset(x)
+        clipwise_output = self.fc_audioset(x)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass for the original classification-only interface."""
-        feature_map = self.forward_feature_map(x)
-        temporal = self.temporal_features(feature_map)
-        return self.classify_temporal(temporal)
-
-
-class Cnn14MobileV2LocalSNR(Cnn14MobileV2):
-    """Local-SNR variant that keeps twice the temporal resolution."""
-
-    def __init__(self, classes_num: int = 36) -> None:
-        super().__init__(classes_num=classes_num)
-        self.model_name = "cnn14_mobilev2_local_snr"
-        self.final_pool_size = (1, 2)
+        return clipwise_output

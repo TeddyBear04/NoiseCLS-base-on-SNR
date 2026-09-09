@@ -46,15 +46,52 @@ def _per_class_auc(target: np.ndarray, probability: np.ndarray) -> np.ndarray:
     return np.asarray(values, dtype=np.float64)
 
 
-def compute_multilabel_metrics(
+def top_k_accuracy(target: np.ndarray, probability: np.ndarray, k: int = 1) -> float:
+    """Single-label accuracy: is a true label among the k highest-scoring outputs?
+
+    Every clip in the dataset carries exactly one label, so k=1 is ordinary
+    multi-class accuracy. Reading the hit out of the target row instead of
+    comparing argmax indices keeps the number meaningful if a clip ever ends up
+    with more than one positive, and it never depends on the decision threshold.
+    """
+    if target.size == 0:
+        return float("nan")
+    k = max(1, min(int(k), probability.shape[1]))
+    top_k = np.argpartition(-probability, kth=k - 1, axis=1)[:, :k]
+    hits = np.take_along_axis(target, top_k, axis=1).max(axis=1)
+    return float((hits > 0).mean())
+
+
+def per_label_top1_recall(target: np.ndarray, probability: np.ndarray) -> np.ndarray:
+    """Top-1 accuracy restricted to the clips of each label."""
+    predicted = probability.argmax(axis=1)
+    values = []
+    for class_index in range(target.shape[1]):
+        mask = target[:, class_index] > 0
+        values.append(
+            float("nan") if not mask.any() else float((predicted[mask] == class_index).mean())
+        )
+    return np.asarray(values, dtype=np.float64)
+
+
+def compute_metrics(
     target: np.ndarray,
     probability: np.ndarray,
-    threshold: float,
     label_names: Sequence[str],
     include_report: bool = True,
 ) -> Dict[str, Any]:
+    """Score one split of single-label predictions.
+
+    The model is trained with cross-entropy, so the 36 softmax outputs compete
+    and the prediction is simply the argmax — there is no threshold to tune.
+    That makes ``subset_accuracy`` and ``f1_micro`` collapse onto
+    ``top1_accuracy``; both are kept so the numbers stay comparable with the
+    earlier multi-label runs.
+    """
     target = target.astype(np.int32, copy=False)
-    prediction = (probability >= threshold).astype(np.int32)
+    prediction = np.zeros_like(target)
+    if prediction.size:
+        prediction[np.arange(len(prediction)), probability.argmax(axis=1)] = 1
     average_precision = _per_class_average_precision(target, probability)
     auc = _per_class_auc(target, probability)
     precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
@@ -69,6 +106,12 @@ def compute_multilabel_metrics(
     # Element-wise correctness per label. Its mean over labels equals
     # hamming_accuracy, so it is kept only for the per-label report.
     per_label_accuracy = (target == prediction).mean(axis=0).astype(np.float64)
+    # Single-label view of the same predictions: the task assigns exactly one
+    # label per clip, so top-1 accuracy is the headline number and neither it
+    # nor top-3 depends on the threshold.
+    top1 = top_k_accuracy(target, probability, 1)
+    top3 = top_k_accuracy(target, probability, 3)
+    label_top1_recall = per_label_top1_recall(target, probability)
     report = ""
     if include_report:
         report = classification_report(
@@ -84,7 +127,13 @@ def compute_multilabel_metrics(
         "auc": auc,
         "macro_auc": float(np.nanmean(auc)),
         "subset_accuracy": float(accuracy_score(target, prediction)),
-        "accuracy": float(accuracy_score(target, prediction)),
+        # "accuracy" means the single-label top-1 accuracy of this task, not the
+        # multi-label exact-match rate that lives in "subset_accuracy".
+        "accuracy": top1,
+        "top1_accuracy": top1,
+        "top3_accuracy": top3,
+        "balanced_accuracy": float(np.nanmean(label_top1_recall)),
+        "per_label_top1_recall": label_top1_recall,
         "hamming_accuracy": float(1.0 - hamming_loss(target, prediction)),
         "per_label_accuracy": per_label_accuracy,
         "precision_macro": float(precision_macro),
@@ -106,34 +155,6 @@ def compute_multilabel_metrics(
         "target": target,
         "probability": probability,
         "prediction": prediction,
-    }
-
-
-def compute_local_snr_metrics(
-    target_db: np.ndarray,
-    prediction_db: np.ndarray,
-    mask: np.ndarray,
-) -> Dict[str, float | int]:
-    """Compute regression metrics only where clean speech is active."""
-    valid = mask.astype(bool, copy=False)
-    target = target_db[valid].astype(np.float64, copy=False)
-    prediction = prediction_db[valid].astype(np.float64, copy=False)
-    if target.size == 0:
-        return {
-            "local_snr_mae_db": float("nan"),
-            "local_snr_rmse_db": float("nan"),
-            "local_snr_pearson": float("nan"),
-            "local_snr_valid_segments": 0,
-        }
-    error = prediction - target
-    pearson = float("nan")
-    if target.size > 1 and np.std(target) > 0.0 and np.std(prediction) > 0.0:
-        pearson = float(np.corrcoef(target, prediction)[0, 1])
-    return {
-        "local_snr_mae_db": float(np.mean(np.abs(error))),
-        "local_snr_rmse_db": float(np.sqrt(np.mean(np.square(error)))),
-        "local_snr_pearson": pearson,
-        "local_snr_valid_segments": int(target.size),
     }
 
 
@@ -185,7 +206,6 @@ def compute_snr_band_metrics(
     clip_target: np.ndarray,
     clip_probability: np.ndarray,
     clip_snr: np.ndarray,
-    threshold: float,
     label_names: Sequence[str],
     snr_bands: Sequence[tuple[str, float, float]] = DEFAULT_SNR_BANDS,
 ) -> Dict[str, Dict[str, Any]]:
@@ -198,10 +218,9 @@ def compute_snr_band_metrics(
         if not mask.any():
             logger.warning("SNR band %s matched no clips; skipping it", name)
             continue
-        metrics = compute_multilabel_metrics(
+        metrics = compute_metrics(
             clip_target[mask],
             clip_probability[mask],
-            threshold,
             label_names,
             include_report=False,
         )
@@ -209,6 +228,9 @@ def compute_snr_band_metrics(
             "samples": int(mask.sum()),
             "snr_min_db": float(min_db),
             "snr_max_db": float(max_db),
+            "top1_accuracy": metrics["top1_accuracy"],
+            "top3_accuracy": metrics["top3_accuracy"],
+            "balanced_accuracy": metrics["balanced_accuracy"],
             "mAP": metrics["mAP"],
             "macro_auc": metrics["macro_auc"],
             "macro_f1": metrics["f1_macro"],
@@ -245,14 +267,12 @@ class AudioEvaluator(BaseEvaluator):
         self,
         model: nn.Module,
         label_names: Sequence[str],
-        threshold: float = 0.5,
         loss_fn: nn.Module | None = None,
         window_reduction: str = "mean",
         snr_bands: Sequence[tuple[str, float, float]] | None = None,
     ) -> None:
         super().__init__(model)
         self.label_names = list(label_names)
-        self.threshold = threshold
         self.loss_fn = loss_fn
         self.window_reduction = window_reduction
         self.snr_bands = tuple(snr_bands) if snr_bands else DEFAULT_SNR_BANDS
@@ -262,9 +282,6 @@ class AudioEvaluator(BaseEvaluator):
         probabilities = []
         targets = []
         snr_values = []
-        local_snr_targets = []
-        local_snr_predictions = []
-        local_snr_masks = []
         loss_sum = 0.0
         window_count = 0
         self.model.eval()
@@ -277,22 +294,12 @@ class AudioEvaluator(BaseEvaluator):
                 logits = output["clipwise_output"]
                 if self.loss_fn is not None:
                     batch_size = waveform.size(0)
-                    loss_targets = {
-                        "target": target,
-                        "local_snr_db": batch["local_snr_db"].to(self.device, non_blocking=True),
-                        "local_snr_mask": batch["local_snr_mask"].to(
-                            self.device, non_blocking=True
-                        ),
-                    }
-                    loss_sum += float(self.loss_fn(output, loss_targets).item()) * batch_size
+                    loss_sum += float(self.loss_fn(output, {"target": target}).item()) * batch_size
                     window_count += batch_size
                 sample_ids.extend(list(batch["audio_name"]))
-                probabilities.append(torch.sigmoid(logits).cpu().numpy())
+                probabilities.append(torch.softmax(logits, dim=-1).cpu().numpy())
                 targets.append(target.cpu().numpy())
                 snr_values.append(batch["target_snr_db"].cpu().numpy())
-                local_snr_targets.append(batch["local_snr_db"].cpu().numpy())
-                local_snr_masks.append(batch["local_snr_mask"].cpu().numpy())
-                local_snr_predictions.append(output["local_snr_db"].cpu().numpy())
 
         window_probability = np.concatenate(probabilities, axis=0)
         window_target = np.concatenate(targets, axis=0)
@@ -304,10 +311,9 @@ class AudioEvaluator(BaseEvaluator):
             window_snr,
             reduction=self.window_reduction,
         )
-        statistics = compute_multilabel_metrics(
+        statistics = compute_metrics(
             clip_target,
             clip_probability,
-            self.threshold,
             self.label_names,
         )
         statistics["loss"] = loss_sum / max(window_count, 1)
@@ -315,19 +321,11 @@ class AudioEvaluator(BaseEvaluator):
         statistics["target_snr_db"] = clip_snr
         statistics["num_clips"] = len(clip_ids)
         statistics["num_windows"] = len(sample_ids)
-        statistics.update(
-            compute_local_snr_metrics(
-                np.concatenate(local_snr_targets, axis=0),
-                np.concatenate(local_snr_predictions, axis=0),
-                np.concatenate(local_snr_masks, axis=0),
-            )
-        )
 
         statistics["snr_metrics"] = compute_snr_band_metrics(
             clip_target,
             clip_probability,
             clip_snr,
-            self.threshold,
             self.label_names,
             self.snr_bands,
         )

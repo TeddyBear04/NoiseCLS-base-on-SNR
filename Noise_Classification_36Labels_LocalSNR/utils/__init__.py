@@ -1,4 +1,14 @@
-from .losses import ClipBCELoss, ClipCELoss, MultiLabelBCELoss, MultiTaskNoiseSNRLoss
+from .losses import (
+    BlackFeatherMultiTaskLoss,
+    ClipBCELoss,
+    ClipCELoss,
+    MultiLabelBCELoss,
+    MultiResolutionSTFTLoss,
+    SingleLabelCELoss,
+    masked_huber_loss,
+    relative_l1_loss,
+    si_sdr,
+)
 from .evaluate import (
     BaseEvaluator,
     AudioEvaluator,
@@ -14,7 +24,12 @@ __all__ = [
     "ClipCELoss",
     "ClipBCELoss",
     "MultiLabelBCELoss",
-    "MultiTaskNoiseSNRLoss",
+    "SingleLabelCELoss",
+    "BlackFeatherMultiTaskLoss",
+    "MultiResolutionSTFTLoss",
+    "masked_huber_loss",
+    "relative_l1_loss",
+    "si_sdr",
     "BaseEvaluator",
     "AudioEvaluator",
     "DEFAULT_SNR_BANDS",

@@ -11,9 +11,7 @@ if project_root not in sys.path:
 import logging
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from models.base_backbone import BaseBackbone
-from config import LocalSNRConfig
 
 # Logging configuration
 logging.basicConfig(
@@ -70,55 +68,4 @@ class AudioModel(nn.Module):
         # Format output dictionary to align with Trainer expectation
         return {
             "clipwise_output": logits
-        }
-
-
-class LocalSNRAudioModel(nn.Module):
-    """Shared CNN with file-level noise and time-local SNR heads."""
-
-    def __init__(
-        self,
-        frontend: nn.Module,
-        backbone: BaseBackbone,
-        local_snr_config: LocalSNRConfig,
-        segment_count: int,
-    ) -> None:
-        super().__init__()
-        if not hasattr(backbone, "forward_feature_map") or not hasattr(backbone, "temporal_features"):
-            raise ValueError(
-                "Local SNR requires Cnn14MobileV2LocalSNR or another time-resolved backbone"
-            )
-        if segment_count <= 0:
-            raise ValueError("segment_count must be positive")
-        self.frontend = frontend
-        self.backbone = backbone
-        self.local_snr_config = local_snr_config
-        self.segment_count = segment_count
-        channels = int(getattr(backbone, "feature_channels"))
-        self.snr_head = nn.Sequential(
-            nn.Linear(channels, local_snr_config.hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(local_snr_config.dropout),
-            nn.Linear(local_snr_config.hidden_dim, 1),
-        )
-
-    def forward(self, input_tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
-        features = self.frontend(input_tensor)
-        feature_map = self.backbone.forward_feature_map(features)
-        temporal = self.backbone.temporal_features(feature_map)
-        clip_logits = self.backbone.classify_temporal(temporal)
-
-        aligned = F.adaptive_avg_pool1d(
-            temporal.transpose(1, 2), self.segment_count
-        ).transpose(1, 2)
-        snr_normalized = self.snr_head(aligned).squeeze(-1)
-        snr_db = (
-            snr_normalized * self.local_snr_config.target_scale_db
-            + self.local_snr_config.target_offset_db
-        )
-        return {
-            "clipwise_output": clip_logits,
-            "local_snr_normalized": snr_normalized,
-            "local_snr_db": snr_db,
-            "segment_features": aligned,
         }

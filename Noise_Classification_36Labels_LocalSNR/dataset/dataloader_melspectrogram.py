@@ -25,7 +25,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from config import AudioFeaturesConfig, LocalSNRConfig, SplitterConfig
+from config import AudioFeaturesConfig, SplitterConfig, TrainAugmentationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ class LabelInfo:
 @dataclass(frozen=True)
 class ManifestRecord:
     sample_id: str
+    noise_source_id: str
     split_directory: str
     signal_path: Path
     clean_path: Path
@@ -163,6 +164,7 @@ def read_manifest(
             records.append(
                 ManifestRecord(
                     sample_id=sample_id,
+                    noise_source_id=row.get("noise_ytid") or sample_id,
                     split_directory=split_directory,
                     signal_path=signal_dir / f"{sample_id}.wav",
                     clean_path=clean_dir / f"{sample_id}.wav",
@@ -213,60 +215,162 @@ def sliding_window_starts(total_samples: int, window_samples: int, hop_samples: 
     return starts
 
 
-def local_snr_segment_starts(
-    clip_samples: int,
-    sample_rate: int,
-    config: LocalSNRConfig,
-) -> List[int]:
-    segment_samples = int(round(sample_rate * config.segment_seconds))
-    hop_samples = int(round(sample_rate * config.segment_hop_seconds))
-    return sliding_window_starts(clip_samples, segment_samples, hop_samples)
+def _peak_limit(waveform: torch.Tensor, maximum: float = 0.99) -> torch.Tensor:
+    peak = waveform.abs().max()
+    if peak > maximum:
+        waveform = waveform * (maximum / peak)
+    return waveform.to(torch.float32)
 
 
-def compute_local_snr_targets(
+def _limit_components(
     clean: torch.Tensor,
     noise: torch.Tensor,
-    sample_rate: int,
-    config: LocalSNRConfig,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Return local SNR dB, clean-speech mask, and segment center times.
+    maximum: float = 0.99,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Apply one common gain so the returned mixture remains exactly clean + noise."""
+    mixture = clean + noise
+    peak = mixture.abs().max()
+    scale = torch.clamp(
+        torch.as_tensor(maximum, dtype=mixture.dtype, device=mixture.device)
+        / peak.clamp_min(1e-8),
+        max=1.0,
+    )
+    clean = (clean * scale).to(torch.float32)
+    noise = (noise * scale).to(torch.float32)
+    return clean, noise, clean + noise
 
-    The mask is relative to the loudest clean-speech segment in the crop. SNR
-    values are clipped only after the mask is computed, preventing silence from
-    contributing extreme negative targets to the regression loss.
+
+def random_pad_crop(
+    waveform: torch.Tensor,
+    length: int,
+    padding_samples: int = 0,
+) -> torch.Tensor:
+    """Randomly crop a long source or pad-and-crop a short/fixed source.
+
+    Pad-and-crop makes a real temporal shift possible for this dataset's
+    four-second files, for which the old random crop always selected offset 0.
     """
-    if clean.shape != noise.shape:
-        raise ValueError(f"clean/noise shapes must match, got {clean.shape} and {noise.shape}")
-    segment_samples = int(round(sample_rate * config.segment_seconds))
-    starts = local_snr_segment_starts(clean.numel(), sample_rate, config)
-    eps = torch.tensor(1e-12, dtype=clean.dtype, device=clean.device)
-    clean_powers = torch.stack(
-        [fixed_window(clean, start, segment_samples).square().mean() for start in starts]
-    )
-    noise_powers = torch.stack(
-        [fixed_window(noise, start, segment_samples).square().mean() for start in starts]
-    )
-    snr_db = 10.0 * torch.log10((clean_powers + eps) / (noise_powers + eps))
-    peak_clean_power = clean_powers.max()
-    relative_threshold = peak_clean_power * (10.0 ** (config.speech_activity_db_below_peak / 10.0))
-    speech_mask = (peak_clean_power > eps * 10.0) & (clean_powers >= relative_threshold)
-    snr_db = snr_db.clamp(config.min_target_db, config.max_target_db).to(torch.float32)
-    centers = torch.tensor(
-        [(start + segment_samples / 2.0) / sample_rate for start in starts],
-        dtype=torch.float32,
-    )
-    return snr_db, speech_mask.to(torch.bool), centers
+    if waveform.numel() <= length and padding_samples > 0:
+        waveform = F.pad(waveform, (padding_samples, padding_samples))
+    if waveform.numel() < length:
+        waveform = F.pad(waveform, (0, length - waveform.numel()))
+    max_start = max(0, waveform.numel() - length)
+    start = 0 if max_start == 0 else int(torch.randint(0, max_start + 1, (1,)).item())
+    return fixed_window(waveform, start, length)
 
 
-def mix_with_dynamic_snr(
+def random_time_shift(waveform: torch.Tensor, max_shift_samples: int) -> torch.Tensor:
+    """Move a waveform in time with zero fill instead of circular wrapping."""
+    if max_shift_samples <= 0 or waveform.numel() == 0:
+        return waveform
+    limit = min(max_shift_samples, max(0, waveform.numel() - 1))
+    shift = int(torch.randint(-limit, limit + 1, (1,)).item())
+    if shift == 0:
+        return waveform
+    shifted = torch.zeros_like(waveform)
+    if shift > 0:
+        shifted[shift:] = waveform[:-shift]
+    else:
+        shifted[:shift] = waveform[-shift:]
+    return shifted
+
+
+def speed_perturb(waveform: torch.Tensor, min_rate: float, max_rate: float) -> torch.Tensor:
+    """Apply lightweight speed perturbation using linear resampling."""
+    rate = float(torch.empty(1).uniform_(min_rate, max_rate).item())
+    output_samples = max(1, int(round(waveform.numel() / rate)))
+    return F.interpolate(
+        waveform.view(1, 1, -1),
+        size=output_samples,
+        mode="linear",
+        align_corners=False,
+    ).view(-1)
+
+
+def random_gain(waveform: torch.Tensor, min_db: float, max_db: float) -> torch.Tensor:
+    gain_db = float(torch.empty(1).uniform_(min_db, max_db).item())
+    return _peak_limit(waveform * (10.0 ** (gain_db / 20.0)))
+
+
+def random_equalizer(waveform: torch.Tensor) -> torch.Tensor:
+    """Apply a mild random smooth/high-frequency tilt without extra dependencies."""
+    kernel_size = int(torch.randint(3, 16, (1,)).item())
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    smooth = F.avg_pool1d(
+        waveform.view(1, 1, -1),
+        kernel_size=kernel_size,
+        stride=1,
+        padding=kernel_size // 2,
+        count_include_pad=False,
+    ).view(-1)
+    strength = float(torch.empty(1).uniform_(-0.5, 0.8).item())
+    return _peak_limit(waveform + strength * (smooth - waveform))
+
+
+def random_reverb(waveform: torch.Tensor, sample_rate: int) -> torch.Tensor:
+    """Add two low-level random echo taps as an inexpensive room response."""
+    if waveform.numel() == 0:
+        return waveform
+    min_delay = max(1, int(round(0.025 * sample_rate)))
+    max_delay = max(min_delay, int(round(0.120 * sample_rate)))
+    delay = int(torch.randint(min_delay, max_delay + 1, (1,)).item())
+    decay = float(torch.empty(1).uniform_(0.12, 0.35).item())
+    reverberant = waveform.clone()
+    if delay < waveform.numel():
+        reverberant[delay:] += decay * waveform[:-delay]
+    second_delay = delay * 2
+    if second_delay < waveform.numel():
+        reverberant[second_delay:] += (decay * decay) * waveform[:-second_delay]
+    return _peak_limit(reverberant)
+
+
+def same_class_mixup(
+    first: torch.Tensor,
+    second: torch.Tensor,
+    alpha: float,
+) -> tuple[torch.Tensor, float]:
+    """Mix two same-label noises after RMS matching; the hard label stays valid."""
+    eps = 1e-8
+    first_power = first.square().mean().clamp_min(eps)
+    second_power = second.square().mean().clamp_min(eps)
+    second = second * torch.sqrt(first_power / second_power)
+    coefficient = float(np.random.beta(alpha, alpha))
+    mixed = coefficient * first + (1.0 - coefficient) * second
+    return _peak_limit(mixed), coefficient
+
+
+def mix_stems_with_snr(
+    clean: torch.Tensor,
+    noise: torch.Tensor,
+    snr_db: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return mixture and aligned components at one speech-to-noise ratio."""
+    eps = 1e-8
+    clean_power = clean.square().mean().clamp_min(eps)
+    noise_power = noise.square().mean().clamp_min(eps)
+    ratio = torch.tensor(
+        10.0 ** (float(snr_db) / 10.0), dtype=noise.dtype, device=noise.device
+    )
+    gain = torch.sqrt(clean_power / (noise_power * ratio))
+    clean_component, noise_component, mixture = _limit_components(clean, noise * gain)
+    return mixture, clean_component, noise_component
+
+
+def mix_with_snr(clean: torch.Tensor, noise: torch.Tensor, snr_db: float) -> torch.Tensor:
+    """Backward-compatible mixture-only wrapper."""
+    return mix_stems_with_snr(clean, noise, snr_db)[0]
+
+
+def mix_stems_with_dynamic_snr(
     clean: torch.Tensor,
     noise: torch.Tensor,
     sample_rate: int,
     min_snr_db: float,
     max_snr_db: float,
     control_seconds: float,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Return mixture and aligned clean/noise components for local-SNR labels."""
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Mix stems with a gain envelope while preserving component consistency."""
     eps = 1e-8
     clean_power = clean.square().mean().clamp_min(eps)
     noise_power = noise.square().mean().clamp_min(eps)
@@ -277,20 +381,51 @@ def mix_with_dynamic_snr(
         snr_points.view(1, 1, -1), size=clean.numel(), mode="linear", align_corners=True
     ).view(-1)
     gain = torch.sqrt(clean_power / (noise_power * torch.pow(10.0, snr_envelope / 10.0)))
-    clean_component = clean
-    noise_component = noise * gain
-    mixture = clean_component + noise_component
-    peak = mixture.abs().max()
-    if peak > 0.99:
-        post_gain = 0.99 / peak
-        clean_component = clean_component * post_gain
-        noise_component = noise_component * post_gain
-        mixture = clean_component + noise_component
-    return (
-        mixture.to(torch.float32),
-        clean_component.to(torch.float32),
-        noise_component.to(torch.float32),
+    clean_component, noise_component, mixture = _limit_components(clean, noise * gain)
+    return mixture, clean_component, noise_component, snr_envelope
+
+
+def mix_with_dynamic_snr(
+    clean: torch.Tensor,
+    noise: torch.Tensor,
+    sample_rate: int,
+    min_snr_db: float,
+    max_snr_db: float,
+    control_seconds: float,
+) -> torch.Tensor:
+    """Backward-compatible mixture-only wrapper."""
+    return mix_stems_with_dynamic_snr(
+        clean, noise, sample_rate, min_snr_db, max_snr_db, control_seconds
+    )[0]
+
+
+def local_snr_from_stems(
+    clean: torch.Tensor,
+    noise: torch.Tensor,
+    frame_samples: int,
+    speech_activity_threshold_db: float = -40.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute physical window-level SNR and a relative-energy speech mask."""
+    if clean.shape != noise.shape:
+        raise ValueError("clean and noise must have identical shapes")
+    if clean.ndim != 1:
+        raise ValueError("local_snr_from_stems expects one-dimensional waveforms")
+    frame_samples = max(1, int(frame_samples))
+    frame_count = max(1, math.ceil(clean.numel() / frame_samples))
+    padded_length = frame_count * frame_samples
+    clean_frames = F.pad(clean, (0, padded_length - clean.numel())).view(frame_count, frame_samples)
+    noise_frames = F.pad(noise, (0, padded_length - noise.numel())).view(frame_count, frame_samples)
+    clean_power = clean_frames.square().mean(dim=-1)
+    noise_power = noise_frames.square().mean(dim=-1)
+    eps = torch.finfo(clean.dtype).eps
+    snr_db = 10.0 * torch.log10(
+        (clean_power + eps) / (noise_power + eps)
     )
+    relative_floor = clean_power.max().clamp_min(eps) * (
+        10.0 ** (float(speech_activity_threshold_db) / 10.0)
+    )
+    speech_mask = clean_power >= relative_floor
+    return snr_db.clamp(-30.0, 30.0).to(torch.float32), speech_mask
 
 
 class NoiseManifestDataset(Dataset):
@@ -302,8 +437,8 @@ class NoiseManifestDataset(Dataset):
         audio_config: AudioFeaturesConfig,
         split: str,
         labels: Sequence[LabelInfo],
-        local_snr_config: LocalSNRConfig,
         cache_audio: bool = False,
+        augmentation_config: TrainAugmentationConfig | None = None,
     ) -> None:
         if split not in {"train", "val", "test"}:
             raise ValueError(f"split must be train/val/test, got {split!r}")
@@ -312,8 +447,8 @@ class NoiseManifestDataset(Dataset):
         self.split = split
         self.training = split == "train"
         self.labels = list(labels)
-        self.local_snr_config = local_snr_config
         self.cache_audio = cache_audio
+        self.augmentation = augmentation_config or TrainAugmentationConfig()
         self._audio_cache: Dict[Path, torch.Tensor] = {}
         self.clip_samples = int(round(audio_config.sample_rate * audio_config.clip_seconds))
         self.hop_samples = int(round(audio_config.sample_rate * audio_config.inference_hop_seconds))
@@ -343,6 +478,13 @@ class NoiseManifestDataset(Dataset):
 
         targets = np.asarray([record.target for record in self.records], dtype=np.float32)
         self.positive_counts = targets.sum(axis=0)
+        self.same_label_records: Dict[Tuple[float, ...], List[int]] = {}
+        self.same_label_sources: Dict[Tuple[float, ...], Dict[str, List[int]]] = {}
+        for record_index, record in enumerate(self.records):
+            self.same_label_records.setdefault(record.target, []).append(record_index)
+            self.same_label_sources.setdefault(record.target, {}).setdefault(
+                record.noise_source_id, []
+            ).append(record_index)
         logger.info(
             "%s dataset: %d clips, %d windows, signal=%s",
             split,
@@ -350,6 +492,11 @@ class NoiseManifestDataset(Dataset):
             len(self.index),
             dataset_config.signal_type,
         )
+        if self.training and self.augmentation.enabled and dataset_config.signal_type != "mixture":
+            logger.warning(
+                "Train waveform augmentation requires signal_type='mixture'; got %s, disabling it",
+                dataset_config.signal_type,
+            )
 
     def __len__(self) -> int:
         return len(self.index)
@@ -368,23 +515,143 @@ class NoiseManifestDataset(Dataset):
             return 0
         return int(torch.randint(0, max_start + 1, (1,)).item())
 
+    def _different_record_index(self, current_index: int, candidates: Sequence[int]) -> int:
+        if len(candidates) <= 1:
+            return current_index
+        offset = int(torch.randint(1, len(candidates), (1,)).item())
+        position = candidates.index(current_index) if current_index in candidates else 0
+        return int(candidates[(position + offset) % len(candidates)])
+
+    def _augment_clean(self, waveform: torch.Tensor) -> torch.Tensor:
+        config = self.augmentation
+        if random.random() < config.clean_speed_probability:
+            waveform = speed_perturb(
+                waveform, config.clean_speed_min_rate, config.clean_speed_max_rate
+            )
+        padding = int(round(config.random_crop_padding_seconds * self.audio_config.sample_rate))
+        waveform = random_pad_crop(waveform, self.clip_samples, padding)
+        if random.random() < config.clean_gain_probability:
+            waveform = random_gain(waveform, config.clean_gain_min_db, config.clean_gain_max_db)
+        if random.random() < config.clean_reverb_probability:
+            waveform = random_reverb(waveform, self.audio_config.sample_rate)
+        return waveform
+
+    def _augment_noise(self, waveform: torch.Tensor) -> torch.Tensor:
+        config = self.augmentation
+        if random.random() < config.noise_time_stretch_probability:
+            waveform = speed_perturb(
+                waveform,
+                config.noise_time_stretch_min_rate,
+                config.noise_time_stretch_max_rate,
+            )
+        padding = int(round(config.random_crop_padding_seconds * self.audio_config.sample_rate))
+        waveform = random_pad_crop(waveform, self.clip_samples, padding)
+        if random.random() < config.noise_time_shift_probability:
+            max_shift = int(round(config.noise_time_shift_max_seconds * self.audio_config.sample_rate))
+            waveform = random_time_shift(waveform, max_shift)
+        if random.random() < config.noise_gain_probability:
+            waveform = random_gain(waveform, config.noise_gain_min_db, config.noise_gain_max_db)
+        if random.random() < config.noise_eq_probability:
+            waveform = random_equalizer(waveform)
+        if random.random() < config.noise_reverb_probability:
+            waveform = random_reverb(waveform, self.audio_config.sample_rate)
+        if random.random() < config.noise_polarity_probability:
+            waveform = -waveform
+        return waveform
+
+    def _same_class_partner_index(self, record_index: int) -> int:
+        """Choose the same label from a different original noise source."""
+        record = self.records[record_index]
+        source_groups = self.same_label_sources[record.target]
+        source_ids = list(source_groups)
+        if len(source_ids) <= 1:
+            return self._different_record_index(
+                record_index, self.same_label_records[record.target]
+            )
+        current_position = source_ids.index(record.noise_source_id)
+        offset = int(torch.randint(1, len(source_ids), (1,)).item())
+        partner_source = source_ids[(current_position + offset) % len(source_ids)]
+        partners = source_groups[partner_source]
+        return int(partners[int(torch.randint(0, len(partners), (1,)).item())])
+
+    def _online_augmented_mixture(
+        self,
+        record_index: int,
+        use_dynamic_snr: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, bool, bool]:
+        record = self.records[record_index]
+        config = self.augmentation
+
+        clean_index = record_index
+        if random.random() < config.random_clean_probability:
+            clean_index = self._different_record_index(
+                record_index, range(len(self.records))
+            )
+        clean = self._augment_clean(self._load(self.records[clean_index].clean_path))
+        noise = self._augment_noise(self._load(record.noise_path))
+
+        mixed_same_class = False
+        candidates = self.same_label_records[record.target]
+        if len(candidates) > 1 and random.random() < config.same_class_mixup_probability:
+            partner_index = self._same_class_partner_index(record_index)
+            partner_noise = self._augment_noise(self._load(self.records[partner_index].noise_path))
+            noise, _ = same_class_mixup(noise, partner_noise, config.same_class_mixup_alpha)
+            mixed_same_class = True
+
+        if use_dynamic_snr:
+            waveform, clean_component, noise_component, _ = mix_stems_with_dynamic_snr(
+                clean,
+                noise,
+                self.audio_config.sample_rate,
+                self.dataset_config.dynamic_snr_min_db,
+                self.dataset_config.dynamic_snr_max_db,
+                self.dataset_config.dynamic_snr_control_seconds,
+            )
+        else:
+            waveform, clean_component, noise_component = mix_stems_with_snr(
+                clean, noise, record.target_snr_db
+            )
+        return (
+            waveform,
+            clean_component,
+            noise_component,
+            clean_index != record_index,
+            mixed_same_class,
+        )
+
     def __getitem__(self, index: int) -> Dict[str, object]:
         record_index, predefined_start = self.index[index]
         record = self.records[record_index]
+        can_online_augment = (
+            self.training
+            and self.augmentation.enabled
+            and self.dataset_config.signal_type == "mixture"
+        )
         use_dynamic_snr = (
             self.training
             and self.dataset_config.dynamic_snr_enabled
             and random.random() < self.dataset_config.dynamic_snr_probability
         )
+        clean_replaced = False
+        mixed_same_class = False
 
-        if use_dynamic_snr:
+        if can_online_augment:
+            (
+                waveform,
+                clean_waveform,
+                noise_waveform,
+                clean_replaced,
+                mixed_same_class,
+            ) = self._online_augmented_mixture(record_index, use_dynamic_snr)
+            start = -self.audio_config.sample_rate
+        elif use_dynamic_snr:
             clean = self._load(record.clean_path)
             noise = self._load(record.noise_path)
             total_samples = min(clean.numel(), noise.numel())
             start = self._choose_train_start(total_samples)
             clean_window = fixed_window(clean, start, self.clip_samples)
             noise_window = fixed_window(noise, start, self.clip_samples)
-            waveform, clean_component, noise_component = mix_with_dynamic_snr(
+            waveform, clean_waveform, noise_waveform, _ = mix_stems_with_dynamic_snr(
                 clean_window,
                 noise_window,
                 self.audio_config.sample_rate,
@@ -396,27 +663,35 @@ class NoiseManifestDataset(Dataset):
             source = self._load(record.signal_path)
             start = self._choose_train_start(source.numel()) if self.training else predefined_start
             waveform = fixed_window(source, start, self.clip_samples)
-            clean_component = fixed_window(self._load(record.clean_path), start, self.clip_samples)
-            noise_component = fixed_window(self._load(record.noise_path), start, self.clip_samples)
+            clean_waveform = fixed_window(self._load(record.clean_path), start, self.clip_samples)
+            noise_waveform = fixed_window(self._load(record.noise_path), start, self.clip_samples)
 
-        local_snr_db, local_snr_mask, local_centers = compute_local_snr_targets(
-            clean_component,
-            noise_component,
-            self.audio_config.sample_rate,
-            self.local_snr_config,
+        local_snr_db, local_snr_mask = local_snr_from_stems(
+            clean_waveform,
+            noise_waveform,
+            frame_samples=int(
+                round(
+                    self.audio_config.sample_rate
+                    * self.audio_config.local_snr_segment_seconds
+                )
+            ),
+            speech_activity_threshold_db=self.audio_config.speech_activity_threshold_db,
         )
-        local_centers = local_centers + start / self.audio_config.sample_rate
 
         return {
             "audio_name": record.sample_id,
             "waveform": waveform,
+            "clean_waveform": clean_waveform,
+            "noise_waveform": noise_waveform,
             "target": torch.tensor(record.target, dtype=torch.float32),
             "target_snr_db": torch.tensor(record.target_snr_db, dtype=torch.float32),
-            "window_start_seconds": torch.tensor(start / self.audio_config.sample_rate, dtype=torch.float32),
-            "dynamic_snr": torch.tensor(use_dynamic_snr, dtype=torch.bool),
             "local_snr_db": local_snr_db,
             "local_snr_mask": local_snr_mask,
-            "local_snr_center_seconds": local_centers,
+            "window_start_seconds": torch.tensor(start / self.audio_config.sample_rate, dtype=torch.float32),
+            "dynamic_snr": torch.tensor(use_dynamic_snr, dtype=torch.bool),
+            "waveform_augmented": torch.tensor(can_online_augment, dtype=torch.bool),
+            "clean_replaced": torch.tensor(clean_replaced, dtype=torch.bool),
+            "same_class_mixup": torch.tensor(mixed_same_class, dtype=torch.bool),
         }
 
 
@@ -437,7 +712,7 @@ class NoiseDataLoaderManager:
         pin_memory: bool = True,
         seed: int = 2026,
         classes_num: int = 36,
-        local_snr_config: LocalSNRConfig | None = None,
+        augmentation_config: TrainAugmentationConfig | None = None,
     ) -> None:
         self.dataset_config = dataset_config
         self.audio_config = audio_config
@@ -448,7 +723,6 @@ class NoiseDataLoaderManager:
         self.cache_audio = cache_audio
         self.pin_memory = pin_memory
         self.seed = seed
-        self.local_snr_config = local_snr_config or LocalSNRConfig()
         self.labels = read_label_catalog(
             Path(dataset_config.dataset_path), dataset_config.selected_labels_file
         )
@@ -463,8 +737,8 @@ class NoiseDataLoaderManager:
                 audio_config=audio_config,
                 split=split,
                 labels=self.labels,
-                local_snr_config=self.local_snr_config,
                 cache_audio=cache_audio,
+                augmentation_config=augmentation_config,
             )
             for split in ("train", "val", "test")
         }

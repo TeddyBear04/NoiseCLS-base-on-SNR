@@ -2,9 +2,12 @@ from .train_config import (
     TrainConfig,
     AudioFeaturesConfig,
     ModelConfig,
-    LocalSNRConfig,
+    MultiTaskLossConfig,
+    RegularizationConfig,
     SnrBandConfig,
     SplitterConfig,
+    TrainAugmentationConfig,
+    TrainingStagesConfig,
 )
 from .artifact_upload_config import ArtifactUploadConfig
 
@@ -12,8 +15,11 @@ __all__ = [
     "TrainConfig",
     "AudioFeaturesConfig",
     "ModelConfig",
-    "LocalSNRConfig",
+    "MultiTaskLossConfig",
+    "RegularizationConfig",
     "SnrBandConfig",
     "SplitterConfig",
+    "TrainAugmentationConfig",
+    "TrainingStagesConfig",
     "ArtifactUploadConfig",
 ]

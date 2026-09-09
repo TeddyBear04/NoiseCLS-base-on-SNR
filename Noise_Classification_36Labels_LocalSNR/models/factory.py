@@ -6,7 +6,7 @@ from typing import Dict, Type
 from config import ModelConfig
 
 from .base_backbone import BaseBackbone
-from .cnn14_mobilev2 import Cnn14MobileV2, Cnn14MobileV2LocalSNR
+from .cnn14_mobilev2 import Cnn14MobileV2
 from .cnn14_mobilev2_1p9m import Cnn14MobileV2_1P9M
 from .efficientnet_b0 import EfficientNetB0
 from .mobilenet_v1 import MobileNetV1
@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 MODEL_REGISTRY: Dict[str, Type[BaseBackbone]] = {
     "Cnn14MobileV2": Cnn14MobileV2,
-    "Cnn14MobileV2LocalSNR": Cnn14MobileV2LocalSNR,
     "Cnn14MobileV2_1P9M": Cnn14MobileV2_1P9M,
     "MobileNetV1": MobileNetV1,
     "MobileNetV2": MobileNetV2,

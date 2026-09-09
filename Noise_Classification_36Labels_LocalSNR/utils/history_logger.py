@@ -11,6 +11,8 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 SNR_TABLE_COLUMNS = [
+    ("top-1 acc", "top1_accuracy"),
+    ("top-3 acc", "top3_accuracy"),
     ("mAP", "mAP"),
     ("macro-AUC", "macro_auc"),
     ("macro-F1", "macro_f1"),
@@ -38,31 +40,29 @@ def format_snr_table(snr_metrics: Dict[str, Dict[str, Any]]) -> str:
 
 
 class HistoryLogger:
-    def __init__(self, log_dir: str, label_names: Sequence[str], threshold: float = 0.5) -> None:
+    def __init__(self, log_dir: str, label_names: Sequence[str]) -> None:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.label_names = list(label_names)
-        self.threshold = threshold
         self.history_path = self.log_dir / "history.csv"
         self.headers = [
             "epoch",
             "train_loss",
+            "train_top1_accuracy",
+            "train_top3_accuracy",
             "train_mAP",
             "train_macro_f1",
             "train_micro_f1",
             "train_hamming_accuracy",
             "train_subset_accuracy",
-            "train_local_snr_mae_db",
-            "train_local_snr_rmse_db",
             "val_loss",
+            "val_top1_accuracy",
+            "val_top3_accuracy",
             "val_mAP",
             "val_macro_f1",
             "val_micro_f1",
             "val_hamming_accuracy",
             "val_subset_accuracy",
-            "val_local_snr_mae_db",
-            "val_local_snr_rmse_db",
-            "val_local_snr_pearson",
             "is_best",
         ]
         with self.history_path.open("w", newline="", encoding="utf-8") as handle:
@@ -79,22 +79,21 @@ class HistoryLogger:
         row = {
             "epoch": epoch,
             "train_loss": f"{train_loss:.6f}",
+            "train_top1_accuracy": f"{train_statistics['top1_accuracy']:.6f}",
+            "train_top3_accuracy": f"{train_statistics['top3_accuracy']:.6f}",
             "train_mAP": f"{train_statistics['mAP']:.6f}",
             "train_macro_f1": f"{train_statistics['f1_macro']:.6f}",
             "train_micro_f1": f"{train_statistics['f1_micro']:.6f}",
             "train_hamming_accuracy": f"{train_statistics['hamming_accuracy']:.6f}",
             "train_subset_accuracy": f"{train_statistics['subset_accuracy']:.6f}",
-            "train_local_snr_mae_db": f"{train_statistics['local_snr_mae_db']:.6f}",
-            "train_local_snr_rmse_db": f"{train_statistics['local_snr_rmse_db']:.6f}",
             "val_loss": f"{val_statistics['loss']:.6f}",
+            "val_top1_accuracy": f"{val_statistics['top1_accuracy']:.6f}",
+            "val_top3_accuracy": f"{val_statistics['top3_accuracy']:.6f}",
             "val_mAP": f"{val_statistics['mAP']:.6f}",
             "val_macro_f1": f"{val_statistics['f1_macro']:.6f}",
             "val_micro_f1": f"{val_statistics['f1_micro']:.6f}",
             "val_hamming_accuracy": f"{val_statistics['hamming_accuracy']:.6f}",
             "val_subset_accuracy": f"{val_statistics['subset_accuracy']:.6f}",
-            "val_local_snr_mae_db": f"{val_statistics['local_snr_mae_db']:.6f}",
-            "val_local_snr_rmse_db": f"{val_statistics['local_snr_rmse_db']:.6f}",
-            "val_local_snr_pearson": f"{val_statistics['local_snr_pearson']:.6f}",
             "is_best": int(is_best),
         }
         with self.history_path.open("a", newline="", encoding="utf-8") as handle:
@@ -114,6 +113,7 @@ class HistoryLogger:
                     "label": label,
                     "average_precision": statistics["average_precision"][index],
                     "auc": statistics["auc"][index],
+                    "top1_recall": statistics["per_label_top1_recall"][index],
                     "accuracy": statistics["per_label_accuracy"][index],
                     "tn": int(matrix[0, 0]),
                     "fp": int(matrix[0, 1]),
@@ -131,6 +131,9 @@ class HistoryLogger:
         "snr_min_db",
         "snr_max_db",
         "samples",
+        "top1_accuracy",
+        "top3_accuracy",
+        "balanced_accuracy",
         "mAP",
         "macro_auc",
         "macro_f1",
@@ -167,10 +170,10 @@ class HistoryLogger:
 
         names = list(bands)
         series = [
+            ("Top-1 acc", "top1_accuracy"),
             ("mAP", "mAP"),
             ("Macro F1", "macro_f1"),
             ("Micro F1", "micro_f1"),
-            ("Hamming acc", "hamming_accuracy"),
         ]
         positions = np.arange(len(names), dtype=float)
         width = 0.8 / len(series)
@@ -197,6 +200,9 @@ class HistoryLogger:
     def _summary_values(prefix: str, statistics: Dict[str, Any]) -> Dict[str, Any]:
         return {
             f"{prefix}_loss": statistics["loss"],
+            f"{prefix}_top1_accuracy": statistics["top1_accuracy"],
+            f"{prefix}_top3_accuracy": statistics["top3_accuracy"],
+            f"{prefix}_balanced_accuracy": statistics["balanced_accuracy"],
             f"{prefix}_mAP": statistics["mAP"],
             f"{prefix}_macro_f1": statistics["f1_macro"],
             f"{prefix}_micro_f1": statistics["f1_micro"],
@@ -205,10 +211,6 @@ class HistoryLogger:
             f"{prefix}_subset_accuracy": statistics["subset_accuracy"],
             f"{prefix}_clips": statistics["num_clips"],
             f"{prefix}_windows": statistics["num_windows"],
-            f"{prefix}_local_snr_mae_db": statistics["local_snr_mae_db"],
-            f"{prefix}_local_snr_rmse_db": statistics["local_snr_rmse_db"],
-            f"{prefix}_local_snr_pearson": statistics["local_snr_pearson"],
-            f"{prefix}_local_snr_valid_segments": statistics["local_snr_valid_segments"],
         }
 
     def _build_test_report(
@@ -218,7 +220,7 @@ class HistoryLogger:
     ) -> str:
         """Bundle the per-label report, headline metrics and SNR breakdown in one file."""
         sections = [
-            f"Test classification report (threshold={self.threshold:.2f})",
+            f"Test classification report (argmax over {len(self.label_names)} labels)",
             "=" * 78,
             test_statistics["message"].strip("\n"),
             "",
@@ -240,6 +242,9 @@ class HistoryLogger:
     @staticmethod
     def _format_overall_metrics(statistics: Dict[str, Any]) -> str:
         rows = [
+            ("top-1 accuracy", statistics["top1_accuracy"]),
+            ("top-3 accuracy", statistics["top3_accuracy"]),
+            ("balanced accuracy (top-1)", statistics["balanced_accuracy"]),
             ("subset accuracy (exact match)", statistics["subset_accuracy"]),
             ("hamming accuracy", statistics["hamming_accuracy"]),
             ("mAP", statistics["mAP"]),
@@ -248,9 +253,6 @@ class HistoryLogger:
             ("micro F1", statistics["f1_micro"]),
             ("macro precision", statistics["precision_macro"]),
             ("macro recall", statistics["recall_macro"]),
-            ("local SNR MAE (dB)", statistics["local_snr_mae_db"]),
-            ("local SNR RMSE (dB)", statistics["local_snr_rmse_db"]),
-            ("local SNR Pearson", statistics["local_snr_pearson"]),
         ]
         lines = [f"  {name:<30s} {value:.4f}" for name, value in rows]
         lines.append(f"  {'clips':<30s} {statistics['num_clips']:d}")
@@ -281,7 +283,8 @@ class HistoryLogger:
             "summary": summary,
             "validation_snr_metrics": val_statistics["snr_metrics"],
             "test_snr_metrics": test_statistics["snr_metrics"],
-            "threshold": self.threshold,
+            "loss": "cross_entropy",
+            "prediction_rule": "argmax",
         }
         with (self.log_dir / "summary.json").open("w", encoding="utf-8") as handle:
             json.dump(details, handle, indent=2, ensure_ascii=False)
@@ -307,14 +310,12 @@ class HistoryLogger:
         import matplotlib.pyplot as plt
 
         epochs = [int(row["epoch"]) for row in rows]
-        figure, axes = plt.subplots(2, 3, figsize=(17, 9))
+        figure, axes = plt.subplots(2, 2, figsize=(13, 9))
         pairs = [
             ("Loss", "train_loss", "val_loss"),
             ("mAP", "train_mAP", "val_mAP"),
             ("Macro F1", "train_macro_f1", "val_macro_f1"),
-            ("Hamming accuracy", "train_hamming_accuracy", "val_hamming_accuracy"),
-            ("Local SNR MAE (dB)", "train_local_snr_mae_db", "val_local_snr_mae_db"),
-            ("Local SNR RMSE (dB)", "train_local_snr_rmse_db", "val_local_snr_rmse_db"),
+            ("Top-1 accuracy", "train_top1_accuracy", "val_top1_accuracy"),
         ]
         for axis, (title, train_key, val_key) in zip(axes.ravel(), pairs):
             axis.plot(epochs, [float(row[train_key]) for row in rows], label="train")
@@ -323,7 +324,7 @@ class HistoryLogger:
             axis.set_xlabel("Epoch")
             axis.grid(alpha=0.3)
             axis.legend()
-        figure.suptitle(f"{len(self.label_names)}-label noise classification + local SNR")
+        figure.suptitle(f"{len(self.label_names)}-label noise classification")
         figure.tight_layout()
         figure.savefig(self.log_dir / "learning_curves.png", dpi=150)
         plt.close(figure)

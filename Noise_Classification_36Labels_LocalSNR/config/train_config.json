@@ -1,8 +1,8 @@
 {
-  "epochs": 100,
-  "batch_size": 32,
+  "epochs": 60,
+  "batch_size": 64,
   "learning_rate": 0.001,
-  "weight_decay": 0.0001,
+  "weight_decay": 0.01,
   "monitor": "macro_f1",
   "early_stopping": true,
   "patience": 15,
@@ -14,7 +14,7 @@
   "use_pos_weight": false,
   "max_pos_weight": 20.0,
   "random_seed": 2026,
-  "ckpt_dir": "checkpoint_36_labels_local_snr",
+  "ckpt_dir": "checkpoint",
   "profile_model": false,
   "snr_bands": [
     {
@@ -49,27 +49,18 @@
     }
   ],
   "model": {
-    "backbone": "Cnn14MobileV2LocalSNR",
+    "backbone": "BlackFeatherLocalSNR",
     "pretrained": false,
-    "classes_num": 36
-  },
-  "local_snr": {
-    "enabled": true,
-    "segment_seconds": 0.5,
-    "segment_hop_seconds": 0.25,
-    "speech_activity_db_below_peak": -40.0,
-    "min_target_db": -20.0,
-    "max_target_db": 30.0,
-    "target_offset_db": 5.0,
-    "target_scale_db": 15.0,
-    "hidden_dim": 128,
-    "dropout": 0.2,
-    "loss": "huber",
-    "loss_weight": 0.1,
-    "inference_smoothing_points": 3
+    "classes_num": 36,
+    "embedding_dim": 192,
+    "encoder_channels": 48,
+    "extractor_channels": 32,
+    "extractor_depth": 4,
+    "mixture_branch_dropout": 0.25,
+    "max_snr_correction_db": 10.0
   },
   "dataset_splitter": {
-    "dataset_path": "/marimo/36_labels",
+    "dataset_path": "../36_labels",
     "signal_type": "mixture",
     "train_directory": "train",
     "validation_directory": "validation",
@@ -82,12 +73,42 @@
     "split_strategy": "predefined_manifest",
     "evaluation_mode": "holdout",
     "dynamic_snr_enabled": true,
-    "dynamic_snr_probability": 0.5,
+    "dynamic_snr_probability": 0.8,
     "dynamic_snr_min_db": -5.0,
     "dynamic_snr_max_db": 20.0,
     "dynamic_snr_control_seconds": 0.5,
     "clean_directory": "clean",
     "noise_directory": "noise"
+  },
+  "augmentation": {
+    "enabled": true,
+    "random_crop_padding_seconds": 0.5,
+    "random_clean_probability": 1.0,
+    "clean_speed_probability": 0.3,
+    "clean_speed_min_rate": 0.9,
+    "clean_speed_max_rate": 1.1,
+    "clean_gain_probability": 0.5,
+    "clean_gain_min_db": -6.0,
+    "clean_gain_max_db": 6.0,
+    "clean_reverb_probability": 0.3,
+    "noise_time_shift_probability": 0.5,
+    "noise_time_shift_max_seconds": 0.5,
+    "noise_gain_probability": 0.5,
+    "noise_gain_min_db": -6.0,
+    "noise_gain_max_db": 6.0,
+    "noise_eq_probability": 0.3,
+    "noise_reverb_probability": 0.3,
+    "noise_time_stretch_probability": 0.3,
+    "noise_time_stretch_min_rate": 0.9,
+    "noise_time_stretch_max_rate": 1.1,
+    "noise_polarity_probability": 0.5,
+    "same_class_mixup_probability": 0.3,
+    "same_class_mixup_alpha": 0.4
+  },
+  "regularization": {
+    "l1_lambda": 0.0,
+    "l2_lambda": 0.01,
+    "exclude_bias_and_norm": true
   },
   "audio_features": {
     "sample_rate": 16000,
@@ -101,6 +122,24 @@
     "time_drop_width": 64,
     "time_stripes_num": 2,
     "freq_drop_width": 8,
-    "freq_stripes_num": 2
+    "freq_stripes_num": 2,
+    "local_snr_segment_seconds": 0.5,
+    "speech_activity_threshold_db": -40.0
+  },
+  "multitask_loss": {
+    "lambda_cls": 1.0,
+    "lambda_sep": 1.0,
+    "lambda_snr": 0.25,
+    "mrstft_weight": 1.0,
+    "relative_l1_weight": 1.0,
+    "sisdr_weight": 0.1,
+    "snr_huber_delta_db": 3.0
+  },
+  "stages": {
+    "extractor_epochs": 10,
+    "heads_epochs": 10,
+    "joint_epochs": 40,
+    "joint_lr_scale": 0.1,
+    "oracle_noise_probability": 0.5
   }
 }
