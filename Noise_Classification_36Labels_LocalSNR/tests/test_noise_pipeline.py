@@ -22,6 +22,7 @@ from dataset import (
     same_class_mixup,
     sliding_window_starts,
 )
+from models import build_local_snr_model
 from tasks.audio_train import AudioTrainer, l1_penalty, split_decay_parameters
 from utils import SingleLabelCELoss
 from utils.evaluate import aggregate_windows, compute_metrics
@@ -434,6 +435,152 @@ class RegularizationTest(unittest.TestCase):
                 early_stopping=False,
             )
         self.assertEqual(trainer.l1_parameters, [])
+
+
+class CheckpointEvaluationTest(unittest.TestCase):
+    """A finished checkpoint must be scoreable without retraining.
+
+    The three-stage trainer only writes summary.json after every stage and the
+    test pass, so a run killed in its last epoch leaves a usable model and no
+    metrics at all. `main.run_evaluation` is how that model gets its numbers.
+    """
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.dataset = self.root / "dataset"
+        self.dataset.mkdir()
+        build_multi_hot_dataset(self.dataset)
+        self.checkpoints = self.root / "checkpoints"
+        self.checkpoints.mkdir()
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def _write_config(self) -> Path:
+        config = TrainConfig(
+            batch_size=2,
+            num_workers=0,
+            pin_memory=False,
+            ckpt_dir=str(self.checkpoints),
+            audio_features=AUDIO_CONFIG,
+            model={
+                "classes_num": len(LABEL_NAMES),
+                "embedding_dim": 16,
+                "encoder_channels": 8,
+                "demucs_hidden": 8,
+                "demucs_depth": 3,
+                "demucs_lstm_hidden": 16,
+                "mixture_branch_dropout": 0.0,
+            },
+            dataset_splitter=SplitterConfig(
+                dataset_path=str(self.dataset),
+                signal_type="mixture",
+                selected_labels_file="labels.txt",
+                dynamic_snr_enabled=False,
+            ),
+            augmentation=TrainAugmentationConfig(enabled=False),
+            snr_bands=[{"name": "all", "min_db": -30.0, "max_db": 30.0}],
+        )
+        path = self.root / "train_config.json"
+        path.write_text(config.model_dump_json(indent=2), encoding="utf-8")
+        return path
+
+    def _write_checkpoint(self, config_path: Path) -> Path:
+        import main
+
+        config = main.load_config(str(config_path))
+        model = build_local_snr_model(config.audio_features, config.model)
+        checkpoint_path = self.checkpoints / "stage3_joint.pt"
+        torch.save(
+            {
+                "stage": "joint",
+                "epoch": 1,
+                "score": 0.0,
+                "model_state_dict": model.state_dict(),
+                "label_names": LABEL_NAMES,
+                "local_snr_frames": model.local_snr_frames,
+            },
+            checkpoint_path,
+        )
+        return checkpoint_path
+
+    def test_evaluation_scores_a_checkpoint_and_writes_a_report(self) -> None:
+        import main
+
+        config_path = self._write_config()
+        checkpoint_path = self._write_checkpoint(config_path)
+        metrics = main.run_evaluation(
+            config_path=str(config_path),
+            checkpoint_path=str(checkpoint_path),
+            device_name="cpu",
+            split="test",
+        )
+        for key in ("top1_accuracy", "f1_macro", "mAP", "noise_si_sdr_db",
+                    "local_snr_mae_db", "num_clips"):
+            self.assertIn(key, metrics)
+        self.assertGreater(metrics["num_clips"], 0)
+
+        report = self.checkpoints / "evaluation_test.json"
+        self.assertTrue(report.is_file())
+        written = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(written["split"], "test")
+        self.assertEqual(written["checkpoint"], str(checkpoint_path))
+        self.assertEqual(sorted(written["per_label_top1_recall"]), sorted(LABEL_NAMES))
+
+    def test_dataset_override_rescues_a_config_stored_beside_the_checkpoint(self) -> None:
+        """The saved config's relative dataset path no longer resolves from there.
+
+        train_config.json is copied next to the checkpoint, so re-reading it
+        resolves "../36_labels" against the checkpoint directory instead of the
+        project. The override is how a finished run gets pointed back at its data.
+        """
+        import main
+
+        config_path = self._write_config()
+        checkpoint_path = self._write_checkpoint(config_path)
+        stale = json.loads(config_path.read_text(encoding="utf-8"))
+        stale["dataset_splitter"]["dataset_path"] = "../36_labels"
+        stale_path = self.checkpoints / "train_config.json"
+        stale_path.write_text(json.dumps(stale, indent=2), encoding="utf-8")
+
+        with self.assertRaises(FileNotFoundError):
+            main.run_evaluation(
+                config_path=str(stale_path),
+                checkpoint_path=str(checkpoint_path),
+                device_name="cpu",
+                split="test",
+            )
+
+        metrics = main.run_evaluation(
+            config_path=str(stale_path),
+            checkpoint_path=str(checkpoint_path),
+            device_name="cpu",
+            split="test",
+            dataset_path=str(self.dataset),
+        )
+        self.assertGreater(metrics["num_clips"], 0)
+
+    def test_evaluation_leaves_the_checkpoint_directory_otherwise_untouched(self) -> None:
+        import main
+
+        config_path = self._write_config()
+        checkpoint_path = self._write_checkpoint(config_path)
+        # The run's own config normally sits beside its checkpoint; scoring must
+        # not overwrite that record with whatever config was passed in.
+        beside = self.checkpoints / "train_config.json"
+        beside.write_text('{"marker": "original run"}', encoding="utf-8")
+        before = checkpoint_path.read_bytes()
+
+        main.run_evaluation(
+            config_path=str(config_path),
+            checkpoint_path=str(checkpoint_path),
+            device_name="cpu",
+            split="val",
+        )
+        self.assertEqual(beside.read_text(encoding="utf-8"), '{"marker": "original run"}')
+        self.assertEqual(checkpoint_path.read_bytes(), before)
+        self.assertTrue((self.checkpoints / "evaluation_val.json").is_file())
 
 
 if __name__ == "__main__":

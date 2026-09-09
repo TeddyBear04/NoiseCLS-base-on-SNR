@@ -58,8 +58,10 @@ class LocalSNRTrainer:
             (band.name, band.min_db, band.max_db) for band in config.snr_bands
         ]
         config_path = Path(train_config_path)
-        if config_path.is_file():
-            shutil.copy2(config_path, self.checkpoint_directory / "train_config.json")
+        stored_config = self.checkpoint_directory / "train_config.json"
+        # Re-scoring a finished run means passing the very file this would write.
+        if config_path.is_file() and config_path.resolve() != stored_config.resolve():
+            shutil.copy2(config_path, stored_config)
         (self.checkpoint_directory / "labels.json").write_text(
             json.dumps(self.label_names, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -213,6 +215,55 @@ class LocalSNRTrainer:
         )
         return metrics
 
+    def _history_row(
+        self,
+        stage: str,
+        epoch: int,
+        train_losses: Dict[str, float],
+        validation: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Keep every validation number, not just the five the console prints.
+
+        mAP, macro-AUC, top-3 and the per-band breakdown are computed every
+        epoch and were being discarded, which left no curve to plot afterwards.
+        The extractor stage has no classifier, so those keys are absent there
+        rather than wrong, and read back as null.
+        """
+        missing = float("nan")
+        row: Dict[str, Any] = {
+            "stage": stage,
+            "epoch": epoch,
+            **{f"train_{key}": value for key, value in train_losses.items()},
+            "val_loss": validation["loss"],
+            "val_top1": validation["top1_accuracy"],
+            "val_top3": validation.get("top3_accuracy", missing),
+            "val_balanced_accuracy": validation.get("balanced_accuracy", missing),
+            "val_macro_f1": validation["f1_macro"],
+            "val_mAP": validation.get("mAP", missing),
+            "val_macro_auc": validation.get("macro_auc", missing),
+            "val_local_snr_mae_db": validation["local_snr_mae_db"],
+            "val_local_snr_rmse_db": validation.get("local_snr_rmse_db", missing),
+            "val_noise_si_sdr_db": validation["noise_si_sdr_db"],
+        }
+        row["val_snr_bands"] = {
+            name: {"top1": values["top1_accuracy"], "macro_f1": values["macro_f1"]}
+            for name, values in (validation.get("snr_metrics") or {}).items()
+        }
+        return row
+
+    def _append_history(self, row: Dict[str, Any]) -> None:
+        """Flush one epoch as soon as it finishes.
+
+        The rows used to accumulate in memory until all three stages and the
+        test pass had completed, so a job killed in its final epoch lost every
+        epoch it had already paid for. One open per epoch costs nothing beside
+        an epoch of training.
+        """
+        path = self.checkpoint_directory / "history.jsonl"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(_json_safe(row), ensure_ascii=False) + "\n")
+            handle.flush()
+
     def _checkpoint_path(self, stage: str) -> Path:
         return self.checkpoint_directory / {
             "extractor": "stage1_extractor.pt",
@@ -239,7 +290,7 @@ class LocalSNRTrainer:
 
     def train(self, train_loader: Any, val_loader: Any, test_loader: Any) -> Dict[str, Any]:
         started = time.perf_counter()
-        history: list[dict[str, Any]] = []
+        (self.checkpoint_directory / "history.jsonl").write_text("", encoding="utf-8")
         final_checkpoint: Path | None = None
         for stage, epochs in self._stage_plan():
             if epochs <= 0:
@@ -270,17 +321,9 @@ class LocalSNRTrainer:
                 if score > best_score:
                     best_score = score
                     final_checkpoint = self._save_checkpoint(stage, epoch, score)
-                row = {
-                    "stage": stage,
-                    "epoch": epoch,
-                    **{f"train_{key}": value for key, value in train_losses.items()},
-                    "val_loss": validation["loss"],
-                    "val_top1": validation["top1_accuracy"],
-                    "val_macro_f1": validation["f1_macro"],
-                    "val_local_snr_mae_db": validation["local_snr_mae_db"],
-                    "val_noise_si_sdr_db": validation["noise_si_sdr_db"],
-                }
-                history.append(row)
+                self._append_history(
+                    self._history_row(stage, epoch, train_losses, validation)
+                )
                 logger.info(
                     "%s %d/%d | val top1 %.4f macro-F1 %.4f | SNR MAE %.3f dB | noise SI-SDR %.3f dB",
                     stage,
@@ -312,9 +355,6 @@ class LocalSNRTrainer:
             "final_checkpoint": str(final_checkpoint),
             "test": test_metrics,
         }
-        with (self.checkpoint_directory / "history.jsonl").open("w", encoding="utf-8") as handle:
-            for row in history:
-                handle.write(json.dumps(_json_safe(row), ensure_ascii=False) + "\n")
         (self.checkpoint_directory / "summary.json").write_text(
             json.dumps(_json_safe(summary), indent=2, ensure_ascii=False), encoding="utf-8"
         )

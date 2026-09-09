@@ -120,28 +120,21 @@ the opposite of what the high-SNR bands need.
 From this directory:
 
 ```powershell
-..\.venv\Scripts\python.exe main.py --check-data
-..\.venv\Scripts\python.exe main.py --device cuda
+..\.venv\Scripts\python.exe main.py `
+    --evaluate checkpoint_local_snr\BlackFeatherLocalSNR\stage3_joint.pt `
+    --config checkpoint_local_snr\BlackFeatherLocalSNR\train_config.json `
+    --dataset ..\36_labels --split test --device cuda
 ```
 
-The dataset defaults to the sibling directory `../36_labels`. It can be
-overridden without editing the config:
+The trainer stores each run's config beside its checkpoints, and that copy is
+the one to pass: it records the architecture the weights were trained with.
+`--dataset` is required with it, because a relative `dataset_path` in the JSON
+resolves against the directory holding the config, and from the checkpoint
+directory that points somewhere else. The report lands in
+`evaluation_<split>.json` next to the checkpoint; nothing else in that
+directory is touched.
 
-```powershell
-$env:NOISE_DATASET_PATH = "D:\path\to\36_labels"
-..\.venv\Scripts\python.exe main.py --device cuda
-```
-
-Checkpoints are written under:
-
-```text
-checkpoint_local_snr/BlackFeatherLocalSNR/
-  stage1_extractor.pt
-  stage2_heads.pt
-  stage3_joint.pt
-  history.jsonl
-  summary.json
-```
+## Inference
 
 Inference returns both the 36-class posterior and a time-indexed Local-SNR
 curve:

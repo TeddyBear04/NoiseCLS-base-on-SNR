@@ -1,3 +1,4 @@
+import json
 import sys
 import tempfile
 import unittest
@@ -279,6 +280,142 @@ class EarlyStoppingTest(unittest.TestCase):
             self._trainer_config(early_stopping=False, patience=1, delta=100.0)
         )
         self.assertEqual(epochs, 5)
+
+
+class HistoryDurabilityTest(unittest.TestCase):
+    """A run that dies mid-flight must keep the epochs it already finished."""
+
+    def _config(self) -> TrainConfig:
+        return TrainConfig(
+            batch_size=2,
+            early_stopping=False,
+            model=ModelConfig(
+                classes_num=4,
+                embedding_dim=16,
+                encoder_channels=8,
+                demucs_hidden=8,
+                demucs_depth=3,
+                demucs_lstm_hidden=16,
+                mixture_branch_dropout=0.0,
+            ),
+            audio_features=AudioFeaturesConfig(
+                sample_rate=8_000,
+                clip_seconds=0.256,
+                inference_hop_seconds=0.128,
+                window_size=128,
+                hop_size=32,
+                mel_bins=32,
+                fmax=4_000,
+                local_snr_segment_seconds=0.128,
+            ),
+            stages=TrainingStagesConfig(
+                extractor_epochs=5, heads_epochs=0, joint_epochs=0
+            ),
+            snr_bands=[{"name": "all", "min_db": -30.0, "max_db": 30.0}],
+        )
+
+    def _loader(self):
+        torch.manual_seed(19)
+        waveform = torch.randn(2, 2_048)
+        noise = 0.2 * torch.randn_like(waveform)
+        items = []
+        for index, (mixture, component) in enumerate(zip(waveform, noise)):
+            local_snr, mask = local_snr_from_stems(
+                mixture - component, component, frame_samples=1_024
+            )
+            target = torch.zeros(4)
+            target[index] = 1.0
+            items.append(
+                {
+                    "audio_name": f"sample-{index}",
+                    "waveform": mixture,
+                    "noise_waveform": component,
+                    "local_snr_db": local_snr,
+                    "local_snr_mask": mask,
+                    "target": target,
+                    "target_snr_db": torch.tensor(0.0),
+                }
+            )
+        return torch.utils.data.DataLoader(items, batch_size=2)
+
+    def test_finished_epochs_survive_an_interrupted_run(self) -> None:
+        class InterruptedTrainer(LocalSNRTrainer):
+            calls = 0
+
+            def _train_epoch(self, loader, stage, epoch):
+                InterruptedTrainer.calls += 1
+                if InterruptedTrainer.calls > 2:
+                    raise RuntimeError("simulated pod restart")
+                return super()._train_epoch(loader, stage, epoch)
+
+        config = self._config()
+        loader = self._loader()
+        model = build_local_snr_model(config.audio_features, config.model)
+        with tempfile.TemporaryDirectory() as directory:
+            trainer = InterruptedTrainer(
+                model,
+                torch.optim.Adam(model.parameters(), lr=1e-3),
+                torch.device("cpu"),
+                config,
+                directory,
+                ["A", "B", "C", "D"],
+                "missing-config.json",
+            )
+            with self.assertRaises(RuntimeError):
+                trainer.train(loader, loader, loader)
+            rows = [
+                json.loads(line)
+                for line in (Path(directory) / "history.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([row["epoch"] for row in rows], [1, 2])
+
+    def test_a_row_carries_the_metrics_the_console_line_drops(self) -> None:
+        config = self._config()
+        config.stages.heads_epochs = 1
+        config.stages.extractor_epochs = 0
+        loader = self._loader()
+        model = build_local_snr_model(config.audio_features, config.model)
+        with tempfile.TemporaryDirectory() as directory:
+            trainer = LocalSNRTrainer(
+                model,
+                torch.optim.Adam(model.parameters(), lr=1e-3),
+                torch.device("cpu"),
+                config,
+                directory,
+                ["A", "B", "C", "D"],
+                "missing-config.json",
+            )
+            trainer.train(loader, loader, loader)
+            rows = [
+                json.loads(line)
+                for line in (Path(directory) / "history.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        self.assertEqual(len(rows), 1)
+        for key in ("val_mAP", "val_macro_auc", "val_top3", "val_balanced_accuracy",
+                    "val_local_snr_rmse_db", "val_snr_bands"):
+            self.assertIn(key, rows[0])
+        self.assertIn("all", rows[0]["val_snr_bands"])
+
+    def test_the_run_config_can_live_in_the_checkpoint_directory(self) -> None:
+        """Re-reading a run's own saved config must not trip shutil.SameFileError."""
+        config = self._config()
+        model = build_local_snr_model(config.audio_features, config.model)
+        with tempfile.TemporaryDirectory() as directory:
+            saved = Path(directory) / "train_config.json"
+            saved.write_text(config.model_dump_json(indent=2), encoding="utf-8")
+            LocalSNRTrainer(
+                model,
+                torch.optim.Adam(model.parameters(), lr=1e-3),
+                torch.device("cpu"),
+                config,
+                directory,
+                ["A", "B", "C", "D"],
+                str(saved),
+            )
+            self.assertTrue(saved.is_file())
 
 
 class NoiseExtractorLengthTest(unittest.TestCase):
