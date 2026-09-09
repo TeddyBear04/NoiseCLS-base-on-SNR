@@ -11,7 +11,8 @@ The original `Noise_Classification_36Labels` directory is unchanged.
               +---------------+----------------+
               |                                |
               v                                v
-       Mixture Encoder                Supervised Noise Extractor
+       Mixture Encoder                 Demucs Noise Extractor
+              |                            (supervised, E-theta)
               |                                |
               |                                v
               |                     estimated noise n_hat
@@ -27,6 +28,22 @@ The original `Noise_Classification_36Labels` directory is unchanged.
                           v             v
                 36-class Classifier  SNR(t)
 ```
+
+## Noise extractor
+
+`E-theta` is selected by `model.extractor_type`:
+
+| value | architecture | parameters |
+|---|---|---|
+| `demucs` (default) | waveform U-Net of Defossez et al. 2020, "Real Time Speech Enhancement in the Waveform Domain" - the 16 kHz mono Demucs - with sinc resampling, GLU encoder/decoder blocks and a BiLSTM bottleneck | 6,027,585 |
+| `mask` | complex ratio mask over the STFT | 6,210 |
+
+Demucs is supervised on the noise stem, so it predicts `n_hat` directly.
+Predicting speech instead and taking `n_hat = x - s_hat` would carry the whole
+error of `s_hat` into the noise, which is ruinous at +15 and +20 dB where the
+noise holds a few percent of the mixture energy. Both variants map
+`[batch, samples]` to `[batch, samples]`, so a run can ablate the extractor
+alone under the same split, seed and loss.
 
 The classifier uses noise-dominant gated fusion, so the mixture branch cannot
 simply replace the extracted-noise representation. Local SNR combines an
@@ -85,7 +102,18 @@ random gain-control envelope.
    rate.
 
 Configuration lives in `config/train_config.json`. The default schedule is
-10 + 10 + 40 epochs and uses batch size 8.
+30 + 10 + 40 epochs. Each stage carries its own `EarlyStopping`, driven by the
+same score that selects its checkpoint: negative separation loss for
+`extractor`, macro-F1 for `heads` and `joint`. The classifier has no meaningful
+score during `extractor` - it is not trained or even reached in that stage - so
+separation loss is the only signal available there.
+
+Weight decay reaches the optimiser as AdamW's decoupled `weight_decay` and is
+never added to the loss. It is split three ways: `regularization.l2_lambda` for
+classifier and encoder weights, `regularization.extractor_l2_lambda` (zero by
+default) for the noise extractor, and zero for every bias and normalisation
+parameter. Shrinking extractor weights shrinks the noise it predicts, which is
+the opposite of what the high-SNR bands need.
 
 ## Run
 

@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
+from config import RegularizationConfig
 from utils import (
     AudioEvaluator,
     EarlyStopping,
@@ -69,6 +70,55 @@ def split_decay_parameters(
         else:
             decayed.append(parameter)
     return decayed, skipped
+
+
+def split_parameter_groups(
+    model: nn.Module,
+    regularization: RegularizationConfig,
+    extractor_prefix: str = "noise_extractor.",
+) -> List[Dict[str, Any]]:
+    """Build the AdamW parameter groups, one per weight-decay strength.
+
+    Three groups, because the model holds two kinds of head. Classifier and
+    encoder weights want the usual decay. The supervised noise extractor does
+    not: decay shrinks the noise it predicts, and at +15 or +20 dB the noise is
+    already a few percent of the mixture energy, so the same penalty that
+    regularises a classifier quietly pushes n_hat towards zero. Biases and
+    normalisation parameters are 1-D and stay exempt either way.
+
+    Decay is applied only through AdamW's decoupled ``weight_decay``; nothing
+    here is added to the loss.
+    """
+    extractor: List[nn.Parameter] = []
+    decayed: List[nn.Parameter] = []
+    exempt: List[nn.Parameter] = []
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        if regularization.exclude_bias_and_norm and parameter.ndim <= 1:
+            exempt.append(parameter)
+        elif name.startswith(extractor_prefix):
+            extractor.append(parameter)
+        else:
+            decayed.append(parameter)
+
+    groups = [
+        {"params": decayed, "weight_decay": regularization.l2_lambda},
+        {"params": extractor, "weight_decay": regularization.extractor_l2_lambda},
+        {"params": exempt, "weight_decay": 0.0},
+    ]
+    # Merging groups that share a decay keeps the optimiser state tidy when the
+    # extractor is not exempt after all.
+    merged: Dict[float, Dict[str, Any]] = {}
+    for group in groups:
+        if not group["params"]:
+            continue
+        existing = merged.get(group["weight_decay"])
+        if existing is None:
+            merged[group["weight_decay"]] = group
+        else:
+            existing["params"] = existing["params"] + group["params"]
+    return list(merged.values())
 
 
 def l1_penalty(parameters: Sequence[nn.Parameter], l1_lambda: float) -> torch.Tensor:

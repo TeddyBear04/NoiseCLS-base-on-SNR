@@ -71,6 +71,27 @@ class ModelConfig(BaseModel):
     mixture_branch_dropout: float = Field(default=0.25, ge=0.0, lt=1.0)
     max_snr_correction_db: float = Field(default=10.0, gt=0.0)
 
+    # Which supervised noise extractor stands in for E-theta. "mask" is the
+    # 6k-parameter complex ratio mask; "demucs" is the waveform U-Net of
+    # Defossez et al. 2020 trained here to output the noise rather than the
+    # speech. Keeping both lets one run ablate the extractor alone.
+    extractor_type: Literal["demucs", "mask"] = "demucs"
+
+    # Demucs geometry. Channels grow by ``demucs_growth`` per encoder block, so
+    # the parameter count scales with the square of ``demucs_hidden``.
+    demucs_hidden: int = Field(default=32, gt=0)
+    demucs_depth: int = Field(default=5, gt=0)
+    demucs_kernel_size: int = Field(default=8, gt=1)
+    demucs_stride: int = Field(default=4, gt=0)
+    demucs_growth: float = Field(default=2.0, gt=0.0)
+    # Sinc resampling around the U-Net. 1 disables it and roughly halves the
+    # cost; the paper uses 2 or 4.
+    demucs_resample: Literal[1, 2, 4] = 2
+    # 0 removes the recurrent bottleneck and leaves a purely convolutional
+    # U-Net with a finite receptive field.
+    demucs_lstm_layers: int = Field(default=1, ge=0)
+    demucs_lstm_hidden: int = Field(default=256, gt=0)
+
 
 class MultiTaskLossConfig(BaseModel):
     """Weights for classification, supervised extraction and Local-SNR."""
@@ -168,6 +189,12 @@ class RegularizationConfig(BaseModel):
 
     l1_lambda: float = Field(default=0.0, ge=0.0)
     l2_lambda: float = Field(default=1e-4, ge=0.0)
+
+    # The noise extractor is a regression head, not a classifier: shrinking its
+    # weights shrinks the noise it predicts, which is exactly wrong at +15 and
+    # +20 dB where the noise is already a few percent of the mixture energy.
+    # It therefore carries its own, normally zero, decay.
+    extractor_l2_lambda: float = Field(default=0.0, ge=0.0)
 
     # Biases and BatchNorm scale/shift are 1-D. Penalising them shifts the
     # normalisation statistics instead of removing capacity, which hurts

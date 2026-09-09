@@ -14,7 +14,7 @@ import torch.optim as optim
 from config import TrainConfig
 from dataset import NoiseDataLoaderManager
 from models import build_local_snr_model
-from tasks import LocalSNRTrainer, split_decay_parameters
+from tasks import LocalSNRTrainer, split_parameter_groups
 from utils import log_model_profile
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -135,29 +135,36 @@ def run_training(config_path: str, device_name: Optional[str] = None) -> dict:
     if config.dataset_splitter.signal_type != "mixture":
         raise ValueError("BlackFeatherLocalSNR requires dataset_splitter.signal_type='mixture'")
     model = build_local_snr_model(config.audio_features, config.model).to(device)
+    logger.info(
+        "Noise extractor: %s, %s parameters (%s in the rest of the model)",
+        config.model.extractor_type,
+        f"{sum(p.numel() for p in model.noise_extractor.parameters()):,}",
+        f"{sum(p.numel() for p in model.parameters()) - sum(p.numel() for p in model.noise_extractor.parameters()):,}",
+    )
     clip_samples = int(round(config.audio_features.sample_rate * config.audio_features.clip_seconds))
     if config.profile_model:
         dummy = torch.zeros(1, clip_samples, device=device)
         log_model_profile(model, dummy, "BlackFeatherLocalSNR")
 
-    # AdamW's decoupled weight decay is the L2 term. Restricting it to the
-    # decayed group keeps biases and BatchNorm parameters unpenalised.
+    # AdamW's decoupled weight decay is the only L2 in play; nothing is added
+    # to the loss. The extractor carries its own decay so that regularising the
+    # classifier does not shrink the noise it is supposed to predict.
     regularization = config.regularization
-    decayed, skipped = split_decay_parameters(model, regularization.exclude_bias_and_norm)
-    optimizer = optim.AdamW(
-        [
-            {"params": decayed, "weight_decay": regularization.l2_lambda},
-            {"params": skipped, "weight_decay": 0.0},
-        ],
-        lr=config.learning_rate,
-    )
-    logger.info(
-        "Regularization: L2=%.2e on %d weight tensors (%d exempt), L1=%.2e",
-        regularization.l2_lambda,
-        len(decayed),
-        len(skipped),
-        regularization.l1_lambda,
-    )
+    parameter_groups = split_parameter_groups(model, regularization)
+    optimizer = optim.AdamW(parameter_groups, lr=config.learning_rate)
+    for group in parameter_groups:
+        logger.info(
+            "Weight decay %.2e on %d tensors (%s parameters)",
+            group["weight_decay"],
+            len(group["params"]),
+            f"{sum(p.numel() for p in group['params']):,}",
+        )
+    if regularization.l1_lambda > 0.0:
+        # Only AudioTrainer adds an L1 term; this pipeline never reads it.
+        logger.warning(
+            "regularization.l1_lambda=%.2e has no effect in the Local-SNR trainer",
+            regularization.l1_lambda,
+        )
     if config.use_pos_weight:
         # pos_weight re-weights the positive side of an independent binary
         # decision, which cross-entropy does not have. Class weights would be

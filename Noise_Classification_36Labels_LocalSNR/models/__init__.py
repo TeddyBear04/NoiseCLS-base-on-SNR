@@ -10,7 +10,13 @@ from .panns_cnn10 import PANNS_Cnn10
 from .panns_cnn6 import PANNS_Cnn6
 from .panns_cnn14 import PANNS_Cnn14
 from .factory import MODEL_REGISTRY, build_backbone
-from .local_snr_model import BlackFeatherLocalSNR, build_local_snr_model
+from .local_snr_model import (
+    BlackFeatherLocalSNR,
+    DemucsNoiseExtractor,
+    SpectralNoiseExtractor,
+    build_local_snr_model,
+    build_noise_extractor,
+)
 
 __all__ = [
     "BaseBackbone",
@@ -27,5 +33,8 @@ __all__ = [
     "MODEL_REGISTRY",
     "build_backbone",
     "BlackFeatherLocalSNR",
+    "DemucsNoiseExtractor",
+    "SpectralNoiseExtractor",
     "build_local_snr_model",
+    "build_noise_extractor",
 ]

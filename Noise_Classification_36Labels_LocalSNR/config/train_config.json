@@ -8,7 +8,7 @@
   "patience": 15,
   "delta": 0.0001,
   "cache_audio": false,
-  "num_workers": -1,
+  "num_workers": 3,
   "pin_memory": true,
   "threshold": 0.5,
   "use_pos_weight": false,
@@ -57,7 +57,16 @@
     "extractor_channels": 32,
     "extractor_depth": 4,
     "mixture_branch_dropout": 0.25,
-    "max_snr_correction_db": 10.0
+    "max_snr_correction_db": 10.0,
+    "extractor_type": "demucs",
+    "demucs_hidden": 32,
+    "demucs_depth": 5,
+    "demucs_kernel_size": 8,
+    "demucs_stride": 4,
+    "demucs_growth": 2.0,
+    "demucs_resample": 2,
+    "demucs_lstm_layers": 1,
+    "demucs_lstm_hidden": 256
   },
   "dataset_splitter": {
     "dataset_path": "../36_labels",
@@ -107,8 +116,9 @@
   },
   "regularization": {
     "l1_lambda": 0.0,
-    "l2_lambda": 0.01,
-    "exclude_bias_and_norm": true
+    "l2_lambda": 0.0001,
+    "exclude_bias_and_norm": true,
+    "extractor_l2_lambda": 0.0
   },
   "audio_features": {
     "sample_rate": 16000,
@@ -136,7 +146,7 @@
     "snr_huber_delta_db": 3.0
   },
   "stages": {
-    "extractor_epochs": 10,
+    "extractor_epochs": 30,
     "heads_epochs": 10,
     "joint_epochs": 40,
     "joint_lr_scale": 0.1,

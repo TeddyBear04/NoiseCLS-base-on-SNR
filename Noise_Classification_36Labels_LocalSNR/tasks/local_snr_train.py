@@ -15,7 +15,7 @@ import torch
 from tqdm import tqdm
 
 from config import TrainConfig
-from utils import BlackFeatherMultiTaskLoss
+from utils import BlackFeatherMultiTaskLoss, EarlyStopping
 from utils.evaluate import aggregate_windows, compute_metrics, compute_snr_band_metrics
 from utils.losses import si_sdr
 
@@ -246,6 +246,19 @@ class LocalSNRTrainer:
                 continue
             self._set_stage(stage)
             best_score = float("-inf")
+            # A fresh stopper per stage: the three stages optimise different
+            # objectives, so patience accrued under one says nothing about the
+            # next. Both scores below are higher-is-better, which is what
+            # EarlyStopping expects.
+            stopper = (
+                EarlyStopping(
+                    patience=self.config.patience,
+                    delta=self.config.delta,
+                    verbose=True,
+                )
+                if self.config.early_stopping
+                else None
+            )
             for epoch in range(1, epochs + 1):
                 train_losses = self._train_epoch(train_loader, stage, epoch)
                 validation = self.evaluate(val_loader, stage=stage)
@@ -278,6 +291,11 @@ class LocalSNRTrainer:
                     validation["local_snr_mae_db"],
                     validation["noise_si_sdr_db"],
                 )
+                if stopper is not None and stopper.step(score):
+                    logger.info(
+                        "Early stopping %s after epoch %d of %d", stage, epoch, epochs
+                    )
+                    break
             if final_checkpoint is not None and final_checkpoint == self._checkpoint_path(stage):
                 checkpoint = torch.load(
                     final_checkpoint, map_location=self.device, weights_only=False

@@ -100,6 +100,191 @@ class SpectralNoiseExtractor(nn.Module):
         )
 
 
+def _sinc(argument: torch.Tensor) -> torch.Tensor:
+    """sin(t)/t with the removable singularity at the origin filled in."""
+    denominator = torch.where(argument == 0, torch.ones_like(argument), argument)
+    return torch.where(
+        argument == 0, torch.ones_like(argument), torch.sin(argument) / denominator
+    )
+
+
+def _resample_kernel(zeros: int = 56) -> torch.Tensor:
+    """Windowed-sinc kernel for the half-sample shift used by 2x resampling."""
+    window = torch.hann_window(4 * zeros + 1, periodic=False)[1::2]
+    positions = torch.linspace(-zeros + 0.5, zeros - 0.5, 2 * zeros) * math.pi
+    return (_sinc(positions) * window).view(1, 1, -1)
+
+
+def _upsample2(value: torch.Tensor, kernel: torch.Tensor) -> torch.Tensor:
+    """Double the sample rate by interleaving sinc-interpolated half samples."""
+    batch, channels, time = value.shape
+    zeros = kernel.shape[-1] // 2
+    interpolated = F.conv1d(value.reshape(-1, 1, time), kernel, padding=zeros)[..., 1:]
+    stacked = torch.stack((value, interpolated.view(batch, channels, time)), dim=-1)
+    return stacked.view(batch, channels, 2 * time)
+
+
+def _downsample2(value: torch.Tensor, kernel: torch.Tensor) -> torch.Tensor:
+    """Inverse of :func:`_upsample2`; averages each pair back into one sample."""
+    if value.shape[-1] % 2 != 0:
+        value = F.pad(value, (0, 1))
+    even = value[..., ::2]
+    odd = value[..., 1::2]
+    batch, channels, time = odd.shape
+    zeros = kernel.shape[-1] // 2
+    filtered = F.conv1d(odd.reshape(-1, 1, time), kernel, padding=zeros)[..., :-1]
+    return 0.5 * (even + filtered.view(batch, channels, time))
+
+
+class DemucsNoiseExtractor(nn.Module):
+    """Waveform U-Net that predicts the noise component of a mixture.
+
+    The architecture is the Demucs of Defossez et al. 2020, "Real Time Speech
+    Enhancement in the Waveform Domain", which adapts the original music
+    separation network to 16 kHz mono. Only the training target changes here:
+    the network is supervised on the noise stem, so it estimates n_hat
+    directly. Estimating speech instead and taking n_hat = x - s_hat would push
+    the whole error of s_hat into the noise, which is ruinous at +15 and +20 dB
+    where the noise carries a few percent of the mixture energy.
+    """
+
+    def __init__(
+        self,
+        hidden: int = 32,
+        depth: int = 5,
+        kernel_size: int = 8,
+        stride: int = 4,
+        growth: float = 2.0,
+        resample: int = 2,
+        lstm_layers: int = 1,
+        lstm_hidden: int = 256,
+        floor: float = 1e-3,
+    ) -> None:
+        super().__init__()
+        if resample not in (1, 2, 4):
+            raise ValueError(f"resample must be 1, 2 or 4; got {resample}")
+        self.depth = depth
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.resample = resample
+        self.floor = floor
+        self.encoder = nn.ModuleList()
+        self.decoder = nn.ModuleList()
+
+        channels_in, channels = 1, hidden
+        for index in range(depth):
+            # The 1x1 convolution has to widen to 2*channels because GLU halves
+            # the channel axis again; emitting only `channels` here would leave
+            # the decoder and the skip connections off by a factor of two.
+            self.encoder.append(
+                nn.Sequential(
+                    nn.Conv1d(channels_in, channels, kernel_size, stride),
+                    nn.ReLU(),
+                    nn.Conv1d(channels, 2 * channels, kernel_size=1),
+                    nn.GLU(dim=1),
+                )
+            )
+            decoder_block: list[nn.Module] = [
+                nn.Conv1d(channels, 2 * channels, kernel_size=1),
+                nn.GLU(dim=1),
+                nn.ConvTranspose1d(
+                    channels, 1 if index == 0 else channels_in, kernel_size, stride
+                ),
+            ]
+            if index > 0:
+                decoder_block.append(nn.ReLU())
+            # Inserting at the front leaves the deepest block first, so a plain
+            # forward iteration unwinds the encoder in reverse.
+            self.decoder.insert(0, nn.Sequential(*decoder_block))
+            channels_in = channels
+            channels = int(growth * channels)
+
+        self.width = channels_in
+        if lstm_layers > 0:
+            self.sequence_model = nn.LSTM(
+                self.width,
+                lstm_hidden,
+                num_layers=lstm_layers,
+                bidirectional=True,
+                batch_first=True,
+            )
+            self.sequence_projection = nn.Linear(2 * lstm_hidden, self.width)
+        else:
+            self.sequence_model = None
+            self.sequence_projection = None
+
+        if resample > 1:
+            self.register_buffer("resample_kernel", _resample_kernel(), persistent=False)
+        else:
+            self.resample_kernel = None
+
+    def valid_length(self, length: int) -> int:
+        """Smallest input length the strided encoder can reproduce exactly."""
+        padded = math.ceil(length * self.resample)
+        for _ in range(self.depth):
+            padded = max(1, math.ceil((padded - self.kernel_size) / self.stride) + 1)
+        for _ in range(self.depth):
+            padded = (padded - 1) * self.stride + self.kernel_size
+        return int(math.ceil(padded / self.resample))
+
+    def forward(self, mixture: torch.Tensor) -> torch.Tensor:
+        if mixture.ndim != 2:
+            raise ValueError(f"Expected [batch, samples], got {tuple(mixture.shape)}")
+        length = mixture.shape[-1]
+        value = mixture.unsqueeze(1)
+        # Scale invariance: the network sees a unit-variance mixture and the
+        # prediction is scaled back, so a quiet clip is not a different problem.
+        # The floor keeps digital silence from dividing by zero.
+        standard_deviation = value.std(dim=-1, keepdim=True)
+        value = value / (self.floor + standard_deviation)
+        value = F.pad(value, (0, self.valid_length(length) - length))
+
+        for _ in range(int(math.log2(self.resample))):
+            value = _upsample2(value, self.resample_kernel)
+
+        skips: list[torch.Tensor] = []
+        for block in self.encoder:
+            value = block(value)
+            skips.append(value)
+
+        if self.sequence_model is not None:
+            value, _ = self.sequence_model(value.permute(0, 2, 1))
+            value = self.sequence_projection(value).permute(0, 2, 1)
+
+        for block in self.decoder:
+            skip = skips.pop(-1)
+            value = block(value + skip[..., : value.shape[-1]])
+
+        for _ in range(int(math.log2(self.resample))):
+            value = _downsample2(value, self.resample_kernel)
+
+        value = value[..., :length] * (self.floor + standard_deviation)
+        return value.squeeze(1)
+
+
+def build_noise_extractor(
+    audio_config: AudioFeaturesConfig,
+    model_config: ModelConfig,
+) -> nn.Module:
+    """Resolve the configured E-theta. Both variants map [B, T] to [B, T]."""
+    if model_config.extractor_type == "demucs":
+        return DemucsNoiseExtractor(
+            hidden=model_config.demucs_hidden,
+            depth=model_config.demucs_depth,
+            kernel_size=model_config.demucs_kernel_size,
+            stride=model_config.demucs_stride,
+            growth=model_config.demucs_growth,
+            resample=model_config.demucs_resample,
+            lstm_layers=model_config.demucs_lstm_layers,
+            lstm_hidden=model_config.demucs_lstm_hidden,
+        )
+    return SpectralNoiseExtractor(
+        audio_config,
+        channels=model_config.extractor_channels,
+        depth=model_config.extractor_depth,
+    )
+
+
 class LogMelSequenceEncoder(nn.Module):
     """Preserve the time axis while compressing frequency into embeddings."""
 
@@ -200,11 +385,7 @@ class BlackFeatherLocalSNR(nn.Module):
         )
         self.max_snr_correction_db = model_config.max_snr_correction_db
         self.mixture_branch_dropout = model_config.mixture_branch_dropout
-        self.noise_extractor = SpectralNoiseExtractor(
-            audio_config,
-            channels=model_config.extractor_channels,
-            depth=model_config.extractor_depth,
-        )
+        self.noise_extractor = build_noise_extractor(audio_config, model_config)
         self.mixture_encoder = LogMelSequenceEncoder(
             audio_config, model_config.encoder_channels, model_config.embedding_dim
         )
