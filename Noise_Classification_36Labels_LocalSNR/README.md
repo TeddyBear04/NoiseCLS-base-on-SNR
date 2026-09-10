@@ -131,8 +131,9 @@ the one to pass: it records the architecture the weights were trained with.
 `--dataset` is required with it, because a relative `dataset_path` in the JSON
 resolves against the directory holding the config, and from the checkpoint
 directory that points somewhere else. The report lands in
-`evaluation_<split>.json` next to the checkpoint; nothing else in that
-directory is touched.
+`evaluation_<split>.json` next to the checkpoint, together with
+`confusion_matrix_<split>.png` and `.csv`; the checkpoint and the config stored
+beside it are never rewritten.
 
 ## Inference
 
@@ -149,9 +150,9 @@ The trainer reports:
 
 - top-1, top-3, balanced accuracy, mAP, and macro/micro F1;
 - classification metrics for every SNR band;
-- the 36x36 confusion matrix, as `confusion_matrix_test.png` (shaded by the
-  share of each true label, annotated with clip counts),
-  `confusion_matrix_validation.png` for the best epoch, and the raw counts in
+- the 36x36 confusion matrix, written beside the checkpoints as
+  `confusion_matrix_test.png` - each cell shaded by the share of its true label
+  and annotated with the clip count - plus the raw counts in
   `confusion_matrix_test.csv`;
 - noise SI-SDR;
 - Local-SNR MAE and RMSE in dB.

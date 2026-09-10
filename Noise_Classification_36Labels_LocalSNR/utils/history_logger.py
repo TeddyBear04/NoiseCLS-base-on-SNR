@@ -38,6 +38,95 @@ def format_snr_table(snr_metrics: Dict[str, Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def save_confusion_matrix(
+    log_dir: Path,
+    label_names: Sequence[str],
+    statistics: Dict[str, Any],
+    filename: str = "confusion_matrix_test.csv",
+) -> None:
+    """Write the square confusion matrix as counts, one row per true label."""
+    matrix = statistics.get("confusion_matrix")
+    if matrix is None:
+        logger.warning("No confusion matrix to write to %s", filename)
+        return
+    with (Path(log_dir) / filename).open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["true_label", *label_names])
+        for label, row in zip(label_names, np.asarray(matrix)):
+            writer.writerow([label, *(int(value) for value in row)])
+
+
+def plot_confusion_matrix(
+    log_dir: Path,
+    label_names: Sequence[str],
+    statistics: Dict[str, Any],
+    filename: str = "confusion_matrix_test.png",
+    title: str = "Test confusion matrix",
+) -> None:
+    """Draw the confusion matrix of the single-label task.
+
+    The classes are unbalanced, so raw counts alone hide which labels the
+    model actually confuses: the cell colour is the share of the true class
+    (its row sums to 1) while the printed number stays the clip count.
+    """
+    matrix = statistics.get("confusion_matrix")
+    if matrix is None:
+        return
+    matrix = np.asarray(matrix, dtype=np.int64)
+    if matrix.size == 0 or not matrix.sum():
+        return
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    row_totals = matrix.sum(axis=1, keepdims=True)
+    normalized = np.divide(
+        matrix,
+        row_totals,
+        out=np.zeros(matrix.shape, dtype=np.float64),
+        where=row_totals > 0,
+    )
+    size = len(matrix)
+    names = list(label_names)[:size]
+    # imshow keeps the cells square, so the figure is sized from the label
+    # count and constrained layout is left to close the gap to the colorbar.
+    side = 0.42 * size + 3.0
+    figure, axis = plt.subplots(figsize=(side + 2.0, side), layout="constrained")
+    image = axis.imshow(normalized, cmap="Blues", vmin=0.0, vmax=1.0)
+    figure.colorbar(image, ax=axis, shrink=0.82, label="Share of the true label")
+
+    for row in range(size):
+        for column in range(size):
+            if not matrix[row, column]:
+                continue
+            axis.text(
+                column,
+                row,
+                f"{matrix[row, column]:d}",
+                ha="center",
+                va="center",
+                fontsize=6,
+                color="white" if normalized[row, column] > 0.5 else "black",
+            )
+
+    axis.set_xticks(np.arange(size))
+    axis.set_yticks(np.arange(size))
+    axis.set_xticklabels(names, rotation=90, fontsize=7)
+    axis.set_yticklabels(names, fontsize=7)
+    axis.set_xlabel("Predicted label")
+    axis.set_ylabel("True label")
+    axis.set_title(f"{title} - {int(matrix.sum())} clips, top-1 acc {np.trace(matrix) / matrix.sum():.4f}")
+    # Minor ticks only exist to draw the cell borders.
+    axis.set_xticks(np.arange(size + 1) - 0.5, minor=True)
+    axis.set_yticks(np.arange(size + 1) - 0.5, minor=True)
+    axis.grid(which="minor", color="white", linewidth=0.5)
+    axis.tick_params(which="minor", length=0)
+    figure.savefig(Path(log_dir) / filename, dpi=150)
+    plt.close(figure)
+
+
 class HistoryLogger:
     def __init__(self, log_dir: str, label_names: Sequence[str]) -> None:
         self.log_dir = Path(log_dir)
@@ -191,16 +280,7 @@ class HistoryLogger:
         plt.close(figure)
 
     def save_confusion_matrix(self, filename: str, statistics: Dict[str, Any]) -> None:
-        """Write the square confusion matrix as counts, one row per true label."""
-        matrix = statistics.get("confusion_matrix")
-        if matrix is None:
-            logger.warning("No confusion matrix to write to %s", filename)
-            return
-        with (self.log_dir / filename).open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
-            writer.writerow(["true_label", *self.label_names])
-            for label, row in zip(self.label_names, np.asarray(matrix)):
-                writer.writerow([label, *(int(value) for value in row)])
+        save_confusion_matrix(self.log_dir, self.label_names, statistics, filename)
 
     def plot_confusion_matrix(
         self,
@@ -208,68 +288,7 @@ class HistoryLogger:
         filename: str = "confusion_matrix_test.png",
         title: str = "Test confusion matrix",
     ) -> None:
-        """Draw the confusion matrix of the single-label task.
-
-        The classes are unbalanced, so raw counts alone hide which labels the
-        model actually confuses: the cell colour is the share of the true class
-        (its row sums to 1) while the printed number stays the clip count.
-        """
-        matrix = statistics.get("confusion_matrix")
-        if matrix is None:
-            return
-        matrix = np.asarray(matrix, dtype=np.int64)
-        if matrix.size == 0 or not matrix.sum():
-            return
-
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
-        row_totals = matrix.sum(axis=1, keepdims=True)
-        normalized = np.divide(
-            matrix,
-            row_totals,
-            out=np.zeros(matrix.shape, dtype=np.float64),
-            where=row_totals > 0,
-        )
-        size = len(matrix)
-        names = self.label_names[:size]
-        # imshow keeps the cells square, so the figure is sized from the label
-        # count and constrained layout is left to close the gap to the colorbar.
-        side = 0.42 * size + 3.0
-        figure, axis = plt.subplots(figsize=(side + 2.0, side), layout="constrained")
-        image = axis.imshow(normalized, cmap="Blues", vmin=0.0, vmax=1.0)
-        figure.colorbar(image, ax=axis, shrink=0.82, label="Share of the true label")
-
-        for row in range(size):
-            for column in range(size):
-                if not matrix[row, column]:
-                    continue
-                axis.text(
-                    column,
-                    row,
-                    f"{matrix[row, column]:d}",
-                    ha="center",
-                    va="center",
-                    fontsize=6,
-                    color="white" if normalized[row, column] > 0.5 else "black",
-                )
-
-        axis.set_xticks(np.arange(size))
-        axis.set_yticks(np.arange(size))
-        axis.set_xticklabels(names, rotation=90, fontsize=7)
-        axis.set_yticklabels(names, fontsize=7)
-        axis.set_xlabel("Predicted label")
-        axis.set_ylabel("True label")
-        axis.set_title(f"{title} - {int(matrix.sum())} clips, top-1 acc {np.trace(matrix) / matrix.sum():.4f}")
-        # Minor ticks only exist to draw the cell borders.
-        axis.set_xticks(np.arange(size + 1) - 0.5, minor=True)
-        axis.set_yticks(np.arange(size + 1) - 0.5, minor=True)
-        axis.grid(which="minor", color="white", linewidth=0.5)
-        axis.tick_params(which="minor", length=0)
-        figure.savefig(self.log_dir / filename, dpi=150)
-        plt.close(figure)
+        plot_confusion_matrix(self.log_dir, self.label_names, statistics, filename, title)
 
     @staticmethod
     def _summary_values(prefix: str, statistics: Dict[str, Any]) -> Dict[str, Any]:

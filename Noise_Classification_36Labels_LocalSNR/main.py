@@ -17,6 +17,7 @@ from config import TrainConfig
 from dataset import NoiseDataLoaderManager
 from models import build_local_snr_model
 from tasks import LocalSNRTrainer, split_parameter_groups
+from utils.history_logger import plot_confusion_matrix, save_confusion_matrix
 from utils import format_snr_table, log_model_profile
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -187,6 +188,14 @@ def run_evaluation(
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(
         json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    # The JSON keeps only scalars, so the confusion matrix ships beside it.
+    save_confusion_matrix(
+        destination.parent, label_names, metrics, f"confusion_matrix_{split}.csv"
+    )
+    plot_confusion_matrix(
+        destination.parent, label_names, metrics,
+        f"confusion_matrix_{split}.png", f"Confusion matrix - {split} split",
     )
 
     logger.info(

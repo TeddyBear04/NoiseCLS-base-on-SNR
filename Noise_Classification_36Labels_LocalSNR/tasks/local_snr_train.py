@@ -17,6 +17,7 @@ from tqdm import tqdm
 from config import TrainConfig
 from utils import BlackFeatherMultiTaskLoss, EarlyStopping
 from utils.evaluate import aggregate_windows, compute_metrics, compute_snr_band_metrics
+from utils.history_logger import plot_confusion_matrix, save_confusion_matrix
 from utils.losses import si_sdr
 
 logger = logging.getLogger(__name__)
@@ -350,6 +351,15 @@ class LocalSNRTrainer:
         checkpoint = torch.load(final_checkpoint, map_location=self.device, weights_only=False)
         self.model.load_state_dict(checkpoint["model_state_dict"], strict=True)
         test_metrics = self.evaluate(test_loader)
+        # summary.json holds the matrix as numbers; these two make it readable.
+        save_confusion_matrix(
+            self.checkpoint_directory, self.label_names, test_metrics,
+            "confusion_matrix_test.csv",
+        )
+        plot_confusion_matrix(
+            self.checkpoint_directory, self.label_names, test_metrics,
+            "confusion_matrix_test.png", "Test confusion matrix",
+        )
         summary = {
             "training_time_seconds": time.perf_counter() - started,
             "final_checkpoint": str(final_checkpoint),
