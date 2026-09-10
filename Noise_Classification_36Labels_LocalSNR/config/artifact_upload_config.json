@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "source_dir": "/marimo/Capstone_2026_Fish_Feeding_Intensity/Noise_Classification_21Labels/checkpoint_36_labels",
+  "zip_path": "/marimo/Noise_Classification_36_labels_checkpoint.zip",
+  "repo_id": "",
+  "repo_type": "dataset",
+  "path_in_repo": "Noise_Classification_36_labels_checkpoint.zip",
+  "create_repo": false
+}
