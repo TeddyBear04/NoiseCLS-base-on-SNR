@@ -158,8 +158,8 @@ class AudioTrainer(BaseTrainer):
             return -float(statistics["loss"])
         raise ValueError(f"Unsupported monitor: {self.monitor}")
 
-    def _save_checkpoint(self, epoch: int, score: float) -> Path:
-        path = self.ckpt_dir / "audio_best.pt"
+    def _save_checkpoint(self, epoch: int, score: float, filename: str = "audio_best.pt") -> Path:
+        path = self.ckpt_dir / filename
         torch.save(
             {
                 "epoch": epoch,
@@ -169,6 +169,8 @@ class AudioTrainer(BaseTrainer):
                 "optimizer_state_dict": self.optimizer.state_dict(),
                 "label_names": self.label_names,
                 "threshold": self.threshold,
+                "classes_num": len(self.label_names),
+                "checkpoint_type": "best" if filename == "audio_best.pt" else "last",
             },
             path,
         )
@@ -238,6 +240,7 @@ class AudioTrainer(BaseTrainer):
                 best_epoch = epoch
                 best_val_statistics = val_statistics
                 self._save_checkpoint(epoch, score)
+            self._save_checkpoint(epoch, score, filename="audio_last.pt")
 
             self.history.log_epoch(
                 epoch=epoch,

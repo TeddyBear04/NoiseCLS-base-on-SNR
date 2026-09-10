@@ -11,6 +11,7 @@ from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
     classification_report,
+    confusion_matrix,
     f1_score,
     hamming_loss,
     multilabel_confusion_matrix,
@@ -114,9 +115,13 @@ def compute_metrics(
     label_top1_recall = per_label_top1_recall(target, probability)
     report = ""
     if include_report:
+        # The loader enforces exactly one positive label per clip, so render
+        # sklearn's ordinary multiclass report. This includes the overall
+        # ``accuracy`` row in the console/report output.
         report = classification_report(
-            target,
-            prediction,
+            target.argmax(axis=1),
+            prediction.argmax(axis=1),
+            labels=np.arange(len(label_names)),
             target_names=list(label_names),
             digits=4,
             zero_division=0,
@@ -151,6 +156,10 @@ def compute_metrics(
         "prec_weighted": float(precision_weighted),
         "rec_weighted": float(recall_weighted),
         "confu_matrix": multilabel_confusion_matrix(target, prediction),
+        "confusion_matrix": confusion_matrix(
+            target.argmax(axis=1), prediction.argmax(axis=1),
+            labels=np.arange(len(label_names)),
+        ),
         "message": "\n" + report if report else "",
         "target": target,
         "probability": probability,

@@ -161,6 +161,12 @@ def read_manifest(
                         f"Unknown original label index {original_index} in {manifest_path}:{row_number}"
                     )
                 target[original_to_model[original_index]] = 1.0
+            positive_labels = sum(target)
+            if positive_labels != 1.0:
+                raise ValueError(
+                    f"{manifest_path}:{row_number} must contain exactly one label "
+                    f"for single-label classification; found {int(positive_labels)}"
+                )
             records.append(
                 ManifestRecord(
                     sample_id=sample_id,

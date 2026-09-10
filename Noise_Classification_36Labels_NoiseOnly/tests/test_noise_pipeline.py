@@ -33,7 +33,7 @@ from utils.evaluate import aggregate_windows, compute_metrics
 # only the on-disk encoding differs.
 LABEL_NAMES = ["A", "B", "C"]
 ORIGINAL_INDICES = [10, 20, 30]
-CLIP_LABELS = ([10], [20, 30])
+CLIP_LABELS = ([10], [20])
 
 
 def _write_clip(split_path: Path, sample_id: str, duration: float, noise_directory: str) -> None:
@@ -161,9 +161,9 @@ class ManifestLoaderTest(unittest.TestCase):
         self.assertEqual(tuple(train_item["target"].shape), (3,))
         self.assertFalse(bool(train_item["dynamic_snr"]))
         self.assertTrue(bool(torch.isfinite(train_item["waveform"]).all()))
-        # The first clip carries label A, the second carries B and C.
+        # Each clip carries exactly one hard label.
         targets = [record.target for record in manager.datasets["train"].records]
-        self.assertEqual(targets, [(1.0, 0.0, 0.0), (0.0, 1.0, 1.0)])
+        self.assertEqual(targets, [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)])
         # Val/test expand each clip into several sliding windows.
         self.assertGreater(len(manager.datasets["val"]), len(manager.datasets["val"].records))
 
@@ -192,6 +192,23 @@ class ManifestLoaderTest(unittest.TestCase):
             SplitterConfig(dataset_path=str(self.root), signal_type="mixture")
         with self.assertRaises(ValueError):
             SplitterConfig(dataset_path=str(self.root), dynamic_snr_enabled=True)
+
+    def test_multi_label_row_is_rejected_for_single_label_task(self) -> None:
+        build_multi_hot_dataset(self.root)
+        manifest = self.root / "train" / "manifest.csv"
+        with manifest.open("r", encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        rows[0]["multi_hot_3"] = json.dumps([1, 1, 0])
+        with manifest.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=rows[0].keys())
+            writer.writeheader()
+            writer.writerows(rows)
+        with self.assertRaisesRegex(ValueError, "exactly one label"):
+            NoiseDataLoaderManager(
+                SplitterConfig(dataset_path=str(self.root)),
+                AUDIO_CONFIG, batch_size=2, num_workers=0,
+                cache_audio=False, pin_memory=False, classes_num=3,
+            )
 
     def test_noise_only_loads_when_clean_and_mixture_are_absent(self) -> None:
         build_multi_hot_dataset(self.root)

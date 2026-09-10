@@ -126,6 +126,51 @@ class HistoryLogger:
             writer.writeheader()
             writer.writerows(rows)
 
+    def save_confusion_matrix(self, statistics: Dict[str, Any], filename: str) -> None:
+        """Save the multiclass confusion matrix as CSV and PNG."""
+        matrix = np.asarray(statistics["confusion_matrix"], dtype=np.int64)
+        csv_path = self.log_dir / f"{filename}.csv"
+        fields = ["true_model_index", "true_label", *self.label_names]
+        with csv_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            for index, label in enumerate(self.label_names):
+                row = {"true_model_index": index, "true_label": label}
+                row.update({name: int(matrix[index, col]) for col, name in enumerate(self.label_names)})
+                writer.writerow(row)
+
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        size = max(10.0, min(24.0, 0.35 * len(self.label_names)))
+        figure, axis = plt.subplots(figsize=(size, size))
+        image = axis.imshow(matrix, interpolation="nearest", cmap="Blues")
+        figure.colorbar(image, ax=axis, fraction=0.046, pad=0.04)
+        axis.set(
+            xticks=np.arange(len(self.label_names)),
+            yticks=np.arange(len(self.label_names)),
+            xticklabels=self.label_names,
+            yticklabels=self.label_names,
+            xlabel="Predicted label",
+            ylabel="True label",
+            title="Confusion matrix",
+        )
+        plt.setp(axis.get_xticklabels(), rotation=90, ha="center", fontsize=7)
+        plt.setp(axis.get_yticklabels(), fontsize=7)
+        threshold = matrix.max() / 2.0 if matrix.size else 0.0
+        for row_index in range(matrix.shape[0]):
+            for col_index in range(matrix.shape[1]):
+                axis.text(
+                    col_index, row_index, str(matrix[row_index, col_index]),
+                    ha="center", va="center", fontsize=6,
+                    color="white" if matrix[row_index, col_index] > threshold else "black",
+                )
+        figure.tight_layout()
+        figure.savefig(self.log_dir / f"{filename}.png", dpi=180)
+        plt.close(figure)
+
     SNR_COLUMNS = [
         "snr_band",
         "snr_min_db",
@@ -289,6 +334,8 @@ class HistoryLogger:
         with (self.log_dir / "summary.json").open("w", encoding="utf-8") as handle:
             json.dump(details, handle, indent=2, ensure_ascii=False)
         self.save_per_label_metrics("test_per_label.csv", test_statistics)
+        self.save_confusion_matrix(val_statistics, "validation_confusion_matrix")
+        self.save_confusion_matrix(test_statistics, "test_confusion_matrix")
         self.save_snr_metrics("validation_snr_metrics.csv", val_statistics)
         self.save_snr_metrics("test_snr_metrics.csv", test_statistics)
         self.plot_snr_metrics(test_statistics)
