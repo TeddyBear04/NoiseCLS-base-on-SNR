@@ -200,8 +200,6 @@ class AudioTrainer(BaseTrainer):
             return float(statistics["top1_accuracy"])
         if self.monitor == "balanced_accuracy":
             return float(statistics["balanced_accuracy"])
-        if self.monitor == "hamming_accuracy":
-            return float(statistics["hamming_accuracy"])
         if self.monitor == "subset_accuracy":
             return float(statistics["subset_accuracy"])
         if self.monitor == "loss":
@@ -299,7 +297,7 @@ class AudioTrainer(BaseTrainer):
             logger.info(
                 "Epoch %d | train loss %.4f top1 %.4f mAP %.4f macro-F1 %.4f | "
                 "val loss %.4f top1 %.4f top3 %.4f mAP %.4f macro-F1 %.4f "
-                "micro-F1 %.4f hamming %.4f",
+                "micro-F1 %.4f",
                 epoch,
                 train_loss,
                 train_statistics["top1_accuracy"],
@@ -311,7 +309,6 @@ class AudioTrainer(BaseTrainer):
                 val_statistics["mAP"],
                 val_statistics["f1_macro"],
                 val_statistics["f1_micro"],
-                val_statistics["hamming_accuracy"],
             )
             if self.early_stopper is not None and self.early_stopper.step(score):
                 break
@@ -342,13 +339,12 @@ class AudioTrainer(BaseTrainer):
         self.history.plot_history()
         logger.info("Test report:%s", test_statistics["message"])
         logger.info(
-            "Test accuracy: top1=%.4f top3=%.4f balanced=%.4f | subset=%.4f hamming=%.4f "
+            "Test accuracy: top1=%.4f top3=%.4f balanced=%.4f | subset=%.4f "
             "| mAP=%.4f macro_f1=%.4f macro_auc=%.4f",
             test_statistics["top1_accuracy"],
             test_statistics["top3_accuracy"],
             test_statistics["balanced_accuracy"],
             test_statistics["subset_accuracy"],
-            test_statistics["hamming_accuracy"],
             test_statistics["mAP"],
             test_statistics["f1_macro"],
             test_statistics["macro_auc"],

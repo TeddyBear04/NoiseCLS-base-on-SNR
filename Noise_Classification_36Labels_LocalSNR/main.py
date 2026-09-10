@@ -161,7 +161,7 @@ def run_evaluation(
         "loss", "classification_loss", "separation_loss", "local_snr_loss",
         "top1_accuracy", "top3_accuracy", "balanced_accuracy",
         "f1_macro", "f1_micro", "f1_weighted", "precision_macro", "recall_macro",
-        "mAP", "macro_auc", "hamming_accuracy", "subset_accuracy",
+        "mAP", "macro_auc", "subset_accuracy",
         "local_snr_mae_db", "local_snr_rmse_db", "noise_si_sdr_db",
     )
     report = {

@@ -19,7 +19,6 @@ SNR_TABLE_COLUMNS = [
     ("micro-F1", "micro_f1"),
     ("precision", "precision_macro"),
     ("recall", "recall_macro"),
-    ("acc", "hamming_accuracy"),
     ("exact", "subset_accuracy"),
 ]
 
@@ -53,7 +52,6 @@ class HistoryLogger:
             "train_mAP",
             "train_macro_f1",
             "train_micro_f1",
-            "train_hamming_accuracy",
             "train_subset_accuracy",
             "val_loss",
             "val_top1_accuracy",
@@ -61,7 +59,6 @@ class HistoryLogger:
             "val_mAP",
             "val_macro_f1",
             "val_micro_f1",
-            "val_hamming_accuracy",
             "val_subset_accuracy",
             "is_best",
         ]
@@ -84,7 +81,6 @@ class HistoryLogger:
             "train_mAP": f"{train_statistics['mAP']:.6f}",
             "train_macro_f1": f"{train_statistics['f1_macro']:.6f}",
             "train_micro_f1": f"{train_statistics['f1_micro']:.6f}",
-            "train_hamming_accuracy": f"{train_statistics['hamming_accuracy']:.6f}",
             "train_subset_accuracy": f"{train_statistics['subset_accuracy']:.6f}",
             "val_loss": f"{val_statistics['loss']:.6f}",
             "val_top1_accuracy": f"{val_statistics['top1_accuracy']:.6f}",
@@ -92,7 +88,6 @@ class HistoryLogger:
             "val_mAP": f"{val_statistics['mAP']:.6f}",
             "val_macro_f1": f"{val_statistics['f1_macro']:.6f}",
             "val_micro_f1": f"{val_statistics['f1_micro']:.6f}",
-            "val_hamming_accuracy": f"{val_statistics['hamming_accuracy']:.6f}",
             "val_subset_accuracy": f"{val_statistics['subset_accuracy']:.6f}",
             "is_best": int(is_best),
         }
@@ -140,7 +135,6 @@ class HistoryLogger:
         "micro_f1",
         "precision_macro",
         "recall_macro",
-        "hamming_accuracy",
         "subset_accuracy",
     ]
 
@@ -196,6 +190,87 @@ class HistoryLogger:
         figure.savefig(self.log_dir / filename, dpi=150)
         plt.close(figure)
 
+    def save_confusion_matrix(self, filename: str, statistics: Dict[str, Any]) -> None:
+        """Write the square confusion matrix as counts, one row per true label."""
+        matrix = statistics.get("confusion_matrix")
+        if matrix is None:
+            logger.warning("No confusion matrix to write to %s", filename)
+            return
+        with (self.log_dir / filename).open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["true_label", *self.label_names])
+            for label, row in zip(self.label_names, np.asarray(matrix)):
+                writer.writerow([label, *(int(value) for value in row)])
+
+    def plot_confusion_matrix(
+        self,
+        statistics: Dict[str, Any],
+        filename: str = "confusion_matrix_test.png",
+        title: str = "Test confusion matrix",
+    ) -> None:
+        """Draw the confusion matrix of the single-label task.
+
+        The classes are unbalanced, so raw counts alone hide which labels the
+        model actually confuses: the cell colour is the share of the true class
+        (its row sums to 1) while the printed number stays the clip count.
+        """
+        matrix = statistics.get("confusion_matrix")
+        if matrix is None:
+            return
+        matrix = np.asarray(matrix, dtype=np.int64)
+        if matrix.size == 0 or not matrix.sum():
+            return
+
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        row_totals = matrix.sum(axis=1, keepdims=True)
+        normalized = np.divide(
+            matrix,
+            row_totals,
+            out=np.zeros(matrix.shape, dtype=np.float64),
+            where=row_totals > 0,
+        )
+        size = len(matrix)
+        names = self.label_names[:size]
+        # imshow keeps the cells square, so the figure is sized from the label
+        # count and constrained layout is left to close the gap to the colorbar.
+        side = 0.42 * size + 3.0
+        figure, axis = plt.subplots(figsize=(side + 2.0, side), layout="constrained")
+        image = axis.imshow(normalized, cmap="Blues", vmin=0.0, vmax=1.0)
+        figure.colorbar(image, ax=axis, shrink=0.82, label="Share of the true label")
+
+        for row in range(size):
+            for column in range(size):
+                if not matrix[row, column]:
+                    continue
+                axis.text(
+                    column,
+                    row,
+                    f"{matrix[row, column]:d}",
+                    ha="center",
+                    va="center",
+                    fontsize=6,
+                    color="white" if normalized[row, column] > 0.5 else "black",
+                )
+
+        axis.set_xticks(np.arange(size))
+        axis.set_yticks(np.arange(size))
+        axis.set_xticklabels(names, rotation=90, fontsize=7)
+        axis.set_yticklabels(names, fontsize=7)
+        axis.set_xlabel("Predicted label")
+        axis.set_ylabel("True label")
+        axis.set_title(f"{title} - {int(matrix.sum())} clips, top-1 acc {np.trace(matrix) / matrix.sum():.4f}")
+        # Minor ticks only exist to draw the cell borders.
+        axis.set_xticks(np.arange(size + 1) - 0.5, minor=True)
+        axis.set_yticks(np.arange(size + 1) - 0.5, minor=True)
+        axis.grid(which="minor", color="white", linewidth=0.5)
+        axis.tick_params(which="minor", length=0)
+        figure.savefig(self.log_dir / filename, dpi=150)
+        plt.close(figure)
+
     @staticmethod
     def _summary_values(prefix: str, statistics: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -207,7 +282,6 @@ class HistoryLogger:
             f"{prefix}_macro_f1": statistics["f1_macro"],
             f"{prefix}_micro_f1": statistics["f1_micro"],
             f"{prefix}_macro_auc": statistics["macro_auc"],
-            f"{prefix}_hamming_accuracy": statistics["hamming_accuracy"],
             f"{prefix}_subset_accuracy": statistics["subset_accuracy"],
             f"{prefix}_clips": statistics["num_clips"],
             f"{prefix}_windows": statistics["num_windows"],
@@ -246,7 +320,6 @@ class HistoryLogger:
             ("top-3 accuracy", statistics["top3_accuracy"]),
             ("balanced accuracy (top-1)", statistics["balanced_accuracy"]),
             ("subset accuracy (exact match)", statistics["subset_accuracy"]),
-            ("hamming accuracy", statistics["hamming_accuracy"]),
             ("mAP", statistics["mAP"]),
             ("macro AUC", statistics["macro_auc"]),
             ("macro F1", statistics["f1_macro"]),
@@ -292,6 +365,13 @@ class HistoryLogger:
         self.save_snr_metrics("validation_snr_metrics.csv", val_statistics)
         self.save_snr_metrics("test_snr_metrics.csv", test_statistics)
         self.plot_snr_metrics(test_statistics)
+        self.save_confusion_matrix("confusion_matrix_test.csv", test_statistics)
+        self.plot_confusion_matrix(test_statistics)
+        self.plot_confusion_matrix(
+            val_statistics,
+            filename="confusion_matrix_validation.png",
+            title="Validation confusion matrix (best epoch)",
+        )
         (self.log_dir / "classification_report_test.txt").write_text(
             self._build_test_report(val_statistics, test_statistics), encoding="utf-8"
         )

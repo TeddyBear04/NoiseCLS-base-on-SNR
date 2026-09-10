@@ -149,6 +149,10 @@ The trainer reports:
 
 - top-1, top-3, balanced accuracy, mAP, and macro/micro F1;
 - classification metrics for every SNR band;
+- the 36x36 confusion matrix, as `confusion_matrix_test.png` (shaded by the
+  share of each true label, annotated with clip counts),
+  `confusion_matrix_validation.png` for the best epoch, and the raw counts in
+  `confusion_matrix_test.csv`;
 - noise SI-SDR;
 - Local-SNR MAE and RMSE in dB.
 

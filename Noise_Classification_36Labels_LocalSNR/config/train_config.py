@@ -257,7 +257,6 @@ class TrainConfig(BaseModel):
         "accuracy",
         "top1_accuracy",
         "balanced_accuracy",
-        "hamming_accuracy",
         "subset_accuracy",
         "loss",
     ] = "macro_f1"

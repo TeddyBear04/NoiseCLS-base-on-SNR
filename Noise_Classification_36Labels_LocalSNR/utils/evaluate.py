@@ -11,8 +11,8 @@ from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
     classification_report,
+    confusion_matrix,
     f1_score,
-    hamming_loss,
     multilabel_confusion_matrix,
     precision_recall_fscore_support,
     roc_auc_score,
@@ -103,8 +103,7 @@ def compute_metrics(
     precision_weighted, recall_weighted, f1_weighted, _ = precision_recall_fscore_support(
         target, prediction, average="weighted", zero_division=0
     )
-    # Element-wise correctness per label. Its mean over labels equals
-    # hamming_accuracy, so it is kept only for the per-label report.
+    # Element-wise correctness per label, kept only for the per-label report.
     per_label_accuracy = (target == prediction).mean(axis=0).astype(np.float64)
     # Single-label view of the same predictions: the task assigns exactly one
     # label per clip, so top-1 accuracy is the headline number and neither it
@@ -134,7 +133,6 @@ def compute_metrics(
         "top3_accuracy": top3,
         "balanced_accuracy": float(np.nanmean(label_top1_recall)),
         "per_label_top1_recall": label_top1_recall,
-        "hamming_accuracy": float(1.0 - hamming_loss(target, prediction)),
         "per_label_accuracy": per_label_accuracy,
         "precision_macro": float(precision_macro),
         "recall_macro": float(recall_macro),
@@ -151,6 +149,15 @@ def compute_metrics(
         "prec_weighted": float(precision_weighted),
         "rec_weighted": float(recall_weighted),
         "confu_matrix": multilabel_confusion_matrix(target, prediction),
+        # Square 36x36 confusion matrix of the single-label task: row = true
+        # class, column = the class the argmax picked.
+        "confusion_matrix": confusion_matrix(
+            target.argmax(axis=1),
+            probability.argmax(axis=1),
+            labels=np.arange(target.shape[1]),
+        )
+        if target.size
+        else np.zeros((target.shape[1], target.shape[1]), dtype=np.int64),
         "message": "\n" + report if report else "",
         "target": target,
         "probability": probability,
@@ -237,7 +244,6 @@ def compute_snr_band_metrics(
             "micro_f1": metrics["f1_micro"],
             "precision_macro": metrics["precision_macro"],
             "recall_macro": metrics["recall_macro"],
-            "hamming_accuracy": metrics["hamming_accuracy"],
             "subset_accuracy": metrics["subset_accuracy"],
         }
 
