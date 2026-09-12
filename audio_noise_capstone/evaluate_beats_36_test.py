@@ -8,7 +8,12 @@ import torch
 from sklearn.metrics import f1_score, precision_recall_fscore_support
 from torch.utils.data import DataLoader
 
-from finetune_beats import MixtureDataset, load_model
+from finetune_beats import (
+    MixtureDataset,
+    load_model,
+    mixed_precision_context,
+    require_finite,
+)
 from noise_pipeline.mix_data import load_mix_manifest
 from utils.reporting36 import save_evaluation_artifacts
 
@@ -36,9 +41,10 @@ def main() -> None:
                         pin_memory=device.type == "cuda", persistent_workers=args.workers > 0)
     predicted, expected, snrs = [], [], []
     for batch in loader:
-        with torch.autocast(device.type, dtype=torch.float16, enabled=device.type == "cuda"):
+        with mixed_precision_context(device):
             sequence, _ = model.extract_features(batch["mixture"].to(device, non_blocking=True))
             logits = head(sequence.mean(dim=1))
+        require_finite(logits, "evaluation logits")
         predicted.append(logits.argmax(dim=1).cpu())
         expected.append(batch["target"])
         snrs.append(batch["snr"])

@@ -23,6 +23,21 @@ from noise_pipeline.mix_data import load_float_audio, load_mix_manifest
 from train_beats_head import BEATS_CHECKPOINT, balanced_rows, metrics
 
 
+def mixed_precision_context(device: torch.device):
+    """Use BF16 when available; fall back to numerically stable FP32."""
+    return torch.autocast(
+        device_type=device.type,
+        dtype=torch.bfloat16,
+        enabled=device.type == "cuda" and torch.cuda.is_bf16_supported(),
+    )
+
+
+def require_finite(value: torch.Tensor, name: str) -> None:
+    """Fail immediately instead of saving a checkpoint with NaN weights."""
+    if not torch.isfinite(value).all():
+        raise FloatingPointError(f"Non-finite {name}; aborting training.")
+
+
 class MixtureDataset(Dataset):
     """Mixture-only view that avoids unnecessary oracle-noise I/O."""
 
@@ -109,14 +124,11 @@ def evaluate(model, head, loader, device, labels):
     for batch in loader:
         waveforms = batch["mixture"].to(device, non_blocking=True)
         targets = batch["target"].to(device, non_blocking=True)
-        with torch.autocast(
-            device_type=device.type,
-            dtype=torch.float16,
-            enabled=device.type == "cuda",
-        ):
+        with mixed_precision_context(device):
             sequence, _ = model.extract_features(waveforms)
             logits = head(sequence.mean(dim=1))
             loss = criterion(logits, targets)
+        require_finite(loss, "validation loss")
         loss_total += loss.item() * targets.shape[0]
         all_logits.append(logits.float().cpu())
         all_targets.append(targets.cpu())
@@ -136,7 +148,6 @@ def train_epoch(
     head,
     loader,
     optimizer,
-    scaler,
     device,
     trainable_blocks,
     accumulation_steps,
@@ -155,21 +166,16 @@ def train_epoch(
     for batch_index, batch in enumerate(loader, start=1):
         waveforms = batch["mixture"].to(device, non_blocking=True)
         targets = batch["target"].to(device, non_blocking=True)
-        with torch.autocast(
-            device_type=device.type,
-            dtype=torch.float16,
-            enabled=device.type == "cuda",
-        ):
+        with mixed_precision_context(device):
             sequence, _ = model.extract_features(waveforms)
             logits = head(sequence.mean(dim=1))
             loss = criterion(logits, targets)
             scaled_loss = loss / accumulation_steps
-        scaler.scale(scaled_loss).backward()
+        require_finite(loss, "training loss")
+        scaled_loss.backward()
         if batch_index % accumulation_steps == 0 or batch_index == len(loader):
-            scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(trainable_parameters, 5.0)
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.step()
             optimizer.zero_grad(set_to_none=True)
         total_loss += loss.item() * targets.shape[0]
         correct += (logits.argmax(dim=1) == targets).sum().item()
@@ -291,8 +297,6 @@ def main() -> None:
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="max", factor=0.5, patience=1, min_lr=1e-7
     )
-    scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
-
     print(
         f"device={device} train={len(train_dataset)} "
         f"validation={len(validation_dataset)} "
@@ -324,7 +328,6 @@ def main() -> None:
             head,
             train_loader,
             optimizer,
-            scaler,
             device,
             args.trainable_blocks,
             args.accumulation_steps,
