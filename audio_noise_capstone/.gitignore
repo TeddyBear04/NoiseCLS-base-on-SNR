@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+
+# Local datasets, pretrained weights, fine-tuned checkpoints, and run outputs.
+checkpoint/*.pt
+checkpoint/*.json
+checkpoint/pretrained/*
+!checkpoint/pretrained/.gitkeep
+artifacts/*
+!artifacts/.gitkeep
+dataset/21_labels_dataset/*
+!dataset/21_labels_dataset/.gitkeep

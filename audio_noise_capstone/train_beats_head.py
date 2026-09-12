@@ -14,17 +14,14 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import f1_score, precision_recall_fscore_support
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from config.paths import BEATS_CHECKPOINT
+from models.beats_loader import load_beats_classes
 from noise_pipeline.mix_data import MixNoiseDataset, load_mix_manifest
 
-
-BEATS_CHECKPOINT = Path(
-    "checkpoints/pretrained/"
-    "BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt"
-)
 DEFAULT_CACHE_DIR = Path("benchmark_results/full_embedding_cache")
 SNRS = (-5, 0, 5, 10, 15, 20)
 
@@ -56,9 +53,7 @@ def balanced_rows(
 def load_beats(device: torch.device):
     if not BEATS_CHECKPOINT.exists():
         raise FileNotFoundError(BEATS_CHECKPOINT)
-    beats_source = Path("third_party/beats").resolve()
-    sys.path.insert(0, str(beats_source))
-    from BEATs import BEATs, BEATsConfig
+    BEATs, BEATsConfig = load_beats_classes()
 
     checkpoint = torch.load(
         BEATS_CHECKPOINT, map_location="cpu", weights_only=True
@@ -158,11 +153,12 @@ def metrics(logits: torch.Tensor, targets: torch.Tensor, snrs: torch.Tensor, lab
     )
     result = {
         "accuracy": float((predictions == expected).mean()),
+        "precision": float(precision.mean()),
+        "recall": float(recall.mean()),
         "macro_f1": float(class_f1.mean()),
+        "micro_f1": float(f1_score(expected, predictions, average="micro", zero_division=0)),
         "per_class": {
             label: {
-                "precision": float(precision[index]),
-                "recall": float(recall[index]),
                 "f1": float(class_f1[index]),
                 "support": int(support[index]),
             }
@@ -183,6 +179,7 @@ def metrics(logits: torch.Tensor, targets: torch.Tensor, snrs: torch.Tensor, lab
             "samples": int(mask.sum()),
             "accuracy": float((predictions[mask] == expected[mask]).mean()),
             "macro_f1": float(snr_f1.mean()),
+            "micro_f1": float(f1_score(expected[mask], predictions[mask], average="micro", zero_division=0)),
         }
     return result
 

@@ -16,6 +16,9 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
+from models.beats_loader import load_beats_classes
+from utils.reporting36 import save_training_artifacts
+
 from noise_pipeline.mix_data import load_float_audio, load_mix_manifest
 from train_beats_head import BEATS_CHECKPOINT, balanced_rows, metrics
 
@@ -46,9 +49,7 @@ class MixtureDataset(Dataset):
 
 
 def load_model(device: torch.device, head_checkpoint: Path, trainable_blocks: int):
-    beats_source = Path("third_party/beats").resolve()
-    sys.path.insert(0, str(beats_source))
-    from BEATs import BEATs, BEATsConfig
+    BEATs, BEATsConfig = load_beats_classes()
 
     source = torch.load(BEATS_CHECKPOINT, map_location="cpu", weights_only=True)
     model = BEATs(BEATsConfig(source["cfg"]))
@@ -402,6 +403,7 @@ def main() -> None:
     args.results.write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    save_training_artifacts(args.output.parent, labels, result)
     print(
         f"best_epoch={best_epoch} val_accuracy={best_metrics['accuracy']:.4f} "
         f"val_macro_f1={best_metrics['macro_f1']:.4f}",

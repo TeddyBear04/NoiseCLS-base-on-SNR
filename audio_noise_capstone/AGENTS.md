@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-The repository implements a 21-label audio-noise classification pipeline. `train.py` is the training and validation entry point, while `infer.py` runs prediction for one PCM16 WAV file. Reusable code lives in `noise_pipeline/`: `data.py` loads manifests and audio, and `model.py` defines `NoiseNet`. Dataset manifests, label maps, and split audio are under `21_labels_dataset/`. Store generated model weights in `checkpoints/`; `checkpoints/best.pt` is the default inference checkpoint. `README_IMPLEMENTATION.md` contains the baseline workflow, and `noise_classification_pipeline.png` documents the design visually.
+The repository implements a 36-label single-label BEATs fine-tuning pipeline. Its primary entrypoint is `main.py`; source is organized in `config/`, `models/`, `noise_pipeline/`, `tasks/`, and `utils/`. Edit `config/train_config.json` to control training defaults. The dataset is `dataset/mix-dataset/` with `manifest.csv` and `labels.txt`; pretrained and fine-tuned weights live in `checkpoint/`; generated embedding caches live in `artifacts/`.
 
 ## Build, Test, and Development Commands
 
@@ -14,7 +14,7 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Use `python train.py --smoke-test --batch-size 2` for a quick end-to-end check. Run a bounded experiment with `python train.py --limit 1000 --epochs 3 --batch-size 8`, or full training with `python train.py --epochs 30 --batch-size 8 --workers 4`. For inference, run `python infer.py <path-to.wav>`; add `--threshold 0.3` or `--top-k 5` when needed.
+Use `python main.py train --limit 1000 --epochs 3 --batch-size 8` for a bounded fine-tuning run. Run validation calibration with `python main.py evaluate`, test with `python main.py test`, and inference with `python main.py predict <path-to.wav>`.
 
 ## Coding Style & Naming Conventions
 
@@ -22,7 +22,7 @@ Follow standard Python conventions: four-space indentation, `snake_case` for fun
 
 ## Testing Guidelines
 
-There is currently no dedicated automated test suite or coverage threshold. Before submitting changes, run the smoke-test command and confirm it completes training and validation without non-finite losses. For loader changes, exercise at least one file from each split. For inference changes, verify output against a known test WAV and the default checkpoint. Add future tests under `tests/` using names such as `test_data.py` and `test_model.py`.
+There is currently no dedicated automated test suite or coverage threshold. Before submitting changes, run a bounded BEATs training command and confirm it completes without non-finite losses. For loader changes, exercise at least one file from each split. For inference changes, verify output against a known test WAV and fine-tuned checkpoint. Add future tests under `tests/` using names such as `test_data.py` and `test_model.py`.
 
 ## Commit & Pull Request Guidelines
 
