@@ -54,6 +54,44 @@ def save_top_confusions(path: Path, labels: list[str], matrix: np.ndarray) -> No
         )
 
 
+def save_per_class_metrics(path: Path, labels: list[str], matrix: np.ndarray) -> None:
+    """Write one row of classification metrics for every label."""
+    fields = [
+        "label",
+        "support",
+        "correct_predictions",
+        "incorrect_predictions",
+        "precision",
+        "recall",
+        "f1",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for index, label in enumerate(labels):
+            correct = int(matrix[index, index])
+            support = int(matrix[index].sum())
+            predicted = int(matrix[:, index].sum())
+            precision = correct / predicted if predicted else 0.0
+            recall = correct / support if support else 0.0
+            f1 = (
+                2 * precision * recall / (precision + recall)
+                if precision + recall
+                else 0.0
+            )
+            writer.writerow(
+                {
+                    "label": label,
+                    "support": support,
+                    "correct_predictions": correct,
+                    "incorrect_predictions": support - correct,
+                    "precision": precision,
+                    "recall": recall,
+                    "f1": f1,
+                }
+            )
+
+
 def save_evaluation_artifacts(output_dir: Path, result: dict, labels, expected, predicted) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "labels.json").write_text(json.dumps(labels, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -73,6 +111,7 @@ def save_evaluation_artifacts(output_dir: Path, result: dict, labels, expected, 
         output_dir / "confusion_matrix_labeled.csv", labels, matrix
     )
     save_top_confusions(output_dir / "top_confusions.csv", labels, matrix)
+    save_per_class_metrics(output_dir / "per_class_metrics.csv", labels, matrix)
     try:
         import matplotlib.pyplot as plt
 

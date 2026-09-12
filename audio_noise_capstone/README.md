@@ -49,6 +49,7 @@ summary.csv
 test_metrics.json
 confusion_matrix.csv
 confusion_matrix_labeled.csv
+per_class_metrics.csv
 top_confusions.csv
 confusion_matrix.png
 ```
