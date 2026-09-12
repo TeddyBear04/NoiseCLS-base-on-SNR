@@ -64,8 +64,11 @@ def main() -> None:
     result = {"dataset": "noise-only", "input_kind": "noise", "task": "single-label_36", "split": args.split, "samples": int(len(dataset)), "checkpoint": str(args.checkpoint), "accuracy": float((predicted == expected).mean()), "precision": float(precision.mean()), "recall": float(recall.mean()), "macro_f1": float(f1.mean()), "micro_f1": float(f1_score(expected, predicted, average="micro", zero_division=0)), "per_snr": per_snr, "per_class": {label: {"f1": float(f1[i]), "support": int(support[i])} for i, label in enumerate(labels)}}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    save_evaluation_artifacts(args.output_dir, result, labels, expected, predicted)
+    report = save_evaluation_artifacts(
+        args.output_dir, result, labels, expected, predicted, split=args.split
+    )
     print("accuracy={accuracy:.4f} precision={precision:.4f} recall={recall:.4f} macro_f1={macro_f1:.4f} micro_f1={micro_f1:.4f}".format(**result))
+    print(report, flush=True)
 
 
 if __name__ == "__main__":

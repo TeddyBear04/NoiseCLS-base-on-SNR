@@ -36,6 +36,16 @@ def main() -> None:
     dataset_root = config["dataset_splitter"]["dataset_path"]
     script, section = STAGES[arguments.stage]
     stage_values = {"data_root": dataset_root, **config[section]}
+    configured_output_dir = stage_values.get("output_dir")
+    output_dir = (
+        Path(configured_output_dir)
+        if configured_output_dir is not None
+        else Path(stage_values["output"]).parent
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "train_config.json").write_text(
+        json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     sys.argv = [script, *option_list(stage_values), *overrides]
     runpy.run_path(str(PROJECT_ROOT / script), run_name="__main__")
 

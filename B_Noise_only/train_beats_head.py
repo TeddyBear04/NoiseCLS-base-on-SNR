@@ -21,6 +21,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from config.paths import BEATS_CHECKPOINT
 from models.beats_loader import load_beats_classes
 from noise_pipeline.mix_data import NoiseOnlyDataset, load_mix_manifest
+from utils.reporting36 import save_evaluation_artifacts, save_training_artifacts
 
 INPUT_KIND = "noise"
 DEFAULT_CACHE_DIR = Path("artifacts/embedding_cache_36_noise")
@@ -409,6 +410,16 @@ def main() -> None:
     args.results.parent.mkdir(parents=True, exist_ok=True)
     args.results.write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    save_training_artifacts(args.output.parent, labels, result)
+    validation_logits = predict(head, validation_data, device)
+    save_evaluation_artifacts(
+        args.output.parent,
+        best_metrics,
+        labels,
+        validation_data["y"].numpy(),
+        validation_logits.argmax(dim=1).numpy(),
+        split="validation",
     )
     print(
         f"best_epoch={best_epoch} val_accuracy={best_metrics['accuracy']:.4f} "

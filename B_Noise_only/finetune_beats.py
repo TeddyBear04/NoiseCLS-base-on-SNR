@@ -17,7 +17,7 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from models.beats_loader import load_beats_classes
-from utils.reporting36 import save_training_artifacts
+from utils.reporting36 import save_evaluation_artifacts, save_training_artifacts
 
 from noise_pipeline.mix_data import load_float_audio, load_mix_manifest
 from train_beats_head import BEATS_CHECKPOINT, balanced_rows, metrics
@@ -115,7 +115,7 @@ def make_loader(
 
 
 @torch.inference_mode()
-def evaluate(model, head, loader, device, labels):
+def evaluate(model, head, loader, device, labels, return_predictions: bool = False):
     model.eval()
     head.eval()
     all_logits, all_targets, all_snrs = [], [], []
@@ -140,6 +140,13 @@ def evaluate(model, head, loader, device, labels):
         labels,
     )
     result["loss"] = loss_total / len(loader.dataset)
+    if return_predictions:
+        logits = torch.cat(all_logits)
+        return (
+            result,
+            torch.cat(all_targets).numpy(),
+            logits.argmax(dim=1).numpy(),
+        )
     return result
 
 
@@ -408,6 +415,24 @@ def main() -> None:
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     save_training_artifacts(args.output.parent, labels, result)
+    model.load_state_dict(best_encoder, strict=False)
+    head.load_state_dict(best_head)
+    best_validation, expected, predicted = evaluate(
+        model,
+        head,
+        validation_loader,
+        device,
+        labels,
+        return_predictions=True,
+    )
+    save_evaluation_artifacts(
+        args.output.parent,
+        best_validation,
+        labels,
+        expected,
+        predicted,
+        split="validation",
+    )
     print(
         f"best_epoch={best_epoch} val_accuracy={best_metrics['accuracy']:.4f} "
         f"val_macro_f1={best_metrics['macro_f1']:.4f}",
