@@ -130,7 +130,7 @@ def train_classifier(classifier, train_data, validation_data, labels, device, ar
     stale = 0
     history = [{"epoch": 0, "validation": best_metrics}]
     print(
-        f"epoch=0 val_accuracy={best_metrics['accuracy']:.4f} val_macro_f1={best_metrics['macro_f1']:.4f}",
+        f"epoch=0 val_accuracy={best_metrics['accuracy']:.4f} val_macro_f1={best_metrics['macro_f1']:.4f} val_mAP={best_metrics['mAP']:.4f}",
         flush=True,
     )
     for epoch in range(1, args.epochs + 1):
@@ -166,7 +166,7 @@ def train_classifier(classifier, train_data, validation_data, labels, device, ar
             f"train_accuracy={epoch_result['train_accuracy']:.4f} "
             f"val_loss={validation_metrics['loss']:.4f} "
             f"val_accuracy={validation_metrics['accuracy']:.4f} "
-            f"val_macro_f1={validation_metrics['macro_f1']:.4f} "
+            f"val_macro_f1={validation_metrics['macro_f1']:.4f} val_mAP={validation_metrics['mAP']:.4f} "
             f"lr={epoch_result['learning_rate']:.2e}",
             flush=True,
         )
@@ -288,7 +288,7 @@ def main() -> None:
     )
     print(
         f"best_epoch={best_epoch} val_accuracy={best_metrics['accuracy']:.4f} "
-        f"val_macro_f1={best_metrics['macro_f1']:.4f}",
+        f"val_macro_f1={best_metrics['macro_f1']:.4f} val_mAP={best_metrics['mAP']:.4f}",
         flush=True,
     )
     print(f"checkpoint={args.output} results={args.results}", flush=True)

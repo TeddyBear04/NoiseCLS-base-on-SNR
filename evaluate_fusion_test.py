@@ -49,7 +49,8 @@ def main() -> None:
     )
     print(
         "accuracy={accuracy:.4f} precision={precision:.4f} recall={recall:.4f} "
-        "macro_f1={macro_f1:.4f} micro_f1={micro_f1:.4f} si_sdr={si_sdr:.2f}".format(**result)
+        "macro_f1={macro_f1:.4f} micro_f1={micro_f1:.4f} mAP={mAP:.4f} "
+        "si_sdr={si_sdr:.2f}".format(**result)
     )
     print(report, flush=True)
 

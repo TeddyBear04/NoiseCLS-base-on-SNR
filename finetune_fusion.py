@@ -256,7 +256,7 @@ def main() -> None:
     initial = evaluate(encoder, separator, classifier, validation_loader, device, labels, args.sep_loss_weight)
     print(
         f"epoch=0 val_loss={initial['loss']:.4f} val_accuracy={initial['accuracy']:.4f} "
-        f"val_macro_f1={initial['macro_f1']:.4f} val_si_sdr={initial['si_sdr']:.2f}",
+        f"val_macro_f1={initial['macro_f1']:.4f} val_mAP={initial['mAP']:.4f} val_si_sdr={initial['si_sdr']:.2f}",
         flush=True,
     )
     best_metrics = initial
@@ -289,7 +289,7 @@ def main() -> None:
             f"train_accuracy={train_result['accuracy']:.4f} "
             f"val_loss={validation_result['loss']:.4f} "
             f"val_accuracy={validation_result['accuracy']:.4f} "
-            f"val_macro_f1={validation_result['macro_f1']:.4f} "
+            f"val_macro_f1={validation_result['macro_f1']:.4f} val_mAP={validation_result['mAP']:.4f} "
             f"val_si_sdr={validation_result['si_sdr']:.2f}",
             flush=True,
         )
@@ -352,7 +352,7 @@ def main() -> None:
     )
     print(
         f"best_epoch={best_epoch} val_accuracy={best_metrics['accuracy']:.4f} "
-        f"val_macro_f1={best_metrics['macro_f1']:.4f} val_si_sdr={best_metrics['si_sdr']:.2f}",
+        f"val_macro_f1={best_metrics['macro_f1']:.4f} val_mAP={best_metrics['mAP']:.4f} val_si_sdr={best_metrics['si_sdr']:.2f}",
         flush=True,
     )
     print(f"checkpoint={args.output} results={args.results}", flush=True)

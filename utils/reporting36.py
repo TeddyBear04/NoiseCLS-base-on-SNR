@@ -110,12 +110,14 @@ def classification_report_text(
 
 
 def save_snr_metrics(path: Path, per_snr: dict) -> None:
-    fields = ["snr_db", "samples", "accuracy", "macro_f1", "micro_f1"]
+    fields = ["snr_db", "samples", "accuracy", "macro_f1", "micro_f1", "mAP"]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for snr, values in per_snr.items():
-            writer.writerow({"snr_db": snr, **{key: values[key] for key in fields[1:]}})
+            writer.writerow(
+                {"snr_db": snr, **{key: values.get(key) for key in fields[1:]}}
+            )
 
 
 def save_snr_plot(path: Path, per_snr: dict) -> None:
@@ -126,10 +128,13 @@ def save_snr_plot(path: Path, per_snr: dict) -> None:
     snrs = list(per_snr)
     accuracy = [per_snr[snr]["accuracy"] for snr in snrs]
     macro_f1 = [per_snr[snr]["macro_f1"] for snr in snrs]
+    mean_ap = [per_snr[snr].get("mAP") for snr in snrs]
     positions = np.arange(len(snrs))
     figure, axis = plt.subplots(figsize=(9, 5))
     axis.plot(positions, accuracy, marker="o", label="accuracy")
     axis.plot(positions, macro_f1, marker="o", label="macro F1")
+    if all(value is not None for value in mean_ap):
+        axis.plot(positions, mean_ap, marker="o", label="mAP")
     axis.set(xticks=positions, xticklabels=snrs, xlabel="SNR (dB)", ylabel="Score")
     axis.set_ylim(0, 1)
     axis.grid(axis="y", alpha=0.3)
@@ -151,6 +156,7 @@ def save_learning_curves(path: Path, history: list[dict]) -> None:
     train_accuracy = [row.get("train", {}).get("accuracy", row.get("train_accuracy")) for row in history]
     validation_accuracy = [row["validation"].get("accuracy") for row in history]
     validation_f1 = [row["validation"].get("macro_f1") for row in history]
+    validation_mean_ap = [row["validation"].get("mAP") for row in history]
 
     figure, axes = plt.subplots(1, 2, figsize=(12, 4.5))
     if any(value is not None for value in train_loss):
@@ -165,6 +171,8 @@ def save_learning_curves(path: Path, history: list[dict]) -> None:
         axes[1].plot(epochs, train_accuracy, marker="o", label="train accuracy")
     axes[1].plot(epochs, validation_accuracy, marker="o", label="validation accuracy")
     axes[1].plot(epochs, validation_f1, marker="o", label="validation macro F1")
+    if all(value is not None for value in validation_mean_ap):
+        axes[1].plot(epochs, validation_mean_ap, marker="o", label="validation mAP")
     axes[1].set(xlabel="Epoch", ylabel="Score", ylim=(0, 1), title="Validation quality")
     axes[1].grid(alpha=0.3)
     if axes[1].get_legend_handles_labels()[0]:
@@ -199,10 +207,10 @@ def save_evaluation_artifacts(
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         with (output_dir / "summary.csv").open("w", newline="", encoding="utf-8") as handle:
-            fields = ["accuracy", "precision", "recall", "macro_f1", "micro_f1"]
+            fields = ["accuracy", "precision", "recall", "macro_f1", "micro_f1", "mAP"]
             writer = csv.DictWriter(handle, fieldnames=fields)
             writer.writeheader()
-            writer.writerow({key: result[key] for key in fields})
+            writer.writerow({key: result.get(key) for key in fields})
         save_per_class_metrics(output_dir / "test_per_label.csv", labels, matrix)
         save_snr_metrics(output_dir / "test_snr_metrics.csv", result.get("per_snr", {}))
         save_snr_plot(output_dir / "snr_metrics.png", result.get("per_snr", {}))
@@ -231,7 +239,7 @@ def save_training_artifacts(output_dir: Path, labels: list[str], result: dict) -
     best = result["best_validation"]
     fields = [
         "stage", "best_epoch", "train_samples", "validation_samples", "accuracy",
-        "precision", "recall", "macro_f1", "micro_f1", "elapsed_seconds", "checkpoint",
+        "precision", "recall", "macro_f1", "micro_f1", "mAP", "elapsed_seconds", "checkpoint",
     ]
     with (output_dir / "summary.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
@@ -242,7 +250,7 @@ def save_training_artifacts(output_dir: Path, labels: list[str], result: dict) -
                 "best_epoch": result["best_epoch"],
                 "train_samples": result["train_samples"],
                 "validation_samples": result["validation_samples"],
-                **{key: best.get(key) for key in ("accuracy", "precision", "recall", "macro_f1", "micro_f1")},
+                **{key: best.get(key) for key in ("accuracy", "precision", "recall", "macro_f1", "micro_f1", "mAP")},
                 "elapsed_seconds": result.get("elapsed_seconds"),
                 "checkpoint": result["checkpoint"],
             }
@@ -250,7 +258,7 @@ def save_training_artifacts(output_dir: Path, labels: list[str], result: dict) -
     with (output_dir / "history.csv").open("w", newline="", encoding="utf-8") as handle:
         fields = [
             "epoch", "train_loss", "train_accuracy", "validation_loss",
-            "validation_accuracy", "validation_macro_f1",
+            "validation_accuracy", "validation_macro_f1", "validation_mAP",
         ]
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -265,6 +273,7 @@ def save_training_artifacts(output_dir: Path, labels: list[str], result: dict) -
                     "validation_loss": validation.get("loss"),
                     "validation_accuracy": validation["accuracy"],
                     "validation_macro_f1": validation["macro_f1"],
+                    "validation_mAP": validation.get("mAP"),
                 }
             )
     save_learning_curves(output_dir / "learning_curves.png", result["history"])

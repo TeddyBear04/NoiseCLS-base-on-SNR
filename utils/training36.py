@@ -7,7 +7,7 @@ from collections import defaultdict
 
 import numpy as np
 import torch
-from sklearn.metrics import f1_score, precision_recall_fscore_support
+from sklearn.metrics import average_precision_score, f1_score, precision_recall_fscore_support
 
 from config.paths import BEATS_CHECKPOINT
 from models.beats_loader import load_beats_classes
@@ -78,20 +78,46 @@ def load_beats(device: torch.device):
     return model, checkpoint
 
 
+def average_precision_per_class(
+    probabilities: np.ndarray, expected: np.ndarray, num_classes: int
+) -> np.ndarray:
+    """One-vs-rest average precision per class; NaN for classes absent from ``expected``."""
+    one_hot = np.eye(num_classes, dtype=np.int8)[expected]
+    scores = np.full(num_classes, np.nan)
+    for index in range(num_classes):
+        if one_hot[:, index].any():
+            scores[index] = average_precision_score(one_hot[:, index], probabilities[:, index])
+    return scores
+
+
+def mean_average_precision(probabilities: np.ndarray, expected: np.ndarray, num_classes: int) -> float:
+    """Macro mAP: mean one-vs-rest average precision, as used for AudioSet tagging."""
+    scores = average_precision_per_class(probabilities, expected, num_classes)
+    valid = scores[~np.isnan(scores)]
+    return float(valid.mean()) if len(valid) else 0.0
+
+
 def metrics(logits: torch.Tensor, targets: torch.Tensor, snrs: torch.Tensor, labels):
     predictions = logits.argmax(dim=1).cpu().numpy()
     expected = targets.cpu().numpy()
+    probabilities = torch.softmax(logits, dim=1).cpu().numpy()
     precision, recall, class_f1, support = precision_recall_fscore_support(
         expected, predictions, labels=np.arange(len(labels)), zero_division=0
     )
+    class_ap = average_precision_per_class(probabilities, expected, len(labels))
     result = {
         "accuracy": float((predictions == expected).mean()),
         "precision": float(precision.mean()),
         "recall": float(recall.mean()),
         "macro_f1": float(class_f1.mean()),
         "micro_f1": float(f1_score(expected, predictions, average="micro", zero_division=0)),
+        "mAP": float(np.nanmean(class_ap)) if not np.all(np.isnan(class_ap)) else 0.0,
         "per_class": {
-            label: {"f1": float(class_f1[index]), "support": int(support[index])}
+            label: {
+                "f1": float(class_f1[index]),
+                "support": int(support[index]),
+                "average_precision": None if np.isnan(class_ap[index]) else float(class_ap[index]),
+            }
             for index, label in enumerate(labels)
         },
         "per_snr": {},
@@ -110,6 +136,7 @@ def metrics(logits: torch.Tensor, targets: torch.Tensor, snrs: torch.Tensor, lab
             "accuracy": float((predictions[mask] == expected[mask]).mean()),
             "macro_f1": float(snr_f1.mean()),
             "micro_f1": float(f1_score(expected[mask], predictions[mask], average="micro", zero_division=0)),
+            "mAP": mean_average_precision(probabilities[mask], expected[mask], len(labels)),
         }
     return result
 
