@@ -7,7 +7,7 @@
     "blocks": 8,
     "kernel_size": 3,
     "target_rms": 0.1,
-    "max_gain_db": 40.0
+    "max_gain_db": 20.0
   },
   "separator_training": {
     "output": "checkpoint/noise_separator.pt",
@@ -29,24 +29,31 @@
     "head_batch_size": 512,
     "workers": 4,
     "lr": 0.001,
+    "fusion_lr": 0.0001,
+    "fusion_weight_decay": 0.05,
     "dropout": 0.1,
-    "patience": 10
+    "noise_dropout": 0.2,
+    "target_rms": 0.1,
+    "max_gain_db": 20.0,
+    "patience": 8,
+    "seed": 2026
   },
   "finetuning": {
     "head_checkpoint": "checkpoint/beats_fusion_head_36.pt",
     "output": "checkpoint/audio_best_36_fusion.pt",
     "results": "checkpoint/summary_36_fusion.json",
     "trainable_blocks": 4,
-    "epochs": 8,
-    "patience": 3,
-    "batch_size": 16,
-    "validation_batch_size": 32,
-    "accumulation_steps": 2,
+    "epochs": 12,
+    "patience": 4,
+    "batch_size": 32,
+    "validation_batch_size": 64,
+    "accumulation_steps": 1,
     "workers": 4,
     "head_lr": 0.0001,
     "encoder_lr": 0.00001,
     "separator_lr": 0.00005,
-    "sep_loss_weight": 0.05
+    "sep_loss_weight": 0.05,
+    "seed": 2026
   },
   "dataset_splitter": {
     "dataset_path": "../../36_labels",

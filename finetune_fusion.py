@@ -33,7 +33,13 @@ from utils.training36 import (
 )
 
 
-def load_model(device: torch.device, checkpoint: dict, trainable_blocks: int, dropout: float = 0.1):
+def load_model(
+    device: torch.device,
+    checkpoint: dict,
+    trainable_blocks: int,
+    dropout: float = 0.1,
+    noise_dropout: float = 0.2,
+):
     """Build encoder, separator and classifier from a head or fine-tuned checkpoint."""
     encoder, _ = load_beats(device)
     for layer in encoder.encoder.layers[-trainable_blocks:]:
@@ -43,18 +49,19 @@ def load_model(device: torch.device, checkpoint: dict, trainable_blocks: int, dr
         encoder.load_state_dict(checkpoint["encoder_delta"], strict=False)
     separator = build_separator(checkpoint["separator"]).to(device)
     labels = checkpoint["labels"]
-    classifier = FusionClassifier(len(labels), dropout=dropout)
+    classifier = FusionClassifier(len(labels), dropout=dropout, noise_dropout=noise_dropout)
     classifier.load_state_dict(checkpoint["classifier"])
     classifier.to(device)
     return encoder, separator, classifier, labels
 
 
-def make_loader(dataset, batch_size: int, workers: int, shuffle: bool, device: torch.device):
+def make_loader(dataset, batch_size: int, workers: int, shuffle: bool, device: torch.device,
+                seed: int = SEED):
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        generator=torch.Generator().manual_seed(SEED) if shuffle else None,
+        generator=torch.Generator().manual_seed(seed) if shuffle else None,
         num_workers=workers,
         pin_memory=device.type == "cuda",
         persistent_workers=workers > 0,
@@ -84,9 +91,9 @@ def evaluate(encoder, separator, classifier, loader, device, labels, sep_loss_we
         mixture = batch["mixture"].to(device, non_blocking=True)
         targets = batch["target"].to(device, non_blocking=True)
         oracle = batch["oracle_noise"].to(device, non_blocking=True)
-        z_mix, z_noise, noise = encode_branches(encoder, separator, mixture, device)
+        z_mix, z_noise, noise, noise_ratio_db = encode_branches(encoder, separator, mixture, device)
         with mixed_precision_context(device):
-            logits = classifier(z_mix, z_noise)
+            logits = classifier(z_mix, z_noise, noise_ratio_db)
             loss = criterion(logits, targets)
         require_finite(loss, "validation loss")
         class_loss_total += loss.item()
@@ -124,9 +131,9 @@ def train_epoch(encoder, separator, classifier, loader, optimizer, device, args,
         mixture = batch["mixture"].to(device, non_blocking=True)
         targets = batch["target"].to(device, non_blocking=True)
         oracle = batch["oracle_noise"].to(device, non_blocking=True)
-        z_mix, z_noise, noise = encode_branches(encoder, separator, mixture, device)
+        z_mix, z_noise, noise, noise_ratio_db = encode_branches(encoder, separator, mixture, device)
         with mixed_precision_context(device):
-            logits = classifier(z_mix, z_noise)
+            logits = classifier(z_mix, z_noise, noise_ratio_db)
             class_loss = criterion(logits, targets)
         sep_loss = separation_loss(noise, oracle)
         loss = class_loss + args.sep_loss_weight * sep_loss
@@ -181,11 +188,12 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("checkpoint/audio_best_36_fusion.pt"))
     parser.add_argument("--results", type=Path, default=Path("checkpoint/summary_36_fusion.json"))
     parser.add_argument("--trainable-blocks", type=int, default=4)
-    parser.add_argument("--epochs", type=int, default=8)
-    parser.add_argument("--patience", type=int, default=3)
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--validation-batch-size", type=int, default=32)
-    parser.add_argument("--accumulation-steps", type=int, default=2)
+    # Defaults mirror audio_noise_capstone's fine-tuning run for a like-for-like comparison.
+    parser.add_argument("--epochs", type=int, default=12)
+    parser.add_argument("--patience", type=int, default=4)
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--validation-batch-size", type=int, default=64)
+    parser.add_argument("--accumulation-steps", type=int, default=1)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--head-lr", type=float, default=1e-4)
     parser.add_argument("--encoder-lr", type=float, default=1e-5)
@@ -193,12 +201,13 @@ def main() -> None:
                         help="0 keeps the pre-trained separator frozen")
     parser.add_argument("--sep-loss-weight", type=float, default=0.05,
                         help="lambda in L = L_class + lambda * L_sep")
+    parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--train-per-class", type=int)
     parser.add_argument("--validation-per-class", type=int)
     parser.add_argument("--smoke-test", action="store_true")
     args = parser.parse_args()
 
-    seed_everything()
+    seed_everything(args.seed)
     torch.backends.cuda.matmul.allow_tf32 = True
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if args.smoke_test:
@@ -226,12 +235,13 @@ def main() -> None:
     encoder, separator, classifier, labels = load_model(
         device, head_checkpoint, args.trainable_blocks,
         dropout=head_checkpoint["args"].get("dropout", 0.1),
+        noise_dropout=head_checkpoint["args"].get("noise_dropout", 0.2),
     )
     train_separator = args.separator_lr > 0
     for parameter in separator.parameters():
         parameter.requires_grad = train_separator
 
-    train_loader = make_loader(train_dataset, args.batch_size, args.workers, True, device)
+    train_loader = make_loader(train_dataset, args.batch_size, args.workers, True, device, args.seed)
     validation_loader = make_loader(
         validation_dataset, args.validation_batch_size, args.workers, False, device
     )
@@ -317,6 +327,7 @@ def main() -> None:
             "base_head_checkpoint": str(args.head_checkpoint),
             "trainable_blocks": args.trainable_blocks,
             "dropout": head_checkpoint["args"].get("dropout", 0.1),
+            "noise_dropout": head_checkpoint["args"].get("noise_dropout", 0.2),
             "best_epoch": best_epoch,
             "validation_metrics": best_metrics,
             "args": serializable_args,

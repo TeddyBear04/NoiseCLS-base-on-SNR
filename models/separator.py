@@ -87,6 +87,15 @@ class NoiseSeparator(nn.Module):
                 window=self.window, center=True, length=mixture.shape[-1],
             )
 
+    def set_amplification(self, target_rms: float | None = None, max_gain_db: float | None = None) -> None:
+        """Change the parameter-free loudness normalisation without retraining."""
+        if target_rms is not None:
+            self.target_rms = target_rms
+            self.config["target_rms"] = target_rms
+        if max_gain_db is not None:
+            self.max_gain = 10 ** (max_gain_db / 20)
+            self.config["max_gain_db"] = max_gain_db
+
     def amplify(self, noise: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
         """Bring every estimated noise clip to ``target_rms`` before BEATs.
 

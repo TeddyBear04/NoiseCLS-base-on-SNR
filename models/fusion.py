@@ -10,23 +10,53 @@ from utils.training36 import mixed_precision_context
 
 
 class FusionClassifier(nn.Module):
-    """Concat(z_mix, z_noise) → Linear(1536, 768) → Linear(768, classes)."""
+    """fused = z_mix + Linear(1536, 768)(Concat(z_mix, z_noise)) → Linear(768, classes).
 
-    def __init__(self, num_classes: int, embed_dim: int = 768, dropout: float = 0.1) -> None:
+    The fusion projection starts at zero, so the untrained model is exactly the
+    mixture-only BEATs head (as in ``audio_noise_capstone``). Weight decay pulls
+    the projection back toward that baseline, so the noise branch only adds what
+    the validation data supports instead of replacing the mixture evidence.
+    """
+
+    def __init__(
+        self,
+        num_classes: int,
+        embed_dim: int = 768,
+        dropout: float = 0.1,
+        noise_dropout: float = 0.2,
+    ) -> None:
         super().__init__()
+        # Separated-noise embeddings are out of distribution for BEATs, so
+        # normalise them and drop features to stop the head memorising them.
+        self.noise_norm = nn.LayerNorm(embed_dim)
+        # Confidence gate from the separator's own energy estimate: near 0 dB the
+        # clip is noise-dominated and n_hat is reliable; at very negative values
+        # (high SNR) n_hat is mostly leaked speech, so the gate closes.
+        self.gate = nn.Linear(1, 1)
+        self.noise_dropout = nn.Dropout(noise_dropout)
         self.fusion = nn.Linear(2 * embed_dim, embed_dim)
         self.dropout = nn.Dropout(dropout)
         self.head = nn.Linear(embed_dim, num_classes)
+        nn.init.zeros_(self.fusion.weight)
+        nn.init.zeros_(self.fusion.bias)
         with torch.no_grad():
-            # Start as the average of both embeddings so the AudioSet-initialised
-            # head sees features on the scale it was trained for.
-            identity = torch.eye(embed_dim)
-            self.fusion.weight.copy_(0.5 * torch.cat([identity, identity], dim=1))
-            self.fusion.bias.zero_()
+            self.gate.weight.fill_(1.0)
+            self.gate.bias.fill_(1.0)
 
-    def forward(self, z_mix: torch.Tensor, z_noise: torch.Tensor) -> torch.Tensor:
-        fused = self.fusion(torch.cat([z_mix, z_noise], dim=-1))
+    def forward(
+        self, z_mix: torch.Tensor, z_noise: torch.Tensor, noise_ratio_db: torch.Tensor
+    ) -> torch.Tensor:
+        gate = torch.sigmoid(self.gate(noise_ratio_db.float().unsqueeze(-1) / 10))
+        noise = gate * self.noise_dropout(self.noise_norm(z_noise))
+        fused = z_mix + self.fusion(torch.cat([z_mix, noise], dim=-1))
         return self.head(self.dropout(fused))
+
+
+def noise_energy_ratio_db(noise: torch.Tensor, mixture: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    """Per-clip ``10·log10(E[n_hat²] / E[mixture²])``, a label-free SNR estimate."""
+    noise_energy = noise.float().pow(2).mean(dim=-1)
+    mixture_energy = mixture.float().pow(2).mean(dim=-1)
+    return 10 * torch.log10((noise_energy + eps) / (mixture_energy + eps))
 
 
 def encode_branches(
@@ -34,8 +64,9 @@ def encode_branches(
     separator: NoiseSeparator,
     mixture: torch.Tensor,
     device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Return ``z_mix``, ``z_noise`` and the raw noise estimate ``n_hat``.
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return ``z_mix``, ``z_noise``, the raw noise estimate ``n_hat`` and its
+    detached noise-to-mixture energy ratio in dB (input of the fusion gate).
 
     Both branches go through the same BEATs encoder in one doubled batch, so the
     transformer weights are shared by construction.
@@ -45,4 +76,4 @@ def encode_branches(
     with mixed_precision_context(device):
         sequence, _ = encoder.extract_features(torch.cat([mixture, amplified], dim=0))
         z_mix, z_noise = sequence.mean(dim=1).split(mixture.shape[0])
-    return z_mix, z_noise, noise
+    return z_mix, z_noise, noise, noise_energy_ratio_db(noise, mixture).detach()

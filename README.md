@@ -30,7 +30,8 @@ manifest.csv + labels.txt
         │                            │
         └──────────┬─────────────────┘
                     ▼
-     Feature fusion: Concat(z_mix, z_noise) → Linear(1536, 768)
+     Feature fusion: z_mix + Linear(1536, 768)(Concat(z_mix, g·z_noise))  [zero-init]
+                     g = sigmoid(a·r + b), r = energy(n_hat)/energy(mixture) in dB
                     │
                     ▼
      Classification head: Linear(768, 36) → 36 logits
@@ -90,6 +91,33 @@ training the separator jointly, minimizing
 `L = L_class + λ·L_sep` where `L_sep` is the negative SI-SDR against
 `oracle_noise.wav`. Set `separator_lr: 0` in `train_config.json` to keep the
 separator frozen during this stage instead.
+
+## Fusion design
+
+- The fusion projection is zero-initialised with a skip from `z_mix`, so before
+  training the model is exactly the mixture-only head of `audio_noise_capstone`;
+  its weight decay pulls it back toward that baseline.
+- `g` gates the noise branch by the separator's own energy ratio `r`: noise-
+  dominated clips (r near 0 dB) trust `n_hat`, high-SNR clips (very negative r,
+  where `n_hat` is mostly leaked speech) are down-weighted.
+- `max_gain_db` (default 20) caps how much a quiet `n_hat` is amplified. It can be
+  changed in `head_training` without retraining the separator; the embedding
+  cache is keyed on it.
+
+## Fair comparison with audio_noise_capstone
+
+`finetuning` uses the same batch size (32), accumulation (1), epochs (12) and
+patience (4) as the mixture-only run. Compare over several seeds; `seed` only
+changes training randomness, so the embedding cache is shared between seeds:
+
+```bash
+for SEED in 2026 2027 2028; do
+  OUT=checkpoint/seed_$SEED
+  python main.py head36 --config config/train_config.json --seed $SEED     --output $OUT/beats_fusion_head_36.pt --results $OUT/beats_fusion_head_36_summary.json
+  python main.py finetune36 --config config/train_config.json --seed $SEED     --head-checkpoint $OUT/beats_fusion_head_36.pt     --output $OUT/audio_best_36_fusion.pt --results $OUT/summary_36_fusion.json
+  python main.py test36 --config config/train_config.json     --checkpoint $OUT/audio_best_36_fusion.pt     --output $OUT/test_metrics_36_fusion.json --output-dir $OUT
+done
+```
 
 ## Outputs
 
