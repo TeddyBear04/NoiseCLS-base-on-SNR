@@ -1,0 +1,75 @@
+{
+  "separator": {
+    "n_fft": 512,
+    "hop_length": 160,
+    "win_length": 400,
+    "channels": 256,
+    "blocks": 8,
+    "kernel_size": 3,
+    "target_rms": 0.1,
+    "max_gain_db": 40.0
+  },
+  "separator_training": {
+    "output": "checkpoint/noise_separator.pt",
+    "results": "checkpoint/noise_separator_summary.json",
+    "epochs": 30,
+    "patience": 5,
+    "batch_size": 32,
+    "validation_batch_size": 64,
+    "workers": 4,
+    "lr": 0.001
+  },
+  "head_training": {
+    "separator_checkpoint": "checkpoint/noise_separator.pt",
+    "cache_dir": "artifacts/embedding_cache_36_fusion",
+    "output": "checkpoint/beats_fusion_head_36.pt",
+    "results": "checkpoint/beats_fusion_head_36_summary.json",
+    "epochs": 50,
+    "extract_batch_size": 32,
+    "head_batch_size": 512,
+    "workers": 4,
+    "lr": 0.001,
+    "dropout": 0.1,
+    "patience": 10
+  },
+  "finetuning": {
+    "head_checkpoint": "checkpoint/beats_fusion_head_36.pt",
+    "output": "checkpoint/audio_best_36_fusion.pt",
+    "results": "checkpoint/summary_36_fusion.json",
+    "trainable_blocks": 4,
+    "epochs": 8,
+    "patience": 3,
+    "batch_size": 16,
+    "validation_batch_size": 32,
+    "accumulation_steps": 2,
+    "workers": 4,
+    "head_lr": 0.0001,
+    "encoder_lr": 0.00001,
+    "separator_lr": 0.00005,
+    "sep_loss_weight": 0.05
+  },
+  "dataset_splitter": {
+    "dataset_path": "../../36_labels",
+    "manifest_file": "manifest.csv",
+    "selected_labels_file": "labels.txt",
+    "train_split": "train",
+    "validation_split": "validation",
+    "test_split": "test",
+    "use_predefined_splits": true
+  },
+  "audio_features": {
+    "sample_rate": 16000,
+    "clip_seconds": 4.0,
+    "mel_bins": 128,
+    "frame_length_ms": 25,
+    "frame_shift_ms": 10
+  },
+  "evaluation": {
+    "checkpoint": "checkpoint/audio_best_36_fusion.pt",
+    "batch_size": 32,
+    "workers": 4,
+    "split": "test",
+    "output": "checkpoint/test_metrics_36_fusion.json",
+    "output_dir": "checkpoint"
+  }
+}
