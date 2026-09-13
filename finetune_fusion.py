@@ -196,6 +196,8 @@ def main() -> None:
     parser.add_argument("--accumulation-steps", type=int, default=1)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--head-lr", type=float, default=1e-4)
+    parser.add_argument("--fusion-lr", type=float, help="default: same value used in head36")
+    parser.add_argument("--fusion-weight-decay", type=float, help="default: same value used in head36")
     parser.add_argument("--encoder-lr", type=float, default=1e-5)
     parser.add_argument("--separator-lr", type=float, default=5e-5,
                         help="0 keeps the pre-trained separator frozen")
@@ -241,6 +243,19 @@ def main() -> None:
     for parameter in separator.parameters():
         parameter.requires_grad = train_separator
 
+    # head36 trains the fusion projection slowly with strong decay toward its
+    # zero (mixture-only) start; keep that same protection here, otherwise the
+    # 36-class head's normal lr/decay lets fusion drift and overfit as soon as
+    # the encoder starts moving too. Default to whatever head36 actually used.
+    args.fusion_lr = args.fusion_lr if args.fusion_lr is not None else head_checkpoint["args"].get("fusion_lr", 1e-4)
+    args.fusion_weight_decay = (
+        args.fusion_weight_decay
+        if args.fusion_weight_decay is not None
+        else head_checkpoint["args"].get("fusion_weight_decay", 0.05)
+    )
+    fusion_parameters = list(classifier.fusion.parameters())
+    fusion_ids = {id(parameter) for parameter in fusion_parameters}
+
     train_loader = make_loader(train_dataset, args.batch_size, args.workers, True, device, args.seed)
     validation_loader = make_loader(
         validation_dataset, args.validation_batch_size, args.workers, False, device
@@ -248,7 +263,12 @@ def main() -> None:
     encoder_parameters = [parameter for parameter in encoder.parameters() if parameter.requires_grad]
     parameter_groups = [
         {"params": encoder_parameters, "lr": args.encoder_lr},
-        {"params": classifier.parameters(), "lr": args.head_lr},
+        {
+            "params": [p for p in classifier.parameters() if id(p) not in fusion_ids],
+            "lr": args.head_lr,
+            "weight_decay": 1e-4,
+        },
+        {"params": fusion_parameters, "lr": args.fusion_lr, "weight_decay": args.fusion_weight_decay},
     ]
     if train_separator:
         parameter_groups.append({"params": separator.parameters(), "lr": args.separator_lr})
@@ -259,7 +279,8 @@ def main() -> None:
     print(
         f"device={device} train={len(train_dataset)} validation={len(validation_dataset)} "
         f"trainable_encoder_params={sum(p.numel() for p in encoder_parameters)} "
-        f"train_separator={train_separator} sep_loss_weight={args.sep_loss_weight}",
+        f"train_separator={train_separator} sep_loss_weight={args.sep_loss_weight} "
+        f"fusion_lr={args.fusion_lr} fusion_weight_decay={args.fusion_weight_decay}",
         flush=True,
     )
 
