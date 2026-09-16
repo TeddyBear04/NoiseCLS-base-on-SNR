@@ -43,14 +43,19 @@ def extract_split(encoder, separator, dataset, device, batch_size: int, workers:
         pin_memory=device.type == "cuda",
         persistent_workers=workers > 0,
     )
-    mix_embeddings, noise_embeddings, noise_ratios, targets, snrs = [], [], [], [], []
+    mix_embeddings, noise_embeddings, conditioned_embeddings = [], [], []
+    noise_ratios, speech_ratios, targets, snrs = [], [], [], []
     started = time.perf_counter()
     for batch_index, batch in enumerate(loader, start=1):
         mixture = batch["mixture"].to(device, non_blocking=True)
-        z_mix, z_noise, _, noise_ratio_db = encode_branches(encoder, separator, mixture, device)
+        z_mix, z_noise, z_conditioned, _, noise_ratio_db, speech_ratio_db = encode_branches(
+            encoder, separator, mixture, device
+        )
         mix_embeddings.append(z_mix.float().cpu())
         noise_embeddings.append(z_noise.float().cpu())
+        conditioned_embeddings.append(z_conditioned.float().cpu())
         noise_ratios.append(noise_ratio_db.float().cpu())
+        speech_ratios.append(speech_ratio_db.float().cpu())
         targets.append(batch["target"].long())
         snrs.append(batch["snr"].long())
         if batch_index == 1 or batch_index % 100 == 0 or batch_index == len(loader):
@@ -58,7 +63,9 @@ def extract_split(encoder, separator, dataset, device, batch_size: int, workers:
     return {
         "x_mix": torch.cat(mix_embeddings),
         "x_noise": torch.cat(noise_embeddings),
+        "x_conditioned": torch.cat(conditioned_embeddings),
         "noise_ratio_db": torch.cat(noise_ratios),
+        "speech_ratio_db": torch.cat(speech_ratios),
         "y": torch.cat(targets),
         "snr": torch.cat(snrs),
         "seconds": time.perf_counter() - started,
@@ -101,7 +108,9 @@ def predict(classifier, data, device, batch_size: int = 2048):
             classifier(
                 data["x_mix"][start:stop].to(device),
                 data["x_noise"][start:stop].to(device),
+                data["x_conditioned"][start:stop].to(device),
                 data["noise_ratio_db"][start:stop].to(device),
+                data["speech_ratio_db"][start:stop].to(device),
             ).cpu()
         )
     return torch.cat(outputs)
@@ -110,7 +119,8 @@ def predict(classifier, data, device, batch_size: int = 2048):
 def train_classifier(classifier, train_data, validation_data, labels, device, args):
     loader = DataLoader(
         TensorDataset(
-            train_data["x_mix"], train_data["x_noise"], train_data["noise_ratio_db"], train_data["y"]
+            train_data["x_mix"], train_data["x_noise"], train_data["x_conditioned"],
+            train_data["noise_ratio_db"], train_data["speech_ratio_db"], train_data["y"]
         ),
         batch_size=args.head_batch_size,
         shuffle=True,
@@ -160,12 +170,14 @@ def train_classifier(classifier, train_data, validation_data, labels, device, ar
         total_loss = 0.0
         correct = 0
         seen = 0
-        for z_mix, z_noise, noise_ratio_db, targets in loader:
+        for z_mix, z_noise, z_conditioned, noise_ratio_db, speech_ratio_db, targets in loader:
             z_mix = z_mix.to(device, non_blocking=True)
             z_noise = z_noise.to(device, non_blocking=True)
+            z_conditioned = z_conditioned.to(device, non_blocking=True)
             noise_ratio_db = noise_ratio_db.to(device, non_blocking=True)
+            speech_ratio_db = speech_ratio_db.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
-            logits = classifier(z_mix, z_noise, noise_ratio_db)
+            logits = classifier(z_mix, z_noise, z_conditioned, noise_ratio_db, speech_ratio_db)
             loss = criterion(logits, targets)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -223,11 +235,18 @@ def main() -> None:
     parser.add_argument("--fusion-weight-decay", type=float, default=0.05)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--noise-dropout", type=float, default=0.2)
+    parser.add_argument("--conditioned-dropout", type=float, default=0.2)
     parser.add_argument("--patience", type=int, default=8)
     parser.add_argument("--seed", type=int, default=SEED,
                         help="training randomness only; data selection and embedding cache stay fixed")
     parser.add_argument("--target-rms", type=float, help="override the separator checkpoint value")
     parser.add_argument("--max-gain-db", type=float, help="override the separator checkpoint value")
+    parser.add_argument("--speech-threshold-db", type=float, help="WDRC compression knee in dBFS")
+    parser.add_argument("--speech-ratio", type=float, help="WDRC ratio; must be at least 1")
+    parser.add_argument("--speech-target-rms", type=float, help="post-WDRC make-up target RMS")
+    parser.add_argument("--speech-max-gain-db", type=float, help="cap post-WDRC make-up gain")
+    parser.add_argument("--speech-attack-ms", type=float, help="WDRC attack time")
+    parser.add_argument("--speech-release-ms", type=float, help="WDRC release time")
     parser.add_argument("--train-per-class", type=int)
     parser.add_argument("--validation-per-class", type=int)
     parser.add_argument("--force-extract", action="store_true")
@@ -253,14 +272,19 @@ def main() -> None:
     separator_checkpoint = torch.load(args.separator_checkpoint, map_location="cpu", weights_only=True)
     separator = build_separator(separator_checkpoint["separator"]).to(device).eval()
     separator.set_amplification(args.target_rms, args.max_gain_db)
+    separator.set_speech_conditioning(
+        args.speech_threshold_db, args.speech_ratio, args.speech_target_rms,
+        args.speech_max_gain_db, args.speech_attack_ms, args.speech_release_ms,
+    )
     # Amplification changes z_noise, so it is part of the cache key.
     signature = (
         f"{file_signature(args.separator_checkpoint)}"
-        f"|target_rms={separator.config['target_rms']}|max_gain_db={separator.config['max_gain_db']}"
+        f"|separator={separator.config}"
     )
     print(
-        f"amplification target_rms={separator.config['target_rms']} "
-        f"max_gain_db={separator.config['max_gain_db']}",
+        f"noise_target_rms={separator.config['target_rms']} "
+        f"speech_threshold_db={separator.config['speech_threshold_db']} "
+        f"speech_ratio={separator.config['speech_ratio']}",
         flush=True,
     )
     encoder, beats_checkpoint = load_beats(device)
@@ -275,7 +299,10 @@ def main() -> None:
     if device.type == "cuda":
         torch.cuda.empty_cache()
 
-    classifier = FusionClassifier(len(labels), dropout=args.dropout, noise_dropout=args.noise_dropout)
+    classifier = FusionClassifier(
+        len(labels), dropout=args.dropout, noise_dropout=args.noise_dropout,
+        conditioned_dropout=args.conditioned_dropout,
+    )
     initialize_head_from_audioset(classifier.head, beats_checkpoint, labels, label_to_mid_map(rows))
     classifier.to(device)
     best_epoch, best_metrics, history = train_classifier(

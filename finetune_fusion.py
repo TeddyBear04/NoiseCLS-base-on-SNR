@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 
 from config.paths import BEATS_CHECKPOINT
 from models.fusion import FusionClassifier, encode_branches
-from models.separator import build_separator, separation_loss, separator_payload, si_sdr
+from models.separator import DemucsNoiseSeparator, build_separator, separation_loss, separator_payload, si_sdr
 from noise_pipeline.mix_data import MixNoiseDataset, load_mix_manifest
 from utils.reporting36 import save_evaluation_artifacts, save_training_artifacts
 from utils.training36 import (
@@ -39,6 +39,7 @@ def load_model(
     trainable_blocks: int,
     dropout: float = 0.1,
     noise_dropout: float = 0.2,
+    conditioned_dropout: float = 0.2,
 ):
     """Build encoder, separator and classifier from a head or fine-tuned checkpoint."""
     encoder, _ = load_beats(device)
@@ -49,7 +50,17 @@ def load_model(
         encoder.load_state_dict(checkpoint["encoder_delta"], strict=False)
     separator = build_separator(checkpoint["separator"]).to(device)
     labels = checkpoint["labels"]
-    classifier = FusionClassifier(len(labels), dropout=dropout, noise_dropout=noise_dropout)
+    fusion_weight = checkpoint["classifier"].get("fusion.weight")
+    if fusion_weight is None or fusion_weight.shape[1] != 3 * 768:
+        raise ValueError(
+            "This checkpoint predates the speech-WDRC conditioned branch. "
+            "Run `python main.py head36 --config config/train_config.json --force-extract` "
+            "and then rerun finetune36."
+        )
+    classifier = FusionClassifier(
+        len(labels), dropout=dropout, noise_dropout=noise_dropout,
+        conditioned_dropout=conditioned_dropout,
+    )
     classifier.load_state_dict(checkpoint["classifier"])
     classifier.to(device)
     return encoder, separator, classifier, labels
@@ -91,9 +102,11 @@ def evaluate(encoder, separator, classifier, loader, device, labels, sep_loss_we
         mixture = batch["mixture"].to(device, non_blocking=True)
         targets = batch["target"].to(device, non_blocking=True)
         oracle = batch["oracle_noise"].to(device, non_blocking=True)
-        z_mix, z_noise, noise, noise_ratio_db = encode_branches(encoder, separator, mixture, device)
+        z_mix, z_noise, z_conditioned, noise, noise_ratio_db, speech_ratio_db = encode_branches(
+            encoder, separator, mixture, device
+        )
         with mixed_precision_context(device):
-            logits = classifier(z_mix, z_noise, noise_ratio_db)
+            logits = classifier(z_mix, z_noise, z_conditioned, noise_ratio_db, speech_ratio_db)
             loss = criterion(logits, targets)
         require_finite(loss, "validation loss")
         class_loss_total += loss.item()
@@ -131,11 +144,13 @@ def train_epoch(encoder, separator, classifier, loader, optimizer, device, args,
         mixture = batch["mixture"].to(device, non_blocking=True)
         targets = batch["target"].to(device, non_blocking=True)
         oracle = batch["oracle_noise"].to(device, non_blocking=True)
-        z_mix, z_noise, noise, noise_ratio_db = encode_branches(encoder, separator, mixture, device)
+        z_mix, z_noise, z_conditioned, noise, noise_ratio_db, speech_ratio_db = encode_branches(
+            encoder, separator, mixture, device
+        )
         with mixed_precision_context(device):
-            logits = classifier(z_mix, z_noise, noise_ratio_db)
+            logits = classifier(z_mix, z_noise, z_conditioned, noise_ratio_db, speech_ratio_db)
             class_loss = criterion(logits, targets)
-        sep_loss = separation_loss(noise, oracle)
+        sep_loss = separation_loss(noise, oracle, args.spectral_loss_weight)
         loss = class_loss + args.sep_loss_weight * sep_loss
         require_finite(loss, "training loss")
         (loss / args.accumulation_steps).backward()
@@ -203,6 +218,8 @@ def main() -> None:
                         help="0 keeps the pre-trained separator frozen")
     parser.add_argument("--sep-loss-weight", type=float, default=0.05,
                         help="lambda in L = L_class + lambda * L_sep")
+    parser.add_argument("--spectral-loss-weight", type=float, default=0.25,
+                        help="weight of multi-resolution STFT regularisation in L_sep")
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--train-per-class", type=int)
     parser.add_argument("--validation-per-class", type=int)
@@ -238,8 +255,11 @@ def main() -> None:
         device, head_checkpoint, args.trainable_blocks,
         dropout=head_checkpoint["args"].get("dropout", 0.1),
         noise_dropout=head_checkpoint["args"].get("noise_dropout", 0.2),
+        conditioned_dropout=head_checkpoint["args"].get("conditioned_dropout", 0.2),
     )
-    train_separator = args.separator_lr > 0
+    train_separator = args.separator_lr > 0 and not isinstance(separator, DemucsNoiseSeparator)
+    if args.separator_lr > 0 and not train_separator:
+        print("Demucs separator is frozen; separator_lr is ignored.", flush=True)
     for parameter in separator.parameters():
         parameter.requires_grad = train_separator
 
@@ -349,6 +369,7 @@ def main() -> None:
             "trainable_blocks": args.trainable_blocks,
             "dropout": head_checkpoint["args"].get("dropout", 0.1),
             "noise_dropout": head_checkpoint["args"].get("noise_dropout", 0.2),
+            "conditioned_dropout": head_checkpoint["args"].get("conditioned_dropout", 0.2),
             "best_epoch": best_epoch,
             "validation_metrics": best_metrics,
             "args": serializable_args,
@@ -373,7 +394,8 @@ def main() -> None:
     save_training_artifacts(args.output.parent, labels, result)
 
     encoder.load_state_dict(best_state["encoder_delta"], strict=False)
-    separator.load_state_dict(best_state["separator"]["state"])
+    if "state" in best_state["separator"]:
+        separator.load_state_dict(best_state["separator"]["state"])
     classifier.load_state_dict(best_state["classifier"])
     best_validation, expected, predicted = evaluate(
         encoder, separator, classifier, validation_loader, device, labels,

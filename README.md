@@ -14,7 +14,7 @@ manifest.csv + labels.txt
   ORIGINAL BRANCH               NOISE BRANCH
   (full mixture)                (separated + amplified noise)
         │                            │
-  log-Mel fbank (128 bins)      Noise separator (STFT mask) → n_hat
+  log-Mel fbank (128 bins)      Demucs vocals stem → s_hat; mixture - s_hat → n_hat
         │                            │
   Conv2D patch embed            Amplify n_hat to target RMS
         │                            │
@@ -83,8 +83,9 @@ python main.py finetune36 --config config/train_config.json    # jointly fine-tu
 python main.py test36 --config config/train_config.json
 ```
 
-`separator36` trains only the separator against `oracle_noise.wav` (available
-in training data only) with a scale-invariant SDR loss. `head36` then caches
+`separator36` evaluates the frozen pretrained Demucs separator against
+`oracle_noise.wav` (available in training data only) and saves its configuration.
+`head36` then caches
 frozen BEATs embeddings for both branches and trains the fusion head.
 `finetune36` unfreezes the last few BEATs blocks and (by default) continues
 training the separator jointly, minimizing
@@ -103,6 +104,41 @@ separator frozen during this stage instead.
 - `max_gain_db` (default 20) caps how much a quiet `n_hat` is amplified. It can be
   changed in `head_training` without retraining the separator; the embedding
   cache is keyed on it.
+
+## Speech compression and amplification
+
+The fusion path derives a speech residual `s_hat = mixture - n_hat` after
+noise separation. It applies WDRC with 10 ms RMS envelopes, a configurable
+compression knee and ratio, 10/200 ms attack/release smoothing, and bounded
+make-up gain. The resulting view is `WDRC(s_hat) + n_hat`, so the AGC does not
+boost background noise in speech pauses; a 0.98 peak guard prevents clipping.
+
+The conservative defaults are: threshold -30 dBFS, 3:1 ratio, target RMS 0.08,
+maximum make-up gain 12 dB, attack 10 ms, and release 200 ms. Adjust the
+`speech_*` fields in both `separator` and `head_training` in
+`config/train_config.json`; rerun `head36` after changing them because cached
+embeddings depend on these settings.
+
+## Separator tuning
+
+The optional `stft_tcn` backend uses a complex ratio mask (`mask_mode:
+"complex"`) instead of a magnitude-only mask with mixture phase. It is trained
+with negative SI-SDR plus 0.25 × multi-resolution STFT loss (256/512/1024 FFT),
+which penalises residual speech leakage and spectral mismatch. The TCN is also
+increased to 320 channels and 10 dilated blocks, giving it full-clip temporal
+context. This changes the separator architecture: run `separator36` from
+scratch, then regenerate the fusion-head cache and train the head/fine-tune
+stages in order.
+
+## Demucs backend (default)
+
+`separator_backend` is now `demucs`, using Meta's pretrained `htdemucs` model.
+Input is resampled from mono 16 kHz to Demucs's native stereo 44.1 kHz; the
+`vocals` stem is interpreted as speech and `n_hat = mixture - vocals` is passed
+to the noise branch. Demucs is frozen: the dataset targets are not music stems,
+so direct fine-tuning of its four music-source outputs would be ill-posed. The
+first run downloads the official weights. The current batch sizes are reduced to
+8 because Demucs operates at 44.1 kHz; increase them only after checking VRAM.
 
 ## Fair comparison with audio_noise_capstone
 

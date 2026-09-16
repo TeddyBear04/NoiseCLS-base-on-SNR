@@ -12,7 +12,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
-from models.separator import NoiseSeparator, separation_loss, separator_payload, si_sdr
+from models.separator import DemucsNoiseSeparator, NoiseSeparator, separation_loss, separator_payload, si_sdr
 from noise_pipeline.mix_data import MixNoiseDataset, load_mix_manifest
 from utils.training36 import SEED, SNRS, require_finite, seed_everything, select_rows
 
@@ -62,14 +62,14 @@ def evaluate(separator: NoiseSeparator, loader, device: torch.device) -> dict:
     return result
 
 
-def train_epoch(separator, loader, optimizer, device) -> float:
+def train_epoch(separator, loader, optimizer, device, spectral_loss_weight: float) -> float:
     separator.train()
     total_loss = 0.0
     seen = 0
     for batch_index, batch in enumerate(loader, start=1):
         mixture = batch["mixture"].to(device, non_blocking=True)
         oracle = batch["oracle_noise"].to(device, non_blocking=True)
-        loss = separation_loss(separator(mixture), oracle)
+        loss = separation_loss(separator(mixture), oracle, spectral_loss_weight)
         require_finite(loss, "separation loss")
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -127,6 +127,19 @@ def main() -> None:
     parser.add_argument("--kernel-size", type=int, default=3)
     parser.add_argument("--target-rms", type=float, default=0.1)
     parser.add_argument("--max-gain-db", type=float, default=40.0)
+    parser.add_argument("--speech-threshold-db", type=float, default=-30.0)
+    parser.add_argument("--speech-ratio", type=float, default=3.0)
+    parser.add_argument("--speech-target-rms", type=float, default=0.08)
+    parser.add_argument("--speech-max-gain-db", type=float, default=12.0)
+    parser.add_argument("--speech-attack-ms", type=float, default=10.0)
+    parser.add_argument("--speech-release-ms", type=float, default=200.0)
+    parser.add_argument("--mask-mode", choices=("magnitude", "complex"), default="complex")
+    parser.add_argument("--spectral-loss-weight", type=float, default=0.25)
+    parser.add_argument("--separator-backend", choices=("stft_tcn", "demucs"), default="stft_tcn")
+    parser.add_argument("--demucs-model", default="htdemucs")
+    parser.add_argument("--demucs-speech-source", default="vocals")
+    parser.add_argument("--demucs-shifts", type=int, default=0)
+    parser.add_argument("--demucs-overlap", type=float, default=0.25)
     parser.add_argument("--train-per-class", type=int)
     parser.add_argument("--validation-per-class", type=int)
     parser.add_argument("--smoke-test", action="store_true")
@@ -156,6 +169,43 @@ def main() -> None:
     validation_loader = make_loader(
         validation_dataset, args.validation_batch_size, args.workers, False, device
     )
+    if args.separator_backend == "demucs":
+        separator = DemucsNoiseSeparator(
+            model_name=args.demucs_model, speech_source=args.demucs_speech_source,
+            shifts=args.demucs_shifts, overlap=args.demucs_overlap,
+            target_rms=args.target_rms, max_gain_db=args.max_gain_db,
+            speech_threshold_db=args.speech_threshold_db, speech_ratio=args.speech_ratio,
+            speech_target_rms=args.speech_target_rms,
+            speech_max_gain_db=args.speech_max_gain_db,
+            speech_attack_ms=args.speech_attack_ms, speech_release_ms=args.speech_release_ms,
+        ).to(device)
+        validation = evaluate(separator, validation_loader, device)
+        serializable_args = {
+            key: str(value) if isinstance(value, Path) else value
+            for key, value in vars(args).items()
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "separator": separator_payload(separator), "best_epoch": 0,
+                "validation_metrics": validation, "args": serializable_args,
+            }, args.output,
+        )
+        result = {
+            "stage": "demucs_pretrained_noise_residual", "train_samples": 0,
+            "validation_samples": len(validation_dataset), "best_epoch": 0,
+            "best_validation": validation, "history": [{"epoch": 0, "validation": validation}],
+            "checkpoint": str(args.output), "args": serializable_args,
+        }
+        args.results.parent.mkdir(parents=True, exist_ok=True)
+        args.results.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        save_reports(args.output.parent, result["history"], validation)
+        print(
+            f"backend=demucs model={args.demucs_model} val_si_sdr={validation['si_sdr']:.2f} "
+            f"val_si_sdri={validation['si_sdr_improvement']:.2f}", flush=True,
+        )
+        print(f"checkpoint={args.output} results={args.results}", flush=True)
+        return
     separator = NoiseSeparator(
         n_fft=args.n_fft,
         hop_length=args.hop_length,
@@ -165,6 +215,13 @@ def main() -> None:
         kernel_size=args.kernel_size,
         target_rms=args.target_rms,
         max_gain_db=args.max_gain_db,
+        speech_threshold_db=args.speech_threshold_db,
+        speech_ratio=args.speech_ratio,
+        speech_target_rms=args.speech_target_rms,
+        speech_max_gain_db=args.speech_max_gain_db,
+        speech_attack_ms=args.speech_attack_ms,
+        speech_release_ms=args.speech_release_ms,
+        mask_mode=args.mask_mode,
     ).to(device)
     optimizer = torch.optim.AdamW(separator.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -187,7 +244,7 @@ def main() -> None:
     stale = 0
     started = time.perf_counter()
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_epoch(separator, train_loader, optimizer, device)
+        train_loss = train_epoch(separator, train_loader, optimizer, device, args.spectral_loss_weight)
         validation = evaluate(separator, validation_loader, device)
         scheduler.step(validation["si_sdr"])
         history.append(

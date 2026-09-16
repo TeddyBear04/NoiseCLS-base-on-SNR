@@ -26,6 +26,7 @@ def main() -> None:
     encoder, separator, classifier, labels = load_model(
         device, checkpoint, checkpoint["trainable_blocks"],
         dropout=checkpoint["dropout"], noise_dropout=checkpoint.get("noise_dropout", 0.2),
+        conditioned_dropout=checkpoint.get("conditioned_dropout", 0.2),
     )
     dataset = MixNoiseDataset(args.data_root, args.split, rows=load_mix_manifest(args.data_root))
     loader = make_loader(dataset, args.batch_size, args.workers, False, device)
