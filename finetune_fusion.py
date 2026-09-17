@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 
 from config.paths import BEATS_CHECKPOINT
 from models.fusion import FusionClassifier, encode_branches
-from models.separator import DemucsNoiseSeparator, build_separator, separation_loss, separator_payload, si_sdr
+from models.separator import build_separator, separation_loss, separator_payload, si_sdr
 from noise_pipeline.mix_data import MixNoiseDataset, load_mix_manifest
 from utils.reporting36 import save_evaluation_artifacts, save_training_artifacts
 from utils.training36 import (
@@ -257,9 +257,7 @@ def main() -> None:
         noise_dropout=head_checkpoint["args"].get("noise_dropout", 0.2),
         conditioned_dropout=head_checkpoint["args"].get("conditioned_dropout", 0.2),
     )
-    train_separator = args.separator_lr > 0 and not isinstance(separator, DemucsNoiseSeparator)
-    if args.separator_lr > 0 and not train_separator:
-        print("Demucs separator is frozen; separator_lr is ignored.", flush=True)
+    train_separator = args.separator_lr > 0
     for parameter in separator.parameters():
         parameter.requires_grad = train_separator
 

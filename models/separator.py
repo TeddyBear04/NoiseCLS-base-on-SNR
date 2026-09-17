@@ -211,87 +211,6 @@ class NoiseSeparator(nn.Module):
         return amplified / (peak / 0.98).clamp(min=1.0)
 
 
-class DemucsNoiseSeparator(NoiseSeparator):
-    """Frozen pretrained Demucs vocal separator used to estimate environmental noise.
-
-    Demucs exposes a ``vocals`` stem. For this dataset that is the speech
-    estimate; the desired noise estimate is the mixture residual. It runs at
-    Demucs's native stereo sample rate while this project remains mono 16 kHz.
-    """
-
-    def __init__(
-        self,
-        model_name: str = "htdemucs",
-        speech_source: str = "vocals",
-        input_sample_rate: int = 16_000,
-        shifts: int = 0,
-        overlap: float = 0.25,
-        target_rms: float = 0.1,
-        max_gain_db: float = 20.0,
-        speech_threshold_db: float = -30.0,
-        speech_ratio: float = 3.0,
-        speech_target_rms: float = 0.08,
-        speech_max_gain_db: float = 12.0,
-        speech_attack_ms: float = 10.0,
-        speech_release_ms: float = 200.0,
-    ) -> None:
-        # Reuse the shared amplification/WDRC implementation; the small TCN is
-        # unused because ``forward`` delegates separation to Demucs.
-        super().__init__(
-            channels=1, blocks=0, target_rms=target_rms, max_gain_db=max_gain_db,
-            speech_threshold_db=speech_threshold_db, speech_ratio=speech_ratio,
-            speech_target_rms=speech_target_rms, speech_max_gain_db=speech_max_gain_db,
-            speech_attack_ms=speech_attack_ms, speech_release_ms=speech_release_ms,
-        )
-        try:
-            from demucs import pretrained
-        except ImportError as error:
-            raise ImportError(
-                "Demucs is required for separator_backend='demucs'. "
-                "Run `pip install -r requirements.txt`."
-            ) from error
-        self.demucs = pretrained.get_model(model_name)
-        self.demucs.eval()
-        for parameter in self.demucs.parameters():
-            parameter.requires_grad = False
-        if speech_source not in self.demucs.sources:
-            raise ValueError(
-                f"Demucs model {model_name!r} has no {speech_source!r} source; "
-                f"available={self.demucs.sources}"
-            )
-        self.speech_source = speech_source
-        self.input_sample_rate = input_sample_rate
-        self.shifts = shifts
-        self.overlap = overlap
-        self.config = {
-            "model_name": model_name, "speech_source": speech_source,
-            "input_sample_rate": input_sample_rate, "shifts": shifts, "overlap": overlap,
-            "target_rms": target_rms, "max_gain_db": max_gain_db,
-            "speech_threshold_db": speech_threshold_db, "speech_ratio": speech_ratio,
-            "speech_target_rms": speech_target_rms, "speech_max_gain_db": speech_max_gain_db,
-            "speech_attack_ms": speech_attack_ms, "speech_release_ms": speech_release_ms,
-        }
-
-    def forward(self, mixture: torch.Tensor) -> torch.Tensor:
-        from demucs.apply import apply_model
-        from torchaudio.functional import resample
-
-        original_length = mixture.shape[-1]
-        audio = resample(mixture.float(), self.input_sample_rate, self.demucs.samplerate)
-        audio = audio.unsqueeze(1).expand(-1, self.demucs.audio_channels, -1)
-        stems = apply_model(
-            self.demucs, audio, shifts=self.shifts, split=True,
-            overlap=self.overlap, device=mixture.device,
-        )
-        source_index = self.demucs.sources.index(self.speech_source)
-        speech = stems[:, source_index].mean(dim=1)
-        speech = resample(speech, self.demucs.samplerate, self.input_sample_rate)
-        speech = speech[..., :original_length]
-        if speech.shape[-1] < original_length:
-            speech = torch.nn.functional.pad(speech, (0, original_length - speech.shape[-1]))
-        return mixture - speech
-
-
 def si_sdr(estimate: torch.Tensor, reference: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     """Scale-invariant SDR in dB for every clip, shaped ``[batch]``."""
     estimate = estimate.float()
@@ -345,8 +264,6 @@ def separation_loss(
 
 def separator_payload(separator: NoiseSeparator) -> dict:
     """Serializable architecture and weights for embedding in any checkpoint."""
-    if isinstance(separator, DemucsNoiseSeparator):
-        return {"kind": "demucs_pretrained", "config": dict(separator.config)}
     return {
         "kind": "stft_tcn",
         "config": dict(separator.config),
@@ -358,8 +275,6 @@ def separator_payload(separator: NoiseSeparator) -> dict:
 
 
 def build_separator(payload: dict) -> NoiseSeparator:
-    if payload.get("kind") == "demucs_pretrained":
-        return DemucsNoiseSeparator(**payload["config"])
     separator = NoiseSeparator(**payload["config"])
     separator.load_state_dict(payload["state"])
     return separator
