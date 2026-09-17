@@ -1,21 +1,22 @@
-"""Two-branch BEATs encoding and the mixture/noise fusion classifier."""
+"""Three-view BEATs encoding and quality-gated fusion classification."""
 
 from __future__ import annotations
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from models.separator import NoiseSeparator
 from utils.training36 import mixed_precision_context
 
 
 class FusionClassifier(nn.Module):
-    """fused = z_mix + Linear(1536, 768)(Concat(z_mix, z_noise)) → Linear(768, classes).
+    """Keep mixture evidence and add quality-gated auxiliary residuals.
 
-    The fusion projection starts at zero, so the untrained model is exactly the
-    mixture-only BEATs head (as in ``audio_noise_capstone``). Weight decay pulls
-    the projection back toward that baseline, so the noise branch only adds what
-    the validation data supports instead of replacing the mixture evidence.
+    The mixture embedding is an unconditional skip connection.  The learned
+    softmax gate estimates reliability for mixture, separated noise, and the
+    speech-conditioned view.  Only auxiliary residuals are scaled by that gate,
+    so the model starts as an exact mixture-only classifier.
     """
 
     def __init__(
@@ -25,29 +26,38 @@ class FusionClassifier(nn.Module):
         dropout: float = 0.1,
         noise_dropout: float = 0.2,
         conditioned_dropout: float = 0.2,
+        gate_hidden_dim: int = 256,
+        contrastive_dim: int = 128,
     ) -> None:
         super().__init__()
-        # Separated-noise embeddings are out of distribution for BEATs, so
-        # normalise them and drop features to stop the head memorising them.
+        self.mix_gate_norm = nn.LayerNorm(embed_dim)
         self.noise_norm = nn.LayerNorm(embed_dim)
         self.conditioned_norm = nn.LayerNorm(embed_dim)
-        # Confidence gate from the separator's own energy estimate: near 0 dB the
-        # clip is noise-dominated and n_hat is reliable; at very negative values
-        # (high SNR) n_hat is mostly leaked speech, so the gate closes.
-        self.gate = nn.Linear(1, 1)
-        self.conditioned_gate = nn.Linear(1, 1)
+        self.quality_gate = nn.Sequential(
+            nn.Linear(3 * embed_dim + 1, gate_hidden_dim),
+            nn.GELU(),
+            nn.Linear(gate_hidden_dim, 3),
+        )
         self.noise_dropout = nn.Dropout(noise_dropout)
         self.conditioned_dropout = nn.Dropout(conditioned_dropout)
         self.fusion = nn.Linear(3 * embed_dim, embed_dim)
         self.dropout = nn.Dropout(dropout)
         self.head = nn.Linear(embed_dim, num_classes)
+        self.noise_aux_head = nn.Linear(embed_dim, num_classes)
+        self.noise_projection = nn.Sequential(
+            nn.LayerNorm(embed_dim),
+            nn.Linear(embed_dim, embed_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(embed_dim, contrastive_dim),
+        )
         nn.init.zeros_(self.fusion.weight)
         nn.init.zeros_(self.fusion.bias)
         with torch.no_grad():
-            self.gate.weight.fill_(1.0)
-            self.gate.bias.fill_(1.0)
-            self.conditioned_gate.weight.fill_(1.0)
-            self.conditioned_gate.bias.fill_(0.0)
+            # Start with mixture as the trusted view.  Zero fusion still makes
+            # the initial classifier exactly mixture-only.
+            self.quality_gate[-1].weight.zero_()
+            self.quality_gate[-1].bias.copy_(torch.tensor([2.0, -2.0, -2.0]))
 
     def forward(
         self,
@@ -56,21 +66,60 @@ class FusionClassifier(nn.Module):
         z_conditioned: torch.Tensor,
         noise_ratio_db: torch.Tensor,
         speech_ratio_db: torch.Tensor,
-    ) -> torch.Tensor:
-        gate = torch.sigmoid(self.gate(noise_ratio_db.float().unsqueeze(-1) / 10))
-        noise = gate * self.noise_dropout(self.noise_norm(z_noise))
-        conditioned_gate = torch.sigmoid(
-            self.conditioned_gate(speech_ratio_db.float().unsqueeze(-1) / 10)
+        return_details: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        # Keep this argument for cache/checkpoint API compatibility.  The gate
+        # deliberately uses [z_mix, z_noise, z_conditioned, r] as designed.
+        del speech_ratio_db
+        gate_input = torch.cat(
+            [
+                self.mix_gate_norm(z_mix),
+                self.noise_norm(z_noise),
+                self.conditioned_norm(z_conditioned),
+                noise_ratio_db.float().unsqueeze(-1) / 10,
+            ],
+            dim=-1,
         )
-        conditioned = conditioned_gate * self.conditioned_dropout(
+        weights = torch.softmax(self.quality_gate(gate_input), dim=-1)
+        mixture_weight = weights[:, :1].clamp_min(1e-4)
+        noise = (weights[:, 1:2] / mixture_weight) * self.noise_dropout(self.noise_norm(z_noise))
+        conditioned = (weights[:, 2:3] / mixture_weight) * self.conditioned_dropout(
             self.conditioned_norm(z_conditioned)
         )
         fused = z_mix + self.fusion(torch.cat([z_mix, noise, conditioned], dim=-1))
-        return self.head(self.dropout(fused))
+        logits = self.head(self.dropout(fused))
+        if return_details:
+            return logits, {
+                "branch_weights": weights,
+                "noise_logits": self.noise_aux_head(self.noise_norm(z_noise)),
+                "mix_logits": self.head(z_mix),
+                "conditioned_logits": self.head(z_conditioned),
+                "noise_projection": self.noise_projection(self.noise_norm(z_noise)),
+            }
+        return logits
+
+
+def supervised_contrastive_loss(
+    projections: torch.Tensor, targets: torch.Tensor, temperature: float = 0.1
+) -> torch.Tensor:
+    """Supervised contrastive loss over noise-view projections in one batch."""
+    if temperature <= 0:
+        raise ValueError("temperature must be positive")
+    features = F.normalize(projections.float(), dim=-1)
+    similarities = features @ features.T / temperature
+    diagonal = torch.eye(len(targets), device=targets.device, dtype=torch.bool)
+    similarities = similarities.masked_fill(diagonal, float("-inf"))
+    positives = targets[:, None].eq(targets[None, :]) & ~diagonal
+    valid = positives.any(dim=1)
+    if not valid.any():
+        return projections.new_zeros(())
+    log_prob = similarities - torch.logsumexp(similarities, dim=1, keepdim=True)
+    positive_log_prob = log_prob.masked_fill(~positives, 0).sum(dim=1)
+    return -(positive_log_prob[valid] / positives.sum(dim=1)[valid]).mean()
 
 
 def noise_energy_ratio_db(noise: torch.Tensor, mixture: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
-    """Per-clip ``10·log10(E[n_hat²] / E[mixture²])``, a label-free SNR estimate."""
+    """Per-clip 10*log10(E[n_hat^2] / E[mixture^2])."""
     noise_energy = noise.float().pow(2).mean(dim=-1)
     mixture_energy = mixture.float().pow(2).mean(dim=-1)
     return 10 * torch.log10((noise_energy + eps) / (mixture_energy + eps))
@@ -81,13 +130,8 @@ def encode_branches(
     separator: NoiseSeparator,
     mixture: torch.Tensor,
     device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Return ``z_mix``, ``z_noise``, the raw noise estimate ``n_hat`` and its
-    detached noise-to-mixture energy ratio in dB (input of the fusion gate).
-
-    Both branches go through the same BEATs encoder in one doubled batch, so the
-    transformer weights are shared by construction.
-    """
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Encode mixture, amplified noise, and WDRC-conditioned residual views."""
     noise = separator(mixture)
     amplified = separator.amplify(noise)
     speech = mixture - noise

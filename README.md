@@ -104,6 +104,31 @@ separator frozen during this stage instead.
   changed in `head_training` without retraining the separator; the embedding
   cache is keyed on it.
 
+## Quality-gated robust fine-tuning
+
+The current classifier uses three BEATs views: the original mixture, separated
+and amplified noise, and a WDRC-conditioned speech residual plus noise. The
+mixture embedding remains an unconditional skip. A softmax MLP over
+`[z_mix, z_noise, z_conditioned, r]` is initialised strongly toward mixture and
+only scales the two auxiliary residuals before their zero-initialised fusion.
+
+Fine-tuning defaults to one trainable BEATs block at `1e-6`, a frozen separator,
+and weighted CE across the six SNR groups (`1,1,1,1,1.5,2`). Checkpoints are
+selected by worst-group macro-F1. Set `snr_loss_mode: group_dro` to use
+exponentiated Group DRO weights instead.
+
+The objective includes a noise-view auxiliary CE head, light
+mixture/conditioned-logit consistency, and supervised contrastive learning on
+the noise view. When `separator_lr > 0`, it also includes noise and
+speech-residual separation losses. Evaluation writes `branch_quality` with
+gate weights and their correlations with noise SI-SDR, speech-leakage SI-SDR,
+and correctness.
+
+The default amplification is conservative (`target_rms=0.05`,
+`max_gain_db=12`). Sweep `(target_rms, max_gain_db)` over `(0.03, 6)`,
+`(0.05, 12)`, and `(0.10, 20)` by overriding `head36`; re-extract embeddings
+for each setting.
+
 ## Speech compression and amplification
 
 The fusion path derives a speech residual `s_hat = mixture - n_hat` after

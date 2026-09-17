@@ -29,6 +29,14 @@ from utils.training36 import (
 DEFAULT_CACHE_DIR = Path("artifacts/embedding_cache_36_fusion")
 
 
+def validation_score(result: dict, metric_name: str) -> float:
+    if metric_name == "macro_f1":
+        return result["macro_f1"]
+    if metric_name == "worst_group_macro_f1":
+        return min(values["macro_f1"] for values in result["per_snr"].values())
+    raise ValueError("selection_metric must be 'macro_f1' or 'worst_group_macro_f1'")
+
+
 def file_signature(path: Path) -> str:
     stat = path.stat()
     return f"{path.name}:{stat.st_size}:{int(stat.st_mtime)}"
@@ -153,6 +161,9 @@ def train_classifier(classifier, train_data, validation_data, labels, device, ar
     def validate():
         logits = predict(classifier, validation_data, device)
         result = metrics(logits, validation_data["y"], validation_data["snr"], labels)
+        result["worst_group_macro_f1"] = min(
+            values["macro_f1"] for values in result["per_snr"].values()
+        )
         result["loss"] = float(criterion(logits, validation_data["y"]))
         return result
 
@@ -187,7 +198,8 @@ def train_classifier(classifier, train_data, validation_data, labels, device, ar
             seen += targets.shape[0]
 
         validation_metrics = validate()
-        scheduler.step(validation_metrics["macro_f1"])
+        score = validation_score(validation_metrics, args.selection_metric)
+        scheduler.step(score)
         epoch_result = {
             "epoch": epoch,
             "train_loss": total_loss / seen,
@@ -205,7 +217,7 @@ def train_classifier(classifier, train_data, validation_data, labels, device, ar
             f"lr={epoch_result['learning_rate']:.2e}",
             flush=True,
         )
-        if validation_metrics["macro_f1"] > best_metrics["macro_f1"] + 1e-4:
+        if score > validation_score(best_metrics, args.selection_metric) + 1e-4:
             best_metrics = validation_metrics
             best_epoch = epoch
             best_state = {key: value.detach().cpu().clone() for key, value in classifier.state_dict().items()}
@@ -236,6 +248,8 @@ def main() -> None:
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--noise-dropout", type=float, default=0.2)
     parser.add_argument("--conditioned-dropout", type=float, default=0.2)
+    parser.add_argument("--selection-metric", choices=("macro_f1", "worst_group_macro_f1"),
+                        default="worst_group_macro_f1")
     parser.add_argument("--patience", type=int, default=8)
     parser.add_argument("--seed", type=int, default=SEED,
                         help="training randomness only; data selection and embedding cache stay fixed")

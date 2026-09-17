@@ -14,15 +14,17 @@ from pathlib import Path
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
 from config.paths import BEATS_CHECKPOINT
-from models.fusion import FusionClassifier, encode_branches
+from models.fusion import FusionClassifier, encode_branches, supervised_contrastive_loss
 from models.separator import build_separator, separation_loss, separator_payload, si_sdr
 from noise_pipeline.mix_data import MixNoiseDataset, load_mix_manifest
 from utils.reporting36 import save_evaluation_artifacts, save_training_artifacts
 from utils.training36 import (
     SEED,
+    SNRS,
     add_si_sdr_metrics,
     load_beats,
     metrics,
@@ -43,9 +45,12 @@ def load_model(
 ):
     """Build encoder, separator and classifier from a head or fine-tuned checkpoint."""
     encoder, _ = load_beats(device)
-    for layer in encoder.encoder.layers[-trainable_blocks:]:
-        for parameter in layer.parameters():
-            parameter.requires_grad = True
+    if trainable_blocks < 0 or trainable_blocks > len(encoder.encoder.layers):
+        raise ValueError("trainable_blocks must be between 0 and the encoder layer count")
+    if trainable_blocks:
+        for layer in encoder.encoder.layers[-trainable_blocks:]:
+            for parameter in layer.parameters():
+                parameter.requires_grad = True
     if "encoder_delta" in checkpoint:
         encoder.load_state_dict(checkpoint["encoder_delta"], strict=False)
     separator = build_separator(checkpoint["separator"]).to(device)
@@ -61,7 +66,13 @@ def load_model(
         len(labels), dropout=dropout, noise_dropout=noise_dropout,
         conditioned_dropout=conditioned_dropout,
     )
-    classifier.load_state_dict(checkpoint["classifier"])
+    try:
+        classifier.load_state_dict(checkpoint["classifier"])
+    except RuntimeError as error:
+        raise ValueError(
+            "This checkpoint predates the quality-gated three-view classifier. "
+            "Retrain head36, then finetune36, before evaluating it."
+        ) from error
     classifier.to(device)
     return encoder, separator, classifier, labels
 
@@ -79,12 +90,106 @@ def make_loader(dataset, batch_size: int, workers: int, shuffle: bool, device: t
     )
 
 
+def parse_snr_weights(raw: str) -> torch.Tensor:
+    """Parse one weight for each fixed training SNR group."""
+    weights = [float(value.strip()) for value in raw.split(",")]
+    if len(weights) != len(SNRS) or any(weight <= 0 for weight in weights):
+        raise ValueError(f"snr_group_weights must contain {len(SNRS)} positive comma-separated values")
+    return torch.tensor(weights, dtype=torch.float32)
+
+
+class SNRRobustLoss:
+    """Per-sample CE with fixed SNR weights or exponentiated Group DRO weights."""
+
+    def __init__(self, mode: str, fixed_weights: torch.Tensor, eta: float, device: torch.device):
+        if mode not in {"weighted_ce", "group_dro"}:
+            raise ValueError("snr_loss_mode must be 'weighted_ce' or 'group_dro'")
+        self.mode = mode
+        self.fixed_weights = fixed_weights.to(device)
+        self.eta = eta
+        self.log_q = torch.zeros(len(SNRS), device=device)
+
+    def __call__(self, per_sample_loss: torch.Tensor, snrs: torch.Tensor) -> torch.Tensor:
+        group_losses = torch.stack([
+            per_sample_loss[snrs == snr].mean() if (snrs == snr).any()
+            else torch.full((), float("nan"), device=per_sample_loss.device)
+            for snr in SNRS
+        ])
+        if self.mode == "weighted_ce":
+            weights = torch.ones_like(per_sample_loss)
+            for index, snr in enumerate(SNRS):
+                weights = torch.where(snrs == snr, self.fixed_weights[index], weights)
+            return (per_sample_loss * weights).mean() / self.fixed_weights.mean()
+
+        present = torch.isfinite(group_losses)
+        with torch.no_grad():
+            self.log_q[present] += self.eta * group_losses[present]
+            self.log_q -= torch.logsumexp(self.log_q, dim=0)
+        q = torch.softmax(self.log_q, dim=0)
+        return (q[present] * group_losses[present]).sum() / q[present].sum()
+
+    def weights(self) -> dict[str, float]:
+        weights = self.fixed_weights if self.mode == "weighted_ce" else torch.softmax(self.log_q, dim=0)
+        return {str(snr): float(weights[index]) for index, snr in enumerate(SNRS)}
+
+
+def validation_score(result: dict, metric_name: str) -> float:
+    if metric_name == "macro_f1":
+        return result["macro_f1"]
+    if metric_name == "worst_group_macro_f1":
+        return min(values["macro_f1"] for values in result["per_snr"].values())
+    raise ValueError("selection_metric must be 'macro_f1' or 'worst_group_macro_f1'")
+
+
+def _correlation(left: torch.Tensor, right: torch.Tensor) -> float | None:
+    left = left.float()
+    right = right.float()
+    left = left - left.mean()
+    right = right - right.mean()
+    denominator = left.norm() * right.norm()
+    return None if denominator <= 1e-8 else float((left * right).sum() / denominator)
+
+
+def branch_quality_metrics(
+    weights: torch.Tensor, noise_si_sdr: torch.Tensor, leakage_si_sdr: torch.Tensor,
+    correct: torch.Tensor, snrs: torch.Tensor,
+) -> dict:
+    """Report gate reliability correlations overall and for every SNR group."""
+    result = {"overall": {}, "per_snr": {}}
+
+    def summarise(mask: torch.Tensor) -> dict:
+        selected = weights[mask]
+        noise_gate = selected[:, 1]
+        conditioned_gate = selected[:, 2]
+        return {
+            "samples": int(mask.sum()),
+            "mean_branch_weights": {
+                "mixture": float(selected[:, 0].mean()),
+                "noise": float(noise_gate.mean()),
+                "conditioned": float(conditioned_gate.mean()),
+            },
+            "noise_gate_si_sdr_correlation": _correlation(noise_gate, noise_si_sdr[mask]),
+            "noise_gate_leakage_si_sdr_correlation": _correlation(noise_gate, leakage_si_sdr[mask]),
+            "noise_gate_correct_correlation": _correlation(noise_gate, correct[mask]),
+            "conditioned_gate_correct_correlation": _correlation(conditioned_gate, correct[mask]),
+        }
+
+    all_samples = torch.ones_like(snrs, dtype=torch.bool)
+    result["overall"] = summarise(all_samples)
+    for snr in SNRS:
+        mask = snrs == snr
+        if mask.any():
+            result["per_snr"][str(snr)] = summarise(mask)
+    return result
+
+
 def set_training_mode(encoder, separator, classifier, trainable_blocks: int, train_separator: bool) -> None:
     # Frozen blocks remain deterministic; dropout is active only in blocks that
     # receive gradient updates.
     encoder.eval()
-    for layer in encoder.encoder.layers[-trainable_blocks:]:
-        layer.train()
+    if trainable_blocks:
+        for layer in encoder.encoder.layers[-trainable_blocks:]:
+            layer.train()
     separator.train(train_separator)
     classifier.train()
 
@@ -97,6 +202,7 @@ def evaluate(encoder, separator, classifier, loader, device, labels, sep_loss_we
     classifier.eval()
     criterion = nn.CrossEntropyLoss(reduction="sum")
     all_logits, all_targets, all_snrs, all_si_sdrs = [], [], [], []
+    all_weights, all_leakage_si_sdrs, all_correct = [], [], []
     class_loss_total = 0.0
     for batch in loader:
         mixture = batch["mixture"].to(device, non_blocking=True)
@@ -106,7 +212,9 @@ def evaluate(encoder, separator, classifier, loader, device, labels, sep_loss_we
             encoder, separator, mixture, device
         )
         with mixed_precision_context(device):
-            logits = classifier(z_mix, z_noise, z_conditioned, noise_ratio_db, speech_ratio_db)
+            logits, details = classifier(
+                z_mix, z_noise, z_conditioned, noise_ratio_db, speech_ratio_db, return_details=True
+            )
             loss = criterion(logits, targets)
         require_finite(loss, "validation loss")
         class_loss_total += loss.item()
@@ -114,11 +222,24 @@ def evaluate(encoder, separator, classifier, loader, device, labels, sep_loss_we
         all_targets.append(targets.cpu())
         all_snrs.append(batch["snr"].cpu())
         all_si_sdrs.append(si_sdr(noise, oracle).cpu())
+        oracle_speech = mixture - oracle
+        all_leakage_si_sdrs.append(si_sdr(noise, oracle_speech).cpu())
+        all_weights.append(details["branch_weights"].float().cpu())
+        all_correct.append((logits.argmax(dim=1) == targets).float().cpu())
     logits = torch.cat(all_logits)
     targets = torch.cat(all_targets)
     snrs = torch.cat(all_snrs)
     si_sdrs = torch.cat(all_si_sdrs)
+    branch_weights = torch.cat(all_weights)
+    leakage_si_sdrs = torch.cat(all_leakage_si_sdrs)
+    correct = torch.cat(all_correct)
     result = add_si_sdr_metrics(metrics(logits, targets, snrs, labels), si_sdrs, snrs)
+    result["worst_group_macro_f1"] = min(
+        values["macro_f1"] for values in result["per_snr"].values()
+    )
+    result["branch_quality"] = branch_quality_metrics(
+        branch_weights, si_sdrs, leakage_si_sdrs, correct, snrs
+    )
     result["class_loss"] = class_loss_total / len(loader.dataset)
     result["separation_loss"] = -result["si_sdr"]
     result["loss"] = result["class_loss"] + sep_loss_weight * result["separation_loss"]
@@ -127,11 +248,15 @@ def evaluate(encoder, separator, classifier, loader, device, labels, sep_loss_we
     return result
 
 
-def train_epoch(encoder, separator, classifier, loader, optimizer, device, args, train_separator: bool):
+def train_epoch(encoder, separator, classifier, loader, optimizer, device, args, train_separator: bool,
+                robust_loss: SNRRobustLoss):
     set_training_mode(encoder, separator, classifier, args.trainable_blocks, train_separator)
-    criterion = nn.CrossEntropyLoss()
     optimizer.zero_grad(set_to_none=True)
-    totals = {"loss": 0.0, "class_loss": 0.0, "separation_loss": 0.0}
+    totals = {
+        "loss": 0.0, "class_loss": 0.0, "noise_aux_loss": 0.0,
+        "consistency_loss": 0.0, "contrastive_loss": 0.0,
+        "noise_separation_loss": 0.0, "residual_separation_loss": 0.0,
+    }
     correct = 0
     seen = 0
     trainable_parameters = [
@@ -144,14 +269,38 @@ def train_epoch(encoder, separator, classifier, loader, optimizer, device, args,
         mixture = batch["mixture"].to(device, non_blocking=True)
         targets = batch["target"].to(device, non_blocking=True)
         oracle = batch["oracle_noise"].to(device, non_blocking=True)
+        snrs = batch["snr"].to(device, non_blocking=True)
         z_mix, z_noise, z_conditioned, noise, noise_ratio_db, speech_ratio_db = encode_branches(
             encoder, separator, mixture, device
         )
         with mixed_precision_context(device):
-            logits = classifier(z_mix, z_noise, z_conditioned, noise_ratio_db, speech_ratio_db)
-            class_loss = criterion(logits, targets)
-        sep_loss = separation_loss(noise, oracle, args.spectral_loss_weight)
-        loss = class_loss + args.sep_loss_weight * sep_loss
+            logits, details = classifier(
+                z_mix, z_noise, z_conditioned, noise_ratio_db, speech_ratio_db, return_details=True
+            )
+            class_loss = robust_loss(F.cross_entropy(logits, targets, reduction="none"), snrs)
+            noise_aux_loss = F.cross_entropy(details["noise_logits"], targets)
+            consistency_loss = F.mse_loss(details["mix_logits"], details["conditioned_logits"])
+            second_noise_projection = classifier.noise_projection(classifier.noise_norm(z_noise))
+            contrastive_loss = supervised_contrastive_loss(
+                torch.cat([details["noise_projection"], second_noise_projection]),
+                targets.repeat(2), args.contrastive_temperature,
+            )
+        if train_separator:
+            noise_sep_loss = separation_loss(noise, oracle, args.spectral_loss_weight)
+            residual_sep_loss = separation_loss(
+                mixture - noise, mixture - oracle, args.spectral_loss_weight
+            )
+        else:
+            noise_sep_loss = logits.new_zeros(())
+            residual_sep_loss = logits.new_zeros(())
+        loss = (
+            class_loss
+            + args.noise_aux_weight * noise_aux_loss
+            + args.view_consistency_weight * consistency_loss
+            + args.contrastive_weight * contrastive_loss
+            + args.sep_loss_weight * noise_sep_loss
+            + args.residual_sep_loss_weight * residual_sep_loss
+        )
         require_finite(loss, "training loss")
         (loss / args.accumulation_steps).backward()
         if batch_index % args.accumulation_steps == 0 or batch_index == len(loader):
@@ -161,7 +310,11 @@ def train_epoch(encoder, separator, classifier, loader, optimizer, device, args,
         size = targets.shape[0]
         totals["loss"] += loss.item() * size
         totals["class_loss"] += class_loss.item() * size
-        totals["separation_loss"] += sep_loss.item() * size
+        totals["noise_aux_loss"] += noise_aux_loss.item() * size
+        totals["consistency_loss"] += consistency_loss.item() * size
+        totals["contrastive_loss"] += contrastive_loss.item() * size
+        totals["noise_separation_loss"] += noise_sep_loss.item() * size
+        totals["residual_separation_loss"] += residual_sep_loss.item() * size
         correct += (logits.argmax(dim=1) == targets).sum().item()
         seen += size
         if batch_index == 1 or batch_index % 200 == 0 or batch_index == len(loader):
@@ -169,7 +322,8 @@ def train_epoch(encoder, separator, classifier, loader, optimizer, device, args,
             print(
                 f"train batch={batch_index}/{len(loader)} loss={totals['loss']/seen:.4f} "
                 f"class_loss={totals['class_loss']/seen:.4f} "
-                f"sep_loss={totals['separation_loss']/seen:.4f} "
+                f"noise_aux={totals['noise_aux_loss']/seen:.4f} "
+                f"sep_loss={totals['noise_separation_loss']/seen:.4f} "
                 f"accuracy={correct/seen:.4f} max_vram_gb={memory:.2f}",
                 flush=True,
             )
@@ -177,6 +331,8 @@ def train_epoch(encoder, separator, classifier, loader, optimizer, device, args,
 
 
 def trainable_encoder_state(encoder, trainable_blocks: int):
+    if not trainable_blocks:
+        return {}
     layer_count = len(encoder.encoder.layers)
     prefixes = tuple(
         f"encoder.layers.{index}." for index in range(layer_count - trainable_blocks, layer_count)
@@ -202,8 +358,7 @@ def main() -> None:
     parser.add_argument("--head-checkpoint", type=Path, default=Path("checkpoint/beats_fusion_head_36.pt"))
     parser.add_argument("--output", type=Path, default=Path("checkpoint/audio_best_36_fusion.pt"))
     parser.add_argument("--results", type=Path, default=Path("checkpoint/summary_36_fusion.json"))
-    parser.add_argument("--trainable-blocks", type=int, default=4)
-    # Defaults mirror audio_noise_capstone's fine-tuning run for a like-for-like comparison.
+    parser.add_argument("--trainable-blocks", type=int, default=1)
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--patience", type=int, default=4)
     parser.add_argument("--batch-size", type=int, default=32)
@@ -213,13 +368,27 @@ def main() -> None:
     parser.add_argument("--head-lr", type=float, default=1e-4)
     parser.add_argument("--fusion-lr", type=float, help="default: same value used in head36")
     parser.add_argument("--fusion-weight-decay", type=float, help="default: same value used in head36")
-    parser.add_argument("--encoder-lr", type=float, default=1e-5)
-    parser.add_argument("--separator-lr", type=float, default=5e-5,
+    parser.add_argument("--encoder-lr", type=float, default=1e-6)
+    parser.add_argument("--separator-lr", type=float, default=0.0,
                         help="0 keeps the pre-trained separator frozen")
     parser.add_argument("--sep-loss-weight", type=float, default=0.05,
                         help="lambda in L = L_class + lambda * L_sep")
     parser.add_argument("--spectral-loss-weight", type=float, default=0.25,
                         help="weight of multi-resolution STFT regularisation in L_sep")
+    parser.add_argument("--residual-sep-loss-weight", type=float, default=0.05,
+                        help="lambda for separation of mixture - n_hat from oracle speech")
+    parser.add_argument("--noise-aux-weight", type=float, default=0.1,
+                        help="lambda for the noise-view auxiliary classifier")
+    parser.add_argument("--view-consistency-weight", type=float, default=0.02,
+                        help="lambda for mixture/conditioned-logit consistency")
+    parser.add_argument("--contrastive-weight", type=float, default=0.02,
+                        help="lambda for supervised contrastive noise-view learning")
+    parser.add_argument("--contrastive-temperature", type=float, default=0.1)
+    parser.add_argument("--snr-loss-mode", choices=("weighted_ce", "group_dro"), default="weighted_ce")
+    parser.add_argument("--snr-group-weights", type=str, default="1,1,1,1,1.5,2")
+    parser.add_argument("--group-dro-eta", type=float, default=0.01)
+    parser.add_argument("--selection-metric", choices=("macro_f1", "worst_group_macro_f1"),
+                        default="worst_group_macro_f1")
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--train-per-class", type=int)
     parser.add_argument("--validation-per-class", type=int)
@@ -278,9 +447,11 @@ def main() -> None:
     validation_loader = make_loader(
         validation_dataset, args.validation_batch_size, args.workers, False, device
     )
+    robust_loss = SNRRobustLoss(
+        args.snr_loss_mode, parse_snr_weights(args.snr_group_weights), args.group_dro_eta, device
+    )
     encoder_parameters = [parameter for parameter in encoder.parameters() if parameter.requires_grad]
     parameter_groups = [
-        {"params": encoder_parameters, "lr": args.encoder_lr},
         {
             "params": [p for p in classifier.parameters() if id(p) not in fusion_ids],
             "lr": args.head_lr,
@@ -288,6 +459,8 @@ def main() -> None:
         },
         {"params": fusion_parameters, "lr": args.fusion_lr, "weight_decay": args.fusion_weight_decay},
     ]
+    if encoder_parameters:
+        parameter_groups.insert(0, {"params": encoder_parameters, "lr": args.encoder_lr})
     if train_separator:
         parameter_groups.append({"params": separator.parameters(), "lr": args.separator_lr})
     optimizer = torch.optim.AdamW(parameter_groups, weight_decay=1e-4)
@@ -298,7 +471,8 @@ def main() -> None:
         f"device={device} train={len(train_dataset)} validation={len(validation_dataset)} "
         f"trainable_encoder_params={sum(p.numel() for p in encoder_parameters)} "
         f"train_separator={train_separator} sep_loss_weight={args.sep_loss_weight} "
-        f"fusion_lr={args.fusion_lr} fusion_weight_decay={args.fusion_weight_decay}",
+        f"fusion_lr={args.fusion_lr} fusion_weight_decay={args.fusion_weight_decay} "
+        f"snr_loss_mode={args.snr_loss_mode} selection_metric={args.selection_metric}",
         flush=True,
     )
 
@@ -319,12 +493,15 @@ def main() -> None:
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats()
         train_result = train_epoch(
-            encoder, separator, classifier, train_loader, optimizer, device, args, train_separator
+            encoder, separator, classifier, train_loader, optimizer, device, args, train_separator,
+            robust_loss,
         )
+        train_result["snr_group_weights"] = robust_loss.weights()
         validation_result = evaluate(
             encoder, separator, classifier, validation_loader, device, labels, args.sep_loss_weight
         )
-        scheduler.step(validation_result["macro_f1"])
+        score = validation_score(validation_result, args.selection_metric)
+        scheduler.step(score)
         history.append(
             {
                 "epoch": epoch,
@@ -339,10 +516,11 @@ def main() -> None:
             f"val_loss={validation_result['loss']:.4f} "
             f"val_accuracy={validation_result['accuracy']:.4f} "
             f"val_macro_f1={validation_result['macro_f1']:.4f} val_mAP={validation_result['mAP']:.4f} "
+            f"val_worst_snr_f1={validation_score(validation_result, 'worst_group_macro_f1'):.4f} "
             f"val_si_sdr={validation_result['si_sdr']:.2f}",
             flush=True,
         )
-        if validation_result["macro_f1"] > best_metrics["macro_f1"] + 1e-4:
+        if score > validation_score(best_metrics, args.selection_metric) + 1e-4:
             best_metrics = validation_result
             best_epoch = epoch
             best_state = snapshot(encoder, separator, classifier, args.trainable_blocks)
