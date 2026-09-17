@@ -10,6 +10,14 @@ from models.separator import NoiseSeparator
 from utils.training36 import mixed_precision_context
 
 
+TEMPORAL_POOLING = "mean_max_average_v1"
+
+
+def mean_max_pool(sequence: torch.Tensor) -> torch.Tensor:
+    """Combine persistent and transient evidence without changing feature scale."""
+    return 0.5 * (sequence.mean(dim=1) + sequence.amax(dim=1))
+
+
 class FusionClassifier(nn.Module):
     """Keep mixture evidence and add quality-gated auxiliary residuals.
 
@@ -138,7 +146,8 @@ def encode_branches(
     conditioned = separator.compress_and_amplify_speech(speech) + noise
     with mixed_precision_context(device):
         sequence, _ = encoder.extract_features(torch.cat([mixture, amplified, conditioned], dim=0))
-        z_mix, z_noise, z_conditioned = sequence.mean(dim=1).split(mixture.shape[0])
+        pooled = mean_max_pool(sequence)
+        z_mix, z_noise, z_conditioned = pooled.split(mixture.shape[0])
     return (
         z_mix,
         z_noise,

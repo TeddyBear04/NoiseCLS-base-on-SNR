@@ -12,7 +12,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from models.fusion import FusionClassifier, encode_branches
+from models.fusion import TEMPORAL_POOLING, FusionClassifier, encode_branches
 from models.separator import build_separator, separator_payload
 from noise_pipeline.mix_data import MixNoiseDataset, load_mix_manifest
 from utils.reporting36 import save_evaluation_artifacts, save_training_artifacts
@@ -294,6 +294,7 @@ def main() -> None:
     signature = (
         f"{file_signature(args.separator_checkpoint)}"
         f"|separator={separator.config}"
+        f"|temporal_pooling={TEMPORAL_POOLING}"
     )
     print(
         f"noise_target_rms={separator.config['target_rms']} "
@@ -334,6 +335,7 @@ def main() -> None:
             "separator": separator_payload(separator),
             "labels": labels,
             "encoder": "BEATs_iter3_plus_AS2M_finetuned_cpt2",
+            "temporal_pooling": TEMPORAL_POOLING,
             "args": serializable_args,
             "best_epoch": best_epoch,
             "validation_metrics": best_metrics,
@@ -343,6 +345,7 @@ def main() -> None:
     result = {
         "stage": "frozen_beats_mixture_noise_fusion_head",
         "input_kind": "mixture+separated_noise",
+        "temporal_pooling": TEMPORAL_POOLING,
         "train_samples": len(train_data["y"]),
         "validation_samples": len(validation_data["y"]),
         "best_epoch": best_epoch,

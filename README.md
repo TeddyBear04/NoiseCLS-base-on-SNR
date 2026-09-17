@@ -20,11 +20,11 @@ manifest.csv + labels.txt
         │                            │
   BEATs Transformer Encoder     log-Mel fbank (128 bins)
         │                            │
-  Mean pooling                  Conv2D patch embed
+  Mean+max pooling             Conv2D patch embed
         │                            │
   z_mix ∈ R^768                 BEATs Transformer Encoder (shared weights)
         │                            │
-        │                       Mean pooling
+        │                       Mean+max pooling
         │                            │
         │                       z_noise ∈ R^768
         │                            │
@@ -79,21 +79,25 @@ Run the four stages in order — each depends on the previous checkpoint:
 pip install -r requirements.txt
 python main.py separator36 --config config/train_config.json   # pre-train the noise separator (SI-SDR)
 python main.py head36 --config config/train_config.json        # train fusion head on frozen BEATs + separator
-python main.py finetune36 --config config/train_config.json    # jointly fine-tune last blocks + separator + head
+python main.py finetune36 --config config/train_config.json    # refine fusion/head with frozen BEATs + separator
 python main.py test36 --config config/train_config.json
 ```
 
 `separator36` trains the separator against `oracle_noise.wav` (available in
 training data only) with SI-SDR plus a multi-resolution STFT loss. `head36` then caches
 frozen BEATs embeddings for both branches and trains the fusion head.
-`finetune36` unfreezes the last few BEATs blocks and (by default) continues
-training the separator jointly, minimizing
+`finetune36` keeps BEATs and the separator frozen by default and refines the
+fusion/classification modules, minimizing
 `L = L_class + λ·L_sep` where `L_sep` is the negative SI-SDR against
-`oracle_noise.wav`. Set `separator_lr: 0` in `train_config.json` to keep the
-separator frozen during this stage instead.
+`oracle_noise.wav`. Set `trainable_blocks` above zero only for an explicit
+encoder fine-tuning ablation; `separator_lr: 0` keeps the separator frozen.
 
 ## Fusion design
 
+- Each BEATs sequence uses `0.5 * (temporal_mean + temporal_max)`, retaining
+  persistent evidence while preserving short transient events. The pooling
+  version is part of the embedding-cache signature, so old mean-only caches
+  are regenerated automatically.
 - The fusion projection is zero-initialised with a skip from `z_mix`, so before
   training the model is exactly the mixture-only head of `audio_noise_capstone`;
   its weight decay pulls it back toward that baseline.
@@ -112,10 +116,10 @@ mixture embedding remains an unconditional skip. A softmax MLP over
 `[z_mix, z_noise, z_conditioned, r]` is initialised strongly toward mixture and
 only scales the two auxiliary residuals before their zero-initialised fusion.
 
-Fine-tuning defaults to one trainable BEATs block at `1e-6`, a frozen separator,
-and weighted CE across the six SNR groups (`1,1,1,1,1.5,2`). Checkpoints are
-selected by worst-group macro-F1. Set `snr_loss_mode: group_dro` to use
-exponentiated Group DRO weights instead.
+Fine-tuning defaults to a fully frozen BEATs encoder (`trainable_blocks: 0`,
+`encoder_lr: 0`), a frozen separator, and weighted CE across the six SNR groups
+(`1,1,1,1,1.5,2`). Checkpoints are selected by worst-group macro-F1. Set
+`snr_loss_mode: group_dro` to use exponentiated Group DRO weights instead.
 
 The objective includes a noise-view auxiliary CE head, light
 mixture/conditioned-logit consistency, and supervised contrastive learning on

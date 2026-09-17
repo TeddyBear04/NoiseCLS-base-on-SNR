@@ -18,7 +18,12 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
 from config.paths import BEATS_CHECKPOINT
-from models.fusion import FusionClassifier, encode_branches, supervised_contrastive_loss
+from models.fusion import (
+    TEMPORAL_POOLING,
+    FusionClassifier,
+    encode_branches,
+    supervised_contrastive_loss,
+)
 from models.separator import build_separator, separation_loss, separator_payload, si_sdr
 from noise_pipeline.mix_data import MixNoiseDataset, load_mix_manifest
 from utils.reporting36 import save_evaluation_artifacts, save_training_artifacts
@@ -44,6 +49,12 @@ def load_model(
     conditioned_dropout: float = 0.2,
 ):
     """Build encoder, separator and classifier from a head or fine-tuned checkpoint."""
+    checkpoint_pooling = checkpoint.get("temporal_pooling", "mean_v1")
+    if checkpoint_pooling != TEMPORAL_POOLING:
+        raise ValueError(
+            f"Checkpoint pooling {checkpoint_pooling!r} is incompatible with "
+            f"{TEMPORAL_POOLING!r}. Rerun head36 to regenerate embeddings and weights."
+        )
     encoder, _ = load_beats(device)
     if trainable_blocks < 0 or trainable_blocks > len(encoder.encoder.layers):
         raise ValueError("trainable_blocks must be between 0 and the encoder layer count")
@@ -358,7 +369,7 @@ def main() -> None:
     parser.add_argument("--head-checkpoint", type=Path, default=Path("checkpoint/beats_fusion_head_36.pt"))
     parser.add_argument("--output", type=Path, default=Path("checkpoint/audio_best_36_fusion.pt"))
     parser.add_argument("--results", type=Path, default=Path("checkpoint/summary_36_fusion.json"))
-    parser.add_argument("--trainable-blocks", type=int, default=1)
+    parser.add_argument("--trainable-blocks", type=int, default=0)
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--patience", type=int, default=4)
     parser.add_argument("--batch-size", type=int, default=32)
@@ -368,7 +379,7 @@ def main() -> None:
     parser.add_argument("--head-lr", type=float, default=1e-4)
     parser.add_argument("--fusion-lr", type=float, help="default: same value used in head36")
     parser.add_argument("--fusion-weight-decay", type=float, help="default: same value used in head36")
-    parser.add_argument("--encoder-lr", type=float, default=1e-6)
+    parser.add_argument("--encoder-lr", type=float, default=0.0)
     parser.add_argument("--separator-lr", type=float, default=0.0,
                         help="0 keeps the pre-trained separator frozen")
     parser.add_argument("--sep-loss-weight", type=float, default=0.05,
@@ -543,6 +554,7 @@ def main() -> None:
             "base_encoder_checkpoint": str(BEATS_CHECKPOINT),
             "base_head_checkpoint": str(args.head_checkpoint),
             "trainable_blocks": args.trainable_blocks,
+            "temporal_pooling": TEMPORAL_POOLING,
             "dropout": head_checkpoint["args"].get("dropout", 0.1),
             "noise_dropout": head_checkpoint["args"].get("noise_dropout", 0.2),
             "conditioned_dropout": head_checkpoint["args"].get("conditioned_dropout", 0.2),
@@ -553,8 +565,13 @@ def main() -> None:
         args.output,
     )
     result = {
-        "stage": "beats_mixture_noise_fusion_joint_finetune",
+        "stage": (
+            "frozen_encoder_mixture_noise_fusion_finetune"
+            if args.trainable_blocks == 0
+            else "beats_mixture_noise_fusion_joint_finetune"
+        ),
         "input_kind": "mixture+separated_noise",
+        "temporal_pooling": TEMPORAL_POOLING,
         "train_samples": len(train_dataset),
         "validation_samples": len(validation_dataset),
         "trainable_encoder_parameters": sum(parameter.numel() for parameter in encoder_parameters),

@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 
 from finetune_fusion import evaluate, load_model, make_loader
+from models.fusion import TEMPORAL_POOLING
 from noise_pipeline.mix_data import MixNoiseDataset, load_mix_manifest
 from utils.reporting36 import save_evaluation_artifacts
 
@@ -38,6 +39,7 @@ def main() -> None:
     result = {
         "dataset": "36_labels",
         "input_kind": "mixture+separated_noise",
+        "temporal_pooling": checkpoint["temporal_pooling"],
         "task": "single-label_36",
         "split": args.split,
         "samples": len(dataset),
