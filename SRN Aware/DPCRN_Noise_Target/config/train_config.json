@@ -1,0 +1,26 @@
+{
+  "dataset": {
+    "path": "dataset/mix-dataset",
+    "clip_seconds": 4.0,
+    "sample_rate": 16000,
+    "snr_min_db": 15.0,
+    "snr_max_db": 20.0
+  },
+  "model": {
+    "n_fft": 512,
+    "hop_length": 160,
+    "encoder_channels": [32, 64, 96],
+    "dprnn_units": 96,
+    "dprnn_blocks": 2,
+    "embedding_dim": 192
+  },
+  "training": {
+    "epochs": 40,
+    "batch_size": 12,
+    "workers": 2,
+    "learning_rate": 0.0003,
+    "weight_decay": 0.0001,
+    "lambda_separation": 0.5,
+    "checkpoint": "checkpoint/dpcrn_noise_target_best.pt"
+  }
+}

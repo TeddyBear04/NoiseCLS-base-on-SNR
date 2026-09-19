@@ -1,0 +1,4 @@
+__pycache__/
+checkpoint/*.pt
+dataset/mix-dataset/*
+!dataset/mix-dataset/.gitkeep
