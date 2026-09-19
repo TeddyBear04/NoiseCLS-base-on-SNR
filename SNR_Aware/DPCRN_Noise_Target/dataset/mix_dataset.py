@@ -23,13 +23,23 @@ def load_audio(path: Path, sample_rate: int, samples: int) -> torch.Tensor:
 
 
 class MixNoiseDataset(Dataset[dict[str, Any]]):
-    def __init__(self, root: str | Path, split: str, seconds: float, snr_min: float, snr_max: float) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        split: str,
+        seconds: float,
+        sample_rate: int,
+        snr_min: float,
+        snr_max: float,
+        manifest_file: str = "manifest.csv",
+        labels_file: str = "labels.txt",
+    ) -> None:
         self.root = Path(root)
-        self.sample_rate = 16_000
+        self.sample_rate = sample_rate
         self.samples = int(seconds * self.sample_rate)
-        self.labels = (self.root / "labels.txt").read_text(encoding="utf-8").splitlines()
+        self.labels = (self.root / labels_file).read_text(encoding="utf-8").splitlines()
         self.label_to_index = {label: index for index, label in enumerate(self.labels)}
-        with (self.root / "manifest.csv").open(encoding="utf-8-sig", newline="") as stream:
+        with (self.root / manifest_file).open(encoding="utf-8-sig", newline="") as stream:
             rows = list(csv.DictReader(stream))
         self.rows = [
             row for row in rows
@@ -47,4 +57,5 @@ class MixNoiseDataset(Dataset[dict[str, Any]]):
             "mixture": load_audio(self.root / row["mixture_path"], self.sample_rate, self.samples),
             "noise": load_audio(self.root / row["noise_path"], self.sample_rate, self.samples),
             "target": self.label_to_index[row["label_names"]],
+            "snr": float(row["target_snr_db"]),
         }

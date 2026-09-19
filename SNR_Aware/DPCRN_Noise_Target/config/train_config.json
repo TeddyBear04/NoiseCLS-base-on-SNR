@@ -1,26 +1,66 @@
 {
+  "experiment": {
+    "name": "dpcrn_noise_target_36_high_snr",
+    "task": "single_label_noise_classification",
+    "num_classes": 36,
+    "seed": 2026
+  },
   "dataset": {
-    "path": "dataset/mix-dataset",
+    "path": "/marimo/dataset/mix-dataset",
+    "manifest_file": "manifest.csv",
+    "labels_file": "labels.txt",
     "clip_seconds": 4.0,
     "sample_rate": 16000,
     "snr_min_db": 15.0,
-    "snr_max_db": 20.0
+    "snr_max_db": 20.0,
+    "train_split": "train",
+    "validation_split": "validation",
+    "test_split": "test"
   },
   "model": {
+    "architecture": "DPCRNNoiseClassifier",
+    "target": "noise",
     "n_fft": 512,
     "hop_length": 160,
     "encoder_channels": [32, 64, 96],
-    "dprnn_units": 96,
     "dprnn_blocks": 2,
-    "embedding_dim": 192
+    "dprnn_feature_dim": 96,
+    "embedding_dim": 192,
+    "classifier_dropout": 0.2,
+    "num_classes": 36
   },
   "training": {
     "epochs": 40,
     "batch_size": 12,
     "workers": 2,
+    "optimizer": "AdamW",
     "learning_rate": 0.0003,
     "weight_decay": 0.0001,
+    "gradient_clip_norm": 5.0,
+    "lambda_classification": 1.0,
     "lambda_separation": 0.5,
-    "checkpoint": "checkpoint/dpcrn_noise_target_best.pt"
+    "selection_metric": "macro_f1",
+    "patience": 8,
+    "checkpoint": "checkpoint/dpcrn_noise_target_best.pt",
+    "results": "checkpoint/dpcrn_noise_target_history.json"
+  },
+  "evaluation": {
+    "split": "test",
+    "output": "checkpoint/test_metrics_36.json",
+    "per_snr": true,
+    "metrics": [
+      "accuracy",
+      "macro_precision",
+      "macro_recall",
+      "macro_f1",
+      "micro_f1",
+      "macro_map",
+      "balanced_accuracy",
+      "macro_auc_ovr"
+    ]
+  },
+  "runtime": {
+    "device": "cuda",
+    "pin_memory": true
   }
 }

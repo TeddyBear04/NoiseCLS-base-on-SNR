@@ -47,6 +47,7 @@ class DPCRNNoiseClassifier(nn.Module):
         encoder_channels: tuple[int, ...] = (32, 64, 96),
         dprnn_blocks: int = 2,
         embedding_dim: int = 192,
+        classifier_dropout: float = 0.2,
     ) -> None:
         super().__init__()
         self.n_fft = n_fft
@@ -73,7 +74,7 @@ class DPCRNNoiseClassifier(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(frequency_bins, embedding_dim),
             nn.PReLU(embedding_dim),
-            nn.Dropout(0.2),
+            nn.Dropout(classifier_dropout),
             nn.Linear(embedding_dim, classes_num),
         )
 
