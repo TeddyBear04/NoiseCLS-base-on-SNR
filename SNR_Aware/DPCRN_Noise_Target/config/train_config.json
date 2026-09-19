@@ -30,9 +30,9 @@
     "num_classes": 36
   },
   "training": {
-    "epochs": 40,
-    "batch_size": 12,
-    "workers": 2,
+    "epochs": 100,
+    "batch_size": 64,
+    "workers": 4,
     "optimizer": "AdamW",
     "learning_rate": 0.0003,
     "weight_decay": 0.0001,
