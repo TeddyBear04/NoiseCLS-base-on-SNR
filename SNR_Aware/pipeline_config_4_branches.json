@@ -1,0 +1,60 @@
+{
+  "snr_gate": {
+    "input": "mixture_waveform",
+    "estimator": "snr_gate_cnn",
+    "outputs": ["class_logits", "snr_regression"],
+    "classes": ["low", "mid", "high"],
+    "class_snr_levels_db": {"low": [-5.0, 0.0], "mid": [5.0, 10.0], "high": [15.0, 20.0]},
+    "checkpoint": "gate/checkpoint/snr_gate.pt",
+    "low_confidence_threshold": 0.70
+  },
+  "experts": [
+    {
+      "name": "BEATs_low", "gate_class": "low", "snr_levels_db": [-5.0, 0.0],
+      "project": "BEATs_Experts", "config": "config/train_config_low_snr.json",
+      "checkpoint": "checkpoint/low_snr/audio_best_36.pt",
+      "head_checkpoint": "checkpoint/low_snr/beats_head_36.pt"
+    },
+    {
+      "name": "BEATs_mid", "gate_class": "mid", "snr_levels_db": [5.0, 10.0],
+      "project": "BEATs_Experts", "config": "config/train_config_mid_snr.json",
+      "checkpoint": "checkpoint/mid_snr/audio_best_36.pt",
+      "head_checkpoint": "checkpoint/mid_snr/beats_head_36.pt"
+    },
+    {
+      "name": "DPCRN_high", "gate_class": "high", "snr_levels_db": [15.0, 20.0],
+      "project": "DPCRN_Noise_Target", "config": "config/train_config.json",
+      "checkpoint": "checkpoint/dpcrn_noise_target_best.pt"
+    }
+  ],
+  "fallback": {
+    "when": ["snr_gate_confidence_below_threshold", "estimated_snr_in_fallback_interval"],
+    "fallback_snr_intervals": [[0.0, 5.0], [10.0, 15.0]],
+    "interval_bounds": "open",
+    "model": "BEATs_baseline_36",
+    "project": "BEATs_Experts", "config": "config/train_config.json",
+    "checkpoint": "checkpoint/audio_best_36.pt",
+    "head_checkpoint": "checkpoint/beats_head_36.pt",
+    "strategy": "return_baseline_logits",
+    "note": "The two conditions are OR-ed. Intervals are open at both ends, so an estimated SNR of exactly 0 or 5 dB still goes to an expert. This dataset only holds the six discrete SNR levels, so the interval condition rarely fires here; it exists for real audio with continuous SNR. The evaluation report counts the two fallback paths separately."
+  },
+  "pretrained": {
+    "beats": "BEATs_Experts/checkpoint/pretrained/BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt"
+  },
+  "dataset": {
+    "path": "/marimo/dataset/mix-dataset",
+    "manifest_file": "manifest.csv",
+    "labels_file": "labels.txt",
+    "snr_levels_db": [-5.0, 0.0, 5.0, 10.0, 15.0, 20.0]
+  },
+  "evaluation": {
+    "split": "test",
+    "output_dir": "router/results",
+    "reports": ["routed", "oracle", "baseline"],
+    "per_snr": true,
+    "metrics": [
+      "accuracy", "macro_precision", "macro_recall", "macro_f1",
+      "micro_f1", "macro_map", "balanced_accuracy", "macro_auc_ovr"
+    ]
+  }
+}

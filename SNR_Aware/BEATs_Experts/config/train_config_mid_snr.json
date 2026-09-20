@@ -1,0 +1,38 @@
+{
+  "experiment": {
+    "name": "beats_mid_snr_36",
+    "task": "single_label_noise_classification",
+    "num_classes": 36,
+    "seed": 2026
+  },
+  "expert": {"name": "BEATs_mid", "snr_min_db": 5.0, "snr_max_db": 10.0},
+  "pretrained": {
+    "checkpoint": "checkpoint/pretrained/BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt",
+    "freeze_encoder_for_head_training": true
+  },
+  "model": {
+    "architecture": "BEATs",
+    "embedding_dim": 768,
+    "num_classes": 36
+  },
+  "head_training": {
+    "cache_dir": "artifacts/embedding_cache_mid_snr", "output": "checkpoint/mid_snr/beats_head_36.pt",
+    "results": "checkpoint/mid_snr/beats_head_36_summary.json", "epochs": 50,
+    "extract_batch_size": 64, "head_batch_size": 512, "workers": 4, "lr": 0.001, "patience": 10
+  },
+  "finetuning": {
+    "head_checkpoint": "checkpoint/mid_snr/beats_head_36.pt", "output": "checkpoint/mid_snr/audio_best_36.pt",
+    "results": "checkpoint/mid_snr/summary_36.json", "trainable_blocks": 12, "epochs": 8,
+    "patience": 10, "batch_size": 32, "validation_batch_size": 64, "accumulation_steps": 1,
+    "workers": 4, "head_lr": 0.0001, "encoder_lr": 0.00001
+  },
+  "dataset_splitter": {
+    "dataset_path": "/marimo/dataset/mix-dataset", "snr_min_db": 5.0, "snr_max_db": 10.0,
+    "manifest_file": "manifest.csv", "selected_labels_file": "labels.txt", "use_predefined_splits": true
+  },
+  "audio_features": {"sample_rate": 16000, "clip_seconds": 4.0, "mel_bins": 128, "frame_length_ms": 25, "frame_shift_ms": 10},
+  "evaluation": {
+    "checkpoint": "checkpoint/mid_snr/audio_best_36.pt", "head_checkpoint": "checkpoint/mid_snr/beats_head_36.pt",
+    "batch_size": 32, "workers": 4, "split": "test", "output": "checkpoint/mid_snr/test_metrics_36.json", "output_dir": "checkpoint/mid_snr"
+  }
+}
