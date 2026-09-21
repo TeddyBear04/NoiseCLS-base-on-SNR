@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 from typing import Any
@@ -16,17 +17,30 @@ DPCRN_ROOT = SNR_AWARE_ROOT / "DPCRN_Noise_Target"
 BRANCH_DIMS: dict[str, int] = {"beats_low": 768, "beats_mid": 768, "dpcrn_high": 256}
 
 
-def _import_from(root: Path, module: str) -> Any:
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
-    return __import__(module, fromlist=["*"])
+def _load_module(path: Path, alias: str) -> Any:
+    """Load a module by file path under a unique name.
+
+    ``BEATs_Experts`` and ``DPCRN_Noise_Target`` each contain a package called
+    ``models``. Importing one by package name caches it as ``sys.modules["models"]``
+    and makes the other unreachable, so both branches could never be loaded in one
+    process. Loading by path under an alias sidesteps the shared name entirely.
+    """
+    if alias in sys.modules:
+        return sys.modules[alias]
+    spec = importlib.util.spec_from_file_location(alias, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {alias} from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[alias] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def load_beats_branch(
     pretrained: Path, expert_checkpoint: Path, device: torch.device
 ) -> tuple[nn.Module, list[str]]:
     """Rebuild a fine-tuned BEATs expert: base weights plus its encoder delta."""
-    loader = _import_from(BEATS_ROOT, "models.beats_loader")
+    loader = _load_module(BEATS_ROOT / "models" / "beats_loader.py", "fusion_beats_loader")
     BEATs, BEATsConfig = loader.load_beats_classes()
     base = torch.load(pretrained, map_location="cpu", weights_only=True)
     model = BEATs(BEATsConfig(base["cfg"]))
@@ -44,7 +58,7 @@ def load_beats_branch(
 
 
 def load_dpcrn_branch(checkpoint: Path, device: torch.device) -> tuple[nn.Module, list[str]]:
-    module = _import_from(DPCRN_ROOT, "models.dpcrn_noise")
+    module = _load_module(DPCRN_ROOT / "models" / "dpcrn_noise.py", "fusion_dpcrn_noise")
     payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
     model_config = payload["config"]["model"]
     model = module.DPCRNNoiseClassifier(
