@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import csv
 import importlib.util
 import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from torch import Tensor, nn
+from torch.utils.data import Dataset
 
 SNR_AWARE_ROOT = Path(__file__).resolve().parents[2]
 BEATS_ROOT = SNR_AWARE_ROOT / "BEATs_Experts"
@@ -87,3 +90,85 @@ def embed_beats(model: nn.Module, waveform: Tensor) -> Tensor:
 @torch.inference_mode()
 def embed_dpcrn(model: nn.Module, waveform: Tensor) -> Tensor:
     return model(waveform)["embedding"].float()
+
+
+BRANCH_ORDER = ("beats_low", "beats_mid", "dpcrn_high")
+EMBEDDERS = {"beats_low": embed_beats, "beats_mid": embed_beats, "dpcrn_high": embed_dpcrn}
+
+
+def write_cache(
+    branches: dict[str, nn.Module], loader: Any, split: str, out_dir: Path, device: torch.device
+) -> None:
+    """Embed every clip with every branch, preserving loader order."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    collected: dict[str, list[np.ndarray]] = {name: [] for name in BRANCH_ORDER}
+    targets: list[int] = []
+    snrs: list[float] = []
+
+    for index, batch in enumerate(loader, start=1):
+        waveform = batch["mixture"].to(device, non_blocking=True)
+        for name in BRANCH_ORDER:
+            vectors = EMBEDDERS[name](branches[name], waveform)
+            collected[name].append(vectors.cpu().numpy().astype(np.float16))
+        targets.extend(batch["target"].tolist())
+        snrs.extend(batch["snr"].tolist())
+        if index == 1 or index % 50 == 0:
+            print(f"cache split={split} batch={index}/{len(loader)}", flush=True)
+
+    for name in BRANCH_ORDER:
+        stacked = np.concatenate(collected[name])
+        if stacked.shape != (len(targets), BRANCH_DIMS[name]):
+            raise ValueError(
+                f"branch {name} produced {stacked.shape}, expected "
+                f"{(len(targets), BRANCH_DIMS[name])}"
+            )
+        np.save(out_dir / f"{split}_{name}.npy", stacked)
+
+    with (out_dir / f"{split}_meta.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["row_index", "label_index", "snr_db"])
+        writer.writerows(zip(range(len(targets)), targets, snrs))
+    print(f"cached split={split} rows={len(targets)}", flush=True)
+
+
+class EmbeddingCacheDataset(Dataset[dict[str, Any]]):
+    """Read one split of the cache. Branch order is fixed by BRANCH_ORDER."""
+
+    def __init__(self, cache_dir: str | Path, split: str) -> None:
+        cache_dir = Path(cache_dir)
+        self.split = split
+        matrices = []
+        for name in BRANCH_ORDER:
+            matrix = np.load(cache_dir / f"{split}_{name}.npy")
+            if matrix.shape[1] != BRANCH_DIMS[name]:
+                raise ValueError(f"branch {name} has width {matrix.shape[1]}")
+            matrices.append(matrix)
+
+        row_counts = {matrix.shape[0] for matrix in matrices}
+        with (cache_dir / f"{split}_meta.csv").open(encoding="utf-8") as handle:
+            meta = list(csv.DictReader(handle))
+        row_counts.add(len(meta))
+        if len(row_counts) != 1:
+            raise ValueError(
+                f"{split} cache has mismatched row counts across branches and meta: "
+                f"{sorted(row_counts)}"
+            )
+
+        self.features = torch.from_numpy(np.concatenate(matrices, axis=1)).float()
+        self.targets = torch.tensor([int(row["label_index"]) for row in meta], dtype=torch.long)
+        self.snrs = torch.tensor([float(row["snr_db"]) for row in meta], dtype=torch.float32)
+        self.feature_dim = self.features.shape[1]
+        labels_file = cache_dir / "labels.txt"
+        self.labels = (
+            labels_file.read_text(encoding="utf-8").splitlines() if labels_file.exists() else []
+        )
+
+    def __len__(self) -> int:
+        return self.features.shape[0]
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        return {
+            "features": self.features[index],
+            "target": self.targets[index],
+            "snr": self.snrs[index],
+        }
