@@ -27,7 +27,6 @@ from dataset.embedding_cache import (
 )
 from models.fusion_head import FusionHead
 from utils.reporting import (
-    SNR_LEVELS,
     label_by_snr_f1,
     markdown_table,
     metric_values,
@@ -172,10 +171,8 @@ def evaluate_fusion(
     overall = metric_values(target_array, prediction_array, probability_array)
 
     per_snr: dict[str, dict[str, Any]] = {}
-    for level in SNR_LEVELS:
+    for level in sorted(set(snr_array.tolist())):
         mask = snr_array == level
-        if not mask.any():
-            continue
         per_snr[f"{level:g}"] = {
             "samples": int(mask.sum()),
             **metric_values(target_array[mask], prediction_array[mask], probability_array[mask]),
@@ -190,6 +187,44 @@ def evaluate_fusion(
         "per_class": per_class_metrics(target_array, prediction_array, probability_array, labels),
         "label_by_snr_f1": label_by_snr_f1(target_array, prediction_array, snr_array, labels),
     }
+
+
+# (header, key) pairs mirroring DPCRN_Noise_Target/tasks/run_36.py's report
+# columns, swapping its SI-SDR column for the fusion head's SNR-regression MAE.
+SNR_COLUMNS = (
+    ("Top-1 Accuracy", "accuracy"), ("Top-3 Accuracy", "top3_accuracy"),
+    ("Balanced Acc", "balanced_accuracy"), ("Precision Macro", "precision"),
+    ("Recall Macro", "recall"), ("Macro-F1", "macro_f1"), ("Micro-F1", "micro_f1"),
+    ("mAP", "map"), ("Macro-AUC", "macro_auc"), ("SNR MAE", "snr_mae"),
+)
+CLASS_COLUMNS = (
+    ("Support", "support"), ("Precision", "precision"), ("Recall", "recall"),
+    ("F1", "f1"), ("AP", "ap"), ("AUC", "auc"),
+)
+
+
+def save_report_csvs(output_dir: Path, metrics: dict[str, Any]) -> None:
+    """Write the per-SNR and per-label tables next to the JSON metrics.
+
+    Follows DPCRN_Noise_Target/tasks/run_36.py:save_report_csvs's column layout.
+    """
+    snr_fields = ["snr_db", "samples", *(key for _, key in SNR_COLUMNS)]
+    with (output_dir / "snr_metrics.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=snr_fields)
+        writer.writeheader()
+        for snr, values in metrics["per_snr"].items():
+            writer.writerow({"snr_db": snr, **{key: values.get(key) for key in snr_fields[1:]}})
+        writer.writerow({
+            "snr_db": "All", "samples": metrics["samples"],
+            **{key: metrics["overall"].get(key) for _, key in SNR_COLUMNS if key != "snr_mae"},
+            "snr_mae": metrics["snr_mae"],
+        })
+    class_fields = ["label", *(key for _, key in CLASS_COLUMNS)]
+    with (output_dir / "per_class_metrics.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=class_fields)
+        writer.writeheader()
+        for label, values in metrics["per_class"].items():
+            writer.writerow({"label": label, **values})
 
 
 def train_fusion(
@@ -325,6 +360,7 @@ def test36(config: dict[str, Any], checkpoint_path: str | Path, device: torch.de
     output_dir.mkdir(parents=True, exist_ok=True)
     write_label_by_snr_csv(output_dir / "label_by_snr_f1.csv", metrics["label_by_snr_f1"])
     write_label_by_snr_heatmap(output_dir / "label_by_snr_f1.png", metrics["label_by_snr_f1"])
+    save_report_csvs(output_dir, metrics)
 
     rows = [[key, f"{value:.4f}" if isinstance(value, float) else str(value)] for key, value in metrics["overall"].items()]
     print(markdown_table(["Metric", "Value"], rows))
@@ -361,13 +397,14 @@ def ablation(config: dict[str, Any], device: torch.device) -> None:
         rows.append(row)
         print(f"ablation row={name} accuracy={row['accuracy']:.4f} macro_f1={row['macro_f1']:.4f}")
 
+    baseline = config["evaluation"]["baseline"]
     rows.append({
         "name": "reference_baseline",
         "branches": "-",
-        "accuracy": config["evaluation"]["baseline_accuracy"],
-        "macro_f1": float("nan"),
-        "top3_accuracy": float("nan"),
-        "balanced_accuracy": float("nan"),
+        "accuracy": baseline["accuracy"],
+        "macro_f1": baseline["macro_f1"],
+        "top3_accuracy": float("nan"),  # not reported by the baseline's source metrics file
+        "balanced_accuracy": baseline["balanced_accuracy"],
     })
 
     output_path = Path(config["evaluation"]["ablation_output"])

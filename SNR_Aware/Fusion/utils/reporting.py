@@ -88,19 +88,21 @@ SNR_LEVELS = (-5.0, 0.0, 5.0, 10.0, 15.0, 20.0)
 def label_by_snr_f1(
     targets: np.ndarray, predictions: np.ndarray, snrs: np.ndarray, labels: list[str]
 ) -> dict[str, dict[str, float]]:
-    """F1 per label at each SNR - the two report axes crossed.
+    """F1 per label at each observed SNR - the two report axes crossed.
 
     Reporting them separately cannot say whether a weak class fails everywhere
-    or only once speech starts to mask it.
+    or only once speech starts to mask it. Iterating the SNR levels actually
+    present (rather than the fixed SNR_LEVELS grid) keeps this table's columns
+    in agreement with evaluate_fusion's per_snr table: a grid level with zero
+    samples is absent from both instead of vanishing from one and lingering
+    as NaN in the other, and an off-grid clip is still accounted for here.
     """
+    levels = sorted(set(float(snr) for snr in snrs.tolist()))
     table: dict[str, dict[str, float]] = {}
     for index, label in enumerate(labels):
         row: dict[str, float] = {}
-        for snr in SNR_LEVELS:
+        for snr in levels:
             mask = snrs == snr
-            if not mask.any():
-                row[f"{snr:g}"] = float("nan")
-                continue
             row[f"{snr:g}"] = float(f1_score(
                 targets[mask] == index, predictions[mask] == index, zero_division=0
             ))
@@ -109,7 +111,7 @@ def label_by_snr_f1(
 
 
 def write_label_by_snr_csv(path: Path, table: dict[str, dict[str, float]]) -> None:
-    columns = [f"{snr:g}" for snr in SNR_LEVELS]
+    columns = sorted({column for row in table.values() for column in row}, key=float)
     with Path(path).open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["label", *columns])
@@ -122,7 +124,7 @@ def write_label_by_snr_heatmap(path: Path, table: dict[str, dict[str, float]]) -
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    columns = [f"{snr:g}" for snr in SNR_LEVELS]
+    columns = sorted({column for row in table.values() for column in row}, key=float)
     labels = list(table)
     matrix = np.array([[table[label][column] for column in columns] for label in labels])
     figure, axes = plt.subplots(figsize=(7, 12))

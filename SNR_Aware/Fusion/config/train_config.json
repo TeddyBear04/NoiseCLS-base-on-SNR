@@ -25,7 +25,13 @@
   },
   "evaluation": {
     "split": "test", "output": "checkpoint/test_metrics_36.json", "output_dir": "checkpoint",
-    "ablation_output": "checkpoint/ablation.csv", "baseline_accuracy": 0.6523
+    "ablation_output": "checkpoint/ablation.csv",
+    "baseline": {
+      "source": "../BEATs_Experts/checkpoint/test_metrics_36.json",
+      "accuracy": 0.6523148148148148,
+      "macro_f1": 0.6472171568616293,
+      "balanced_accuracy": 0.6523148148148148
+    }
   },
   "runtime": {"device": "cuda", "pin_memory": true}
 }

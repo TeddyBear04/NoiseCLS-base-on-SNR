@@ -122,6 +122,18 @@ def write_cache(
                 f"branch {name} produced {stacked.shape}, expected "
                 f"{(len(targets), BRANCH_DIMS[name])}"
             )
+        # Cheap insurance, not a suspected bug: DPCRN embeddings are bounded
+        # to (-1, 1) by construction and BEATs embeddings sit around 1-10, so
+        # neither overflow nor NaN should occur in the float16 cast below.
+        # But the cache costs GPU-hours to regenerate, and float16 silently
+        # turns an overflow into inf and silently propagates NaN, so a single
+        # poisoned row would corrupt every downstream metric with no signal.
+        non_finite_rows = int((~np.isfinite(stacked)).any(axis=1).sum())
+        if non_finite_rows:
+            raise ValueError(
+                f"branch {name} produced {non_finite_rows} row(s) with non-finite "
+                "values (inf/NaN) after casting to float16"
+            )
         np.save(out_dir / f"{split}_{name}.npy", stacked)
 
     with (out_dir / f"{split}_meta.csv").open("w", newline="", encoding="utf-8") as handle:
