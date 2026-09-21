@@ -33,7 +33,7 @@ def test_decoder_uses_skip_connections():
     assert not torch.allclose(baseline, decoder(bottleneck, skips), atol=1e-4)
 
 
-from models.dpcrn_noise import DPCRNNoiseClassifier, NoiseClassifierHead
+from models.dpcrn_noise import AttentionPooling, DPCRNNoiseClassifier, NoiseClassifierHead
 
 SAMPLES = 64000
 
@@ -56,13 +56,16 @@ def test_forward_exposes_all_keys():
 
 
 def test_embedding_depends_on_temporal_order():
-    """Regression guard for the bug this head replaces.
+    """Regression guard against reverting the whole head to spectral time-averaging.
 
     The superseded head was ``log1p(|noise_spectrum|).mean(dim=-1)``, which is
-    invariant to time reversal up to STFT edge effects. A head that preserves
-    temporal structure must be far more sensitive than that, so the assertion is
-    comparative: an absolute threshold would only measure how sharp the attention
-    weights happen to be at random initialisation.
+    invariant to time reversal up to STFT edge effects. This test only checks
+    that the full head (strided frequency convs + BiGRU + pooling) is far more
+    order-sensitive than that superseded head end-to-end; at random
+    initialisation it cannot isolate which stage provides that sensitivity, so
+    it does not by itself guard the attention-pooling mechanism — see
+    ``test_attention_pooling_selects_the_frame_its_scores_favour`` and
+    ``test_attention_pooling_is_not_a_mean_when_scores_are_sharp`` for that.
     """
     model = DPCRNNoiseClassifier(classes_num=36).eval()
     waveform = torch.randn(1, SAMPLES)
@@ -84,3 +87,28 @@ def test_embedding_depends_on_temporal_order():
         old = sensitivity(superseded_head(waveform), superseded_head(reversed_waveform))
 
     assert new > 10 * old
+
+
+def test_attention_pooling_selects_the_frame_its_scores_favour():
+    """Drive the scorer directly: the mechanism must follow its own weights."""
+    pooling = AttentionPooling(4)
+    sequence = torch.randn(1, 5, 4)
+    with torch.no_grad():
+        pooling.score.weight.zero_()
+        pooling.score.bias.zero_()
+        pooling.score.weight[0, 0] = 50.0
+        sequence[0, :, 0] = torch.tensor([0.0, 0.0, 1.0, 0.0, 0.0])
+        pooled = pooling(sequence)
+    assert torch.allclose(pooled, sequence[0, 2], atol=1e-3)
+
+
+def test_attention_pooling_is_not_a_mean_when_scores_are_sharp():
+    """Guards the mechanism itself: a mean-pool stand-in fails this."""
+    pooling = AttentionPooling(4)
+    sequence = torch.randn(1, 6, 4)
+    with torch.no_grad():
+        pooling.score.weight.zero_()
+        pooling.score.bias.zero_()
+        pooling.score.weight[0, 0] = 50.0
+        pooled = pooling(sequence)
+    assert not torch.allclose(pooled, sequence.mean(dim=1), atol=1e-2)
