@@ -1,0 +1,31 @@
+{
+  "experiment": {"name": "snr_fusion_36", "num_classes": 36, "seed": 2026},
+  "dataset": {
+    "path": "/marimo/dataset/mix-dataset",
+    "manifest_file": "manifest.csv",
+    "labels_file": "labels.txt",
+    "clip_seconds": 4.0,
+    "sample_rate": 16000,
+    "train_split": "train",
+    "validation_split": "validation",
+    "test_split": "test"
+  },
+  "branches": {
+    "pretrained_beats": "../BEATs_Experts/checkpoint/pretrained/BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt",
+    "beats_low": "../BEATs_Experts/checkpoint/low_snr/audio_best_36.pt",
+    "beats_mid": "../BEATs_Experts/checkpoint/mid_snr/audio_best_36.pt",
+    "dpcrn_high": "../DPCRN_Noise_Target/checkpoint/dpcrn_noise_target_best.pt"
+  },
+  "cache": {"dir": "artifacts/embedding_cache", "extract_batch_size": 32, "workers": 4},
+  "model": {"hidden": [512, 256], "dropout": 0.3},
+  "training": {
+    "epochs": 60, "batch_size": 512, "learning_rate": 0.001, "weight_decay": 0.0001,
+    "lambda_snr": 0.1, "patience": 10, "selection_metric": "macro_f1",
+    "checkpoint": "checkpoint/fusion_best.pt", "results": "checkpoint/fusion_history.json"
+  },
+  "evaluation": {
+    "split": "test", "output": "checkpoint/test_metrics_36.json", "output_dir": "checkpoint",
+    "ablation_output": "checkpoint/ablation.csv", "baseline_accuracy": 0.6523
+  },
+  "runtime": {"device": "cuda", "pin_memory": true}
+}
