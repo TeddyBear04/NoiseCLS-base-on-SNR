@@ -329,6 +329,9 @@ def train(config: dict[str, Any], device: torch.device) -> None:
 
     for epoch in range(1, training["epochs"] + 1):
         model.train()
+        classification_total = 0.0
+        separation_total = 0.0
+        batch_count = 0
         for batch in train_loader:
             mixture = batch["mixture"].to(device)
             noise = batch["noise"].to(device)
@@ -344,11 +347,22 @@ def train(config: dict[str, Any], device: torch.device) -> None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), training["gradient_clip_norm"])
             optimizer.step()
             scheduler.step()
+            classification_total += float(classification.detach())
+            separation_total += float(separation.detach())
+            batch_count += 1
+        train_losses = {
+            "classification": classification_total / max(1, batch_count),
+            "separation": separation_total / max(1, batch_count),
+        }
         metrics = evaluate(
             model, validation_loader, device, config["evaluation"]["per_snr"]
         )
-        history.append({"epoch": epoch, "validation": metrics})
-        print(f"epoch={epoch} validation_macro_f1={metrics['test_macro_f1']:.4f} validation_accuracy={metrics['test_accuracy']:.4f}")
+        history.append({"epoch": epoch, "train_loss": train_losses, "validation": metrics})
+        print(
+            f"epoch={epoch} train_classification={train_losses['classification']:.4f} "
+            f"train_separation={train_losses['separation']:.4f} "
+            f"validation_macro_f1={metrics['test_macro_f1']:.4f} validation_accuracy={metrics['test_accuracy']:.4f}"
+        )
         selection = metrics[f"test_{training['selection_metric']}"]
         if selection > best_f1:
             best_f1 = selection
