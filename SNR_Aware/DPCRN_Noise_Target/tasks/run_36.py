@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import random
 from pathlib import Path
 from typing import Any
@@ -64,8 +65,26 @@ def build_model(config: dict[str, Any], classes_num: int, device: torch.device) 
         dprnn_blocks=model_config["dprnn_blocks"],
         embedding_dim=model_config["embedding_dim"],
         classifier_dropout=model_config["classifier_dropout"],
+        bidirectional_time=model_config["bidirectional_time"],
     )
     return model.to(device)
+
+
+def build_scheduler(
+    optimizer: torch.optim.Optimizer, config: dict[str, Any], steps_per_epoch: int
+) -> torch.optim.lr_scheduler.LambdaLR:
+    """Linear warmup, then cosine decay to zero over the remaining steps."""
+    training = config["training"]
+    warmup = max(1, training["warmup_epochs"] * steps_per_epoch)
+    total = max(warmup + 1, training["epochs"] * steps_per_epoch)
+
+    def factor(step: int) -> float:
+        if step < warmup:
+            return (step + 1) / warmup
+        progress = (step - warmup) / (total - warmup)
+        return 0.5 * (1.0 + math.cos(math.pi * min(1.0, progress)))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, factor)
 
 
 def separation_loss(estimated: Tensor, target: Tensor, n_fft: int, hop_length: int) -> Tensor:
@@ -300,6 +319,7 @@ def train(config: dict[str, Any], device: torch.device) -> None:
     model = build_model(config, len(train_data.labels), device)
     training = config["training"]
     optimizer = torch.optim.AdamW(model.parameters(), lr=training["learning_rate"], weight_decay=training["weight_decay"])
+    scheduler = build_scheduler(optimizer, config, steps_per_epoch=len(train_loader))
     cross_entropy = nn.CrossEntropyLoss()
     checkpoint = Path(training["checkpoint"])
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
@@ -323,6 +343,7 @@ def train(config: dict[str, Any], device: torch.device) -> None:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), training["gradient_clip_norm"])
             optimizer.step()
+            scheduler.step()
         metrics = evaluate(
             model, validation_loader, device, config["evaluation"]["per_snr"]
         )
