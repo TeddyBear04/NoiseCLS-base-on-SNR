@@ -8,7 +8,6 @@ from typing import Any
 
 import soundfile as sound_file
 import torch
-import torchaudio
 from torch.nn import functional
 from torch.utils.data import Dataset
 
@@ -17,6 +16,8 @@ def load_audio(path: Path, sample_rate: int, samples: int) -> torch.Tensor:
     audio, source_rate = sound_file.read(path, dtype="float32", always_2d=True)
     waveform = torch.from_numpy(audio.copy()).mean(dim=1)
     if source_rate != sample_rate:
+        import torchaudio
+
         waveform = torchaudio.functional.resample(waveform, source_rate, sample_rate)
     waveform = waveform[:samples]
     return functional.pad(waveform, (0, max(0, samples - waveform.numel())))

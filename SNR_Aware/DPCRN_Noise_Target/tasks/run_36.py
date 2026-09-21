@@ -69,12 +69,24 @@ def build_model(config: dict[str, Any], classes_num: int, device: torch.device) 
 
 
 def separation_loss(estimated: Tensor, target: Tensor, n_fft: int, hop_length: int) -> Tensor:
-    scale = target.abs().mean(dim=-1, keepdim=True).clamp_min(1e-4)
-    waveform_l1 = ((estimated - target).abs() / scale).mean()
-    estimated_spectrum = torch.stft(estimated, n_fft, hop_length, return_complex=True).abs()
-    target_spectrum = torch.stft(target, n_fft, hop_length, return_complex=True).abs()
-    spectral_l1 = (torch.log1p(estimated_spectrum) - torch.log1p(target_spectrum)).abs().mean()
-    return waveform_l1 + spectral_l1
+    """Negative SNR plus a log spectral MSE term (DPCRN paper, eq. 6)."""
+    noise_power = (target - estimated).pow(2).sum(dim=-1)
+    signal_power = target.pow(2).sum(dim=-1)
+    negative_snr = -10 * torch.log10(signal_power.clamp_min(1e-8) / noise_power.clamp_min(1e-8))
+
+    window = torch.hann_window(n_fft, device=estimated.device)
+    estimated_spectrum = torch.stft(
+        estimated, n_fft, hop_length, window=window, return_complex=True
+    )
+    target_spectrum = torch.stft(
+        target, n_fft, hop_length, window=window, return_complex=True
+    )
+    spectral = (
+        (estimated_spectrum.real - target_spectrum.real).pow(2).mean()
+        + (estimated_spectrum.imag - target_spectrum.imag).pow(2).mean()
+        + (estimated_spectrum.abs() - target_spectrum.abs()).pow(2).mean()
+    )
+    return negative_snr.mean() + torch.log(spectral.clamp_min(1e-8))
 
 
 def make_loader(config: dict[str, Any], split: str, shuffle: bool) -> tuple[MixNoiseDataset, DataLoader[dict[str, Any]]]:
