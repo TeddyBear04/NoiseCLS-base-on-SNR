@@ -103,6 +103,61 @@ class DPCRNDecoder(nn.Module):
         return features
 
 
+class AttentionPooling(nn.Module):
+    """Weight frames by learned relevance instead of averaging them."""
+
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.score = nn.Linear(dim, 1)
+
+    def forward(self, sequence: Tensor) -> Tensor:      # [B, T, D] -> [B, D]
+        weights = self.score(sequence).softmax(dim=1)
+        return (sequence * weights).sum(dim=1)
+
+
+class NoiseClassifierHead(nn.Module):
+    """Read the dual-path bottleneck and the separated-noise spectrum together."""
+
+    def __init__(
+        self,
+        bottleneck_channels: int = 128,
+        frequency_bins: int = 257,
+        embedding_dim: int = 256,
+        classes_num: int = 36,
+        dropout: float = 0.2,
+    ) -> None:
+        super().__init__()
+        # Strided convs fold frequency into channels. Averaging it away costs as
+        # much accuracy as averaging time away (see spec 2.2).
+        self.frequency = nn.Sequential(
+            nn.Conv2d(bottleneck_channels, 64, 3, stride=(2, 1), padding=1),
+            nn.BatchNorm2d(64), nn.PReLU(64),
+            nn.Conv2d(64, 64, 3, stride=(2, 1), padding=1),
+            nn.BatchNorm2d(64), nn.PReLU(64),
+        )
+        self.bottleneck_projection = nn.Conv1d(64 * 17, embedding_dim, kernel_size=1)
+        self.noise_projection = nn.Sequential(
+            nn.Conv1d(frequency_bins, 128, kernel_size=5, padding=2),
+            nn.BatchNorm1d(128), nn.PReLU(128),
+        )
+        self.recurrent = nn.GRU(
+            embedding_dim + 128, embedding_dim // 2,
+            batch_first=True, bidirectional=True,
+        )
+        self.pooling = AttentionPooling(embedding_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.classifier = nn.Linear(embedding_dim, classes_num)
+
+    def forward(self, bottleneck: Tensor, noise_spectrum_magnitude: Tensor) -> tuple[Tensor, Tensor]:
+        batch, _, _, frames = bottleneck.shape
+        folded = self.frequency(bottleneck).reshape(batch, -1, frames)
+        spectral = self.bottleneck_projection(folded)
+        separated = self.noise_projection(torch.log1p(noise_spectrum_magnitude))
+        sequence, _ = self.recurrent(torch.cat((spectral, separated), dim=1).transpose(1, 2))
+        embedding = self.pooling(sequence)
+        return embedding, self.classifier(self.dropout(embedding))
+
+
 class DPCRNNoiseClassifier(nn.Module):
     """Extract noise directly from a mixture, then classify it."""
 
@@ -111,38 +166,28 @@ class DPCRNNoiseClassifier(nn.Module):
         classes_num: int,
         n_fft: int = 512,
         hop_length: int = 160,
-        encoder_channels: tuple[int, ...] = (32, 64, 96),
+        encoder_channels: tuple[int, ...] = (32, 32, 32, 64, 128),
         dprnn_blocks: int = 2,
-        embedding_dim: int = 192,
+        embedding_dim: int = 256,
         classifier_dropout: float = 0.2,
+        bidirectional_time: bool = True,
     ) -> None:
         super().__init__()
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.register_buffer("window", torch.hann_window(n_fft), persistent=False)
-
-        layers: list[nn.Module] = []
-        in_channels = 2
-        for out_channels in encoder_channels:
-            layers.extend((
-                nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=(2, 1), padding=1),
-                nn.BatchNorm2d(out_channels),
-                nn.PReLU(out_channels),
-            ))
-            in_channels = out_channels
-        self.encoder = nn.Sequential(*layers)
-        self.dual_path = nn.Sequential(*[DualPathBlock(in_channels) for _ in range(dprnn_blocks)])
-        self.mask_head = nn.Sequential(
-            nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1),
-            nn.PReLU(in_channels),
-            nn.Conv2d(in_channels, 2, kernel_size=1),
-        )
-        frequency_bins = n_fft // 2 + 1
-        self.classifier = nn.Sequential(
-            nn.Linear(frequency_bins, embedding_dim),
-            nn.PReLU(embedding_dim),
-            nn.Dropout(classifier_dropout),
-            nn.Linear(embedding_dim, classes_num),
+        self.encoder = DPCRNEncoder(2, encoder_channels)
+        self.dual_path = nn.Sequential(*[
+            DualPathBlock(encoder_channels[-1], bidirectional_time)
+            for _ in range(dprnn_blocks)
+        ])
+        self.decoder = DPCRNDecoder(encoder_channels)
+        self.head = NoiseClassifierHead(
+            bottleneck_channels=encoder_channels[-1],
+            frequency_bins=n_fft // 2 + 1,
+            embedding_dim=embedding_dim,
+            classes_num=classes_num,
+            dropout=classifier_dropout,
         )
 
     def _stft(self, waveform: Tensor) -> Tensor:
@@ -158,21 +203,19 @@ class DPCRNNoiseClassifier(nn.Module):
 
     def forward(self, mixture: Tensor) -> dict[str, Tensor]:
         mixture_parts = self._stft(mixture)
-        encoded = self.encoder(mixture_parts)
-        encoded = self.dual_path(encoded)
-        mask = self.mask_head(encoded)
-        mask = functional.interpolate(mask, size=mixture_parts.shape[-2:], mode="bilinear", align_corners=False)
+        bottleneck, skips = self.encoder(mixture_parts)
+        bottleneck = self.dual_path(bottleneck)
+        mask = self.decoder(bottleneck, skips)
 
         real = mixture_parts[:, 0] * mask[:, 0] - mixture_parts[:, 1] * mask[:, 1]
         imaginary = mixture_parts[:, 0] * mask[:, 1] + mixture_parts[:, 1] * mask[:, 0]
         noise_spectrum = torch.complex(real, imaginary)
         estimated_noise = torch.istft(
-            noise_spectrum,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            window=self.window,
-            center=True,
-            length=mixture.shape[-1],
+            noise_spectrum, n_fft=self.n_fft, hop_length=self.hop_length,
+            window=self.window, center=True, length=mixture.shape[-1],
         )
-        log_magnitude = torch.log1p(noise_spectrum.abs()).mean(dim=-1)
-        return {"noise": estimated_noise, "logits": self.classifier(log_magnitude), "mask": mask}
+        embedding, logits = self.head(bottleneck, noise_spectrum.abs())
+        return {
+            "noise": estimated_noise, "logits": logits,
+            "mask": mask, "embedding": embedding,
+        }
