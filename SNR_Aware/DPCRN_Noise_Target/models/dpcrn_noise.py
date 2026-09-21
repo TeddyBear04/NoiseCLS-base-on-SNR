@@ -10,12 +10,13 @@ import torch.nn.functional as functional
 class DualPathBlock(nn.Module):
     """Model spectral patterns within a frame and temporal patterns per bin."""
 
-    def __init__(self, channels: int) -> None:
+    def __init__(self, channels: int, bidirectional_time: bool = True) -> None:
         super().__init__()
         self.intra = nn.LSTM(channels, channels // 2, batch_first=True, bidirectional=True)
         self.intra_projection = nn.Linear(channels, channels)
         self.intra_norm = nn.LayerNorm(channels)
-        self.inter = nn.LSTM(channels, channels, batch_first=True)
+        hidden = channels // 2 if bidirectional_time else channels
+        self.inter = nn.LSTM(channels, hidden, batch_first=True, bidirectional=bidirectional_time)
         self.inter_projection = nn.Linear(channels, channels)
         self.inter_norm = nn.LayerNorm(channels)
 
@@ -34,6 +35,72 @@ class DualPathBlock(nn.Module):
         inter_output = self.inter_norm(self.inter_projection(inter_output))
         inter_output = inter_output.reshape(batch, frequencies, frames, channels).permute(0, 3, 1, 2)
         return features + inter_output
+
+
+ENCODER_KERNELS = ((5, 2), (3, 2), (3, 2), (3, 2), (3, 2))
+ENCODER_STRIDES = ((2, 1), (2, 1), (1, 1), (1, 1), (1, 1))
+
+
+def _causal_time_pad(features: Tensor) -> Tensor:
+    """Kernels are 2 frames wide; pad the past so the frame count survives."""
+    return functional.pad(features, (1, 0))
+
+
+class DPCRNEncoder(nn.Module):
+    """Five Conv2d layers, frequency 257 -> 129 -> 65, time length preserved."""
+
+    def __init__(
+        self,
+        in_channels: int = 2,
+        channels: tuple[int, ...] = (32, 32, 32, 64, 128),
+    ) -> None:
+        super().__init__()
+        self.layers = nn.ModuleList()
+        previous = in_channels
+        for out_channels, kernel, stride in zip(channels, ENCODER_KERNELS, ENCODER_STRIDES):
+            self.layers.append(nn.Sequential(
+                nn.Conv2d(previous, out_channels, kernel, stride, padding=(kernel[0] // 2, 0)),
+                nn.BatchNorm2d(out_channels),
+                nn.PReLU(out_channels),
+            ))
+            previous = out_channels
+
+    def forward(self, spectrum: Tensor) -> tuple[Tensor, list[Tensor]]:
+        skips: list[Tensor] = []
+        features = spectrum
+        for layer in self.layers:
+            features = layer(_causal_time_pad(features))
+            skips.append(features)
+        return features, skips
+
+
+class DPCRNDecoder(nn.Module):
+    """Mirror of the encoder. Each stage sees the matching encoder output."""
+
+    def __init__(self, channels: tuple[int, ...] = (32, 32, 32, 64, 128)) -> None:
+        super().__init__()
+        outputs = (*channels[:-1][::-1], 2)          # 64, 32, 32, 32, 2
+        inputs = channels[::-1]                       # 128, 64, 32, 32, 32
+        kernels = ENCODER_KERNELS[::-1]
+        strides = ENCODER_STRIDES[::-1]
+        self.layers = nn.ModuleList()
+        for index, (in_ch, out_ch, kernel, stride) in enumerate(
+            zip(inputs, outputs, kernels, strides)
+        ):
+            last = index == len(inputs) - 1
+            block: list[nn.Module] = [nn.ConvTranspose2d(
+                in_ch * 2, out_ch, kernel, stride, padding=(kernel[0] // 2, 0)
+            )]
+            if not last:
+                block += [nn.BatchNorm2d(out_ch), nn.PReLU(out_ch)]
+            self.layers.append(nn.Sequential(*block))
+
+    def forward(self, features: Tensor, skips: list[Tensor]) -> Tensor:
+        frames = features.shape[-1]
+        for layer, skip in zip(self.layers, skips[::-1]):
+            features = layer(torch.cat((features, skip), dim=1))
+            features = features[..., :frames]         # transposed conv adds one frame
+        return features
 
 
 class DPCRNNoiseClassifier(nn.Module):
