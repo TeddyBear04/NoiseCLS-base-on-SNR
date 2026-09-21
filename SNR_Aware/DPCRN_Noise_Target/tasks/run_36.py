@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import random
 from pathlib import Path
@@ -16,6 +17,7 @@ from sklearn.metrics import (
     average_precision_score,
     balanced_accuracy_score,
     f1_score,
+    precision_recall_fscore_support,
     precision_score,
     recall_score,
     roc_auc_score,
@@ -98,6 +100,42 @@ def make_loader(config: dict[str, Any], split: str, shuffle: bool) -> tuple[MixN
     )
 
 
+def si_sdr(estimate: Tensor, target: Tensor, eps: float = 1e-8) -> Tensor:
+    """Scale-invariant SDR in dB, one value per clip."""
+    estimate = estimate - estimate.mean(dim=-1, keepdim=True)
+    target = target - target.mean(dim=-1, keepdim=True)
+    scale = (estimate * target).sum(dim=-1, keepdim=True) / (target.pow(2).sum(dim=-1, keepdim=True) + eps)
+    projection = scale * target
+    residual = estimate - projection
+    return 10 * torch.log10((projection.pow(2).sum(dim=-1) + eps) / (residual.pow(2).sum(dim=-1) + eps))
+
+
+def top_k_accuracy(targets: np.ndarray, probabilities: np.ndarray, k: int = 3) -> float:
+    top = np.argsort(-probabilities, axis=1)[:, :k]
+    return float((top == targets[:, None]).any(axis=1).mean())
+
+
+def per_class_metrics(
+    targets: np.ndarray, predictions: np.ndarray, probabilities: np.ndarray, labels: list[str]
+) -> dict[str, dict[str, float | int]]:
+    one_hot_targets = np.eye(len(labels), dtype=np.int32)[targets]
+    precision, recall, f1, support = precision_recall_fscore_support(
+        targets, predictions, labels=range(len(labels)), zero_division=0
+    )
+    rows: dict[str, dict[str, float | int]] = {}
+    for index, label in enumerate(labels):
+        try:
+            ap = float(average_precision_score(one_hot_targets[:, index], probabilities[:, index]))
+            auc = float(roc_auc_score(one_hot_targets[:, index], probabilities[:, index]))
+        except ValueError:
+            ap, auc = float("nan"), float("nan")
+        rows[label] = {
+            "support": int(support[index]), "precision": float(precision[index]),
+            "recall": float(recall[index]), "f1": float(f1[index]), "ap": ap, "auc": auc,
+        }
+    return rows
+
+
 def metric_values(
     targets: np.ndarray, predictions: np.ndarray, probabilities: np.ndarray
 ) -> dict[str, float]:
@@ -112,6 +150,7 @@ def metric_values(
         macro_auc, mean_ap = float("nan"), float("nan")
     return {
         "accuracy": float(accuracy_score(targets, predictions)),
+        "top3_accuracy": top_k_accuracy(targets, probabilities),
         "precision": float(precision_score(targets, predictions, average="macro", zero_division=0)),
         "recall": float(recall_score(targets, predictions, average="macro", zero_division=0)),
         "macro_f1": float(f1_score(targets, predictions, average="macro", zero_division=0)),
@@ -128,12 +167,15 @@ def evaluate(
     loader: DataLoader[dict[str, Any]],
     device: torch.device,
     per_snr_enabled: bool,
+    labels: list[str] | None = None,
 ) -> dict[str, Any]:
+    """Score a loader. Pass `labels` for the test report: it adds SI-SDR and per-label rows."""
     model.eval()
     targets: list[int] = []
     predictions: list[int] = []
     probabilities: list[np.ndarray] = []
     snrs: list[float] = []
+    separation_scores: list[float] = []
     for batch in loader:
         output = model(batch["mixture"].to(device))
         posterior = output["logits"].softmax(dim=1).cpu().numpy()
@@ -141,6 +183,8 @@ def evaluate(
         predictions.extend(output["logits"].argmax(dim=1).cpu().tolist())
         probabilities.extend(posterior)
         snrs.extend(batch["snr"].tolist())
+        if labels is not None:
+            separation_scores.extend(si_sdr(output["noise"], batch["noise"].to(device)).cpu().tolist())
 
     target_array = np.asarray(targets)
     prediction_array = np.asarray(predictions)
@@ -155,34 +199,86 @@ def evaluate(
                 "samples": int(mask.sum()),
                 **metric_values(target_array[mask], prediction_array[mask], probability_array[mask]),
             }
-    return {
+            if labels is not None:
+                per_snr[f"{snr:g}"]["si_sdr_db"] = float(np.mean(np.asarray(separation_scores)[mask]))
+    result = {
         **{f"test_{key}": value for key, value in overall.items()},
         "samples": int(len(target_array)),
         "per_snr": per_snr,
     }
+    if labels is not None:
+        result["test_si_sdr_db"] = float(np.mean(separation_scores))
+        result["per_class"] = per_class_metrics(target_array, prediction_array, probability_array, labels)
+    return result
+
+
+# (header, key) pairs. The per-SNR table reads `key`; its "All" row reads `test_<key>`.
+SNR_COLUMNS = (
+    ("Top-1 Accuracy", "accuracy"), ("Top-3 Accuracy", "top3_accuracy"),
+    ("Balanced Acc", "balanced_accuracy"), ("Precision Macro", "precision"),
+    ("Recall Macro", "recall"), ("Macro-F1", "macro_f1"), ("Micro-F1", "micro_f1"),
+    ("mAP", "map"), ("Macro-AUC", "macro_auc"), ("SI-SDR (dB)", "si_sdr_db"),
+)
+TEST_COLUMNS = (
+    ("Test Accuracy", "test_accuracy"), ("Test Precision", "test_precision"),
+    ("Test Recall", "test_recall"), ("Test Macro-F1", "test_macro_f1"),
+    ("Test Micro-F1", "test_micro_f1"), ("Test mAP", "test_map"),
+    ("Test Balanced Acc", "test_balanced_accuracy"), ("Test Macro-AUC", "test_macro_auc"),
+)
+CLASS_COLUMNS = (
+    ("Support", "support"), ("Precision", "precision"), ("Recall", "recall"),
+    ("F1", "f1"), ("AP", "ap"), ("AUC", "auc"),
+)
+
+
+def format_cell(value: Any) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, int):
+        return str(value)
+    return f"{value:.4f}"
+
+
+def markdown_table(headers: list[str], rows: list[list[str]]) -> str:
+    lines = ["| " + " | ".join(headers) + " |", "|" + "|".join("---" for _ in headers) + "|"]
+    lines.extend("| " + " | ".join(row) + " |" for row in rows)
+    return "\n".join(lines)
 
 
 def print_test_table(metrics: dict[str, Any]) -> None:
-    headers = (
-        "Test Accuracy", "Test Precision", "Test Recall", "Test Macro-F1",
-        "Test Micro-F1", "Test mAP", "Test Balanced Acc", "Test Macro-AUC",
-    )
-    values = (
-        metrics["test_accuracy"], metrics["test_precision"], metrics["test_recall"], metrics["test_macro_f1"],
-        metrics["test_micro_f1"], metrics["test_map"], metrics["test_balanced_accuracy"], metrics["test_macro_auc"],
-    )
-    print("| " + " | ".join(headers) + " |")
-    print("|" + "|".join("---" for _ in headers) + "|")
-    print("| " + " | ".join(f"{value:.4f}" for value in values) + " |")
+    print(markdown_table([h for h, _ in TEST_COLUMNS], [[format_cell(metrics[k]) for _, k in TEST_COLUMNS]]))
     if metrics["per_snr"]:
-        print("\n| SNR (dB) | Samples | Accuracy | Macro-F1 | mAP | Balanced Acc | Macro-AUC |")
-        print("| --- | --- | --- | --- | --- | --- | --- |")
+        snr_rows = [
+            [snr, *(format_cell(values.get(key)) for _, key in SNR_COLUMNS)]
+            for snr, values in metrics["per_snr"].items()
+        ]
+        snr_rows.append(["All", *(format_cell(metrics.get(f"test_{key}")) for _, key in SNR_COLUMNS)])
+        print("\n" + markdown_table(["SNR (dB)", *(h for h, _ in SNR_COLUMNS)], snr_rows))
+    class_rows = [
+        [label, *(format_cell(values[key]) for _, key in CLASS_COLUMNS)]
+        for label, values in metrics["per_class"].items()
+    ]
+    print("\n" + markdown_table(["Label", *(h for h, _ in CLASS_COLUMNS)], class_rows))
+
+
+def save_report_csvs(output_dir: Path, metrics: dict[str, Any]) -> None:
+    """Write the per-SNR and per-label tables next to the JSON metrics."""
+    snr_fields = ["snr_db", "samples", *(key for _, key in SNR_COLUMNS)]
+    with (output_dir / "snr_metrics.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=snr_fields)
+        writer.writeheader()
         for snr, values in metrics["per_snr"].items():
-            print(
-                f"| {snr} | {values['samples']} | {values['accuracy']:.4f} | "
-                f"{values['macro_f1']:.4f} | {values['map']:.4f} | "
-                f"{values['balanced_accuracy']:.4f} | {values['macro_auc']:.4f} |"
-            )
+            writer.writerow({"snr_db": snr, **{key: values.get(key) for key in snr_fields[1:]}})
+        writer.writerow({
+            "snr_db": "All", "samples": metrics["samples"],
+            **{key: metrics.get(f"test_{key}") for _, key in SNR_COLUMNS},
+        })
+    class_fields = ["label", *(key for _, key in CLASS_COLUMNS)]
+    with (output_dir / "per_class_metrics.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=class_fields)
+        writer.writeheader()
+        for label, values in metrics["per_class"].items():
+            writer.writerow({"label": label, **values})
 
 
 def train(config: dict[str, Any], device: torch.device) -> None:
@@ -243,10 +339,11 @@ def test(config: dict[str, Any], checkpoint_path: str | Path, device: torch.devi
     _, loader = make_loader(config, config["evaluation"]["split"], shuffle=False)
     model = build_model(config, len(payload["labels"]), device)
     model.load_state_dict(payload["model"])
-    metrics = evaluate(model, loader, device, config["evaluation"]["per_snr"])
+    metrics = evaluate(model, loader, device, config["evaluation"]["per_snr"], payload["labels"])
     output_path = Path(config["evaluation"]["output"])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    save_report_csvs(output_path.parent, metrics)
     print_test_table(metrics)
     print(f"Saved metrics to {output_path}")
 
