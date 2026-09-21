@@ -1,0 +1,180 @@
+{
+  "dataset": "mix-dataset",
+  "task": "single-label_36",
+  "split": "test",
+  "samples": 2160,
+  "checkpoint": "checkpoint/mid_snr/audio_best_36.pt",
+  "accuracy": 0.6615740740740741,
+  "precision": 0.6669200746475472,
+  "recall": 0.6615740740740742,
+  "macro_f1": 0.6546532210026,
+  "micro_f1": 0.6615740740740741,
+  "test_accuracy": 0.6615740740740741,
+  "test_precision": 0.6669200746475472,
+  "test_recall": 0.6615740740740742,
+  "test_macro_f1": 0.6546532210026,
+  "test_micro_f1": 0.6615740740740741,
+  "test_map": 0.7324349915745526,
+  "test_balanced_accuracy": 0.6615740740740742,
+  "test_macro_auc": 0.9666309523809523,
+  "per_snr": {
+    "5": {
+      "samples": 1080,
+      "accuracy": 0.6787037037037037,
+      "macro_f1": 0.6720768993914606,
+      "micro_f1": 0.6787037037037037
+    },
+    "10": {
+      "samples": 1080,
+      "accuracy": 0.6444444444444445,
+      "macro_f1": 0.6375206847773863,
+      "micro_f1": 0.6444444444444445
+    }
+  },
+  "per_class": {
+    "Acoustic guitar": {
+      "f1": 0.6174496644295302,
+      "support": 60
+    },
+    "Applause": {
+      "f1": 0.65625,
+      "support": 60
+    },
+    "Bark": {
+      "f1": 0.8376068376068376,
+      "support": 60
+    },
+    "Burping, eructation": {
+      "f1": 0.8031496062992126,
+      "support": 60
+    },
+    "Bus": {
+      "f1": 0.8111888111888111,
+      "support": 60
+    },
+    "Chime": {
+      "f1": 0.5471698113207547,
+      "support": 60
+    },
+    "Clarinet": {
+      "f1": 0.6129032258064516,
+      "support": 60
+    },
+    "Computer keyboard": {
+      "f1": 0.6349206349206349,
+      "support": 60
+    },
+    "Cough": {
+      "f1": 0.7333333333333333,
+      "support": 60
+    },
+    "Cowbell": {
+      "f1": 0.7619047619047619,
+      "support": 60
+    },
+    "Drawer open or close": {
+      "f1": 0.37254901960784315,
+      "support": 60
+    },
+    "Electric piano": {
+      "f1": 0.8064516129032258,
+      "support": 60
+    },
+    "Fart": {
+      "f1": 0.6792452830188679,
+      "support": 60
+    },
+    "Finger snapping": {
+      "f1": 0.6355140186915887,
+      "support": 60
+    },
+    "Fireworks": {
+      "f1": 0.7428571428571429,
+      "support": 60
+    },
+    "Flute": {
+      "f1": 0.8396946564885496,
+      "support": 60
+    },
+    "Glockenspiel": {
+      "f1": 0.549618320610687,
+      "support": 60
+    },
+    "Gong": {
+      "f1": 0.8852459016393442,
+      "support": 60
+    },
+    "Gunshot, gunfire": {
+      "f1": 0.688,
+      "support": 60
+    },
+    "Harmonica": {
+      "f1": 0.8360655737704918,
+      "support": 60
+    },
+    "Hi-hat": {
+      "f1": 0.32098765432098764,
+      "support": 60
+    },
+    "Keys jangling": {
+      "f1": 0.5714285714285714,
+      "support": 60
+    },
+    "Knock": {
+      "f1": 0.5116279069767442,
+      "support": 60
+    },
+    "Laughter": {
+      "f1": 0.6323529411764706,
+      "support": 60
+    },
+    "Meow": {
+      "f1": 0.7230769230769231,
+      "support": 60
+    },
+    "Microwave oven": {
+      "f1": 0.46153846153846156,
+      "support": 60
+    },
+    "Saxophone": {
+      "f1": 0.6,
+      "support": 60
+    },
+    "Scissors": {
+      "f1": 0.5148514851485149,
+      "support": 60
+    },
+    "Shatter": {
+      "f1": 0.6616541353383458,
+      "support": 60
+    },
+    "Squeak": {
+      "f1": 0.4742268041237113,
+      "support": 60
+    },
+    "Tambourine": {
+      "f1": 0.8032786885245902,
+      "support": 60
+    },
+    "Tearing": {
+      "f1": 0.5420560747663551,
+      "support": 60
+    },
+    "Telephone": {
+      "f1": 0.6716417910447762,
+      "support": 60
+    },
+    "Trumpet": {
+      "f1": 0.7350427350427351,
+      "support": 60
+    },
+    "Violin, fiddle": {
+      "f1": 0.8073394495412844,
+      "support": 60
+    },
+    "Writing": {
+      "f1": 0.4852941176470588,
+      "support": 60
+    }
+  }
+}

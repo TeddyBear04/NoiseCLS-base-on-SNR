@@ -1,0 +1,51 @@
+true_label,predicted_label,count,true_class_samples,percent_of_true_class
+Chime,Glockenspiel,41,180,22.77777777777778
+Hi-hat,Acoustic guitar,37,180,20.555555555555557
+Hi-hat,Cowbell,33,180,18.333333333333332
+Hi-hat,Applause,32,180,17.77777777777778
+Cough,Laughter,28,180,15.555555555555555
+Glockenspiel,Chime,28,180,15.555555555555555
+Saxophone,Trumpet,28,180,15.555555555555555
+Clarinet,Saxophone,27,180,15.0
+Scissors,Writing,25,180,13.88888888888889
+Tearing,Writing,23,180,12.777777777777779
+Trumpet,Saxophone,22,180,12.222222222222221
+Tearing,Scissors,21,180,11.666666666666666
+Microwave oven,Bus,20,180,11.11111111111111
+Finger snapping,Laughter,18,180,10.0
+Squeak,Knock,18,180,10.0
+Computer keyboard,Telephone,17,180,9.444444444444445
+Fireworks,"Gunshot, gunfire",17,180,9.444444444444445
+"Violin, fiddle",Flute,17,180,9.444444444444445
+Saxophone,Harmonica,16,180,8.88888888888889
+Scissors,Drawer open or close,16,180,8.88888888888889
+Scissors,Microwave oven,16,180,8.88888888888889
+Writing,Meow,16,180,8.88888888888889
+Glockenspiel,Acoustic guitar,15,180,8.333333333333334
+Glockenspiel,Cowbell,15,180,8.333333333333334
+Microwave oven,Drawer open or close,15,180,8.333333333333334
+Applause,Glockenspiel,14,180,7.777777777777778
+Applause,Tambourine,14,180,7.777777777777778
+Cowbell,Chime,14,180,7.777777777777778
+Keys jangling,Computer keyboard,14,180,7.777777777777778
+Hi-hat,Telephone,13,180,7.222222222222222
+"Burping, eructation",Laughter,12,180,6.666666666666667
+Cowbell,Drawer open or close,12,180,6.666666666666667
+Fart,Laughter,12,180,6.666666666666667
+Scissors,Keys jangling,12,180,6.666666666666667
+Squeak,Bark,12,180,6.666666666666667
+"Violin, fiddle",Clarinet,12,180,6.666666666666667
+Acoustic guitar,Electric piano,11,180,6.111111111111111
+Acoustic guitar,Saxophone,11,180,6.111111111111111
+Finger snapping,"Gunshot, gunfire",11,180,6.111111111111111
+Knock,Drawer open or close,11,180,6.111111111111111
+Shatter,Knock,11,180,6.111111111111111
+Trumpet,Clarinet,11,180,6.111111111111111
+Acoustic guitar,Applause,10,180,5.555555555555555
+Computer keyboard,Knock,10,180,5.555555555555555
+Electric piano,Glockenspiel,10,180,5.555555555555555
+"Gunshot, gunfire",Bus,10,180,5.555555555555555
+Keys jangling,Scissors,10,180,5.555555555555555
+Laughter,Cough,10,180,5.555555555555555
+Meow,Bark,10,180,5.555555555555555
+Microwave oven,Keys jangling,10,180,5.555555555555555

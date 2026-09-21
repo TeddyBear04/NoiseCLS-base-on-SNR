@@ -27,7 +27,12 @@ from finetune_beats import (
 from noise_pipeline.mix_data import load_mix_manifest
 from train_beats_head import filter_snr_rows
 from config.paths import BEATS_CHECKPOINT
-from utils.reporting36 import save_evaluation_artifacts
+from utils.reporting36 import (
+    full_metrics,
+    per_class_metrics,
+    print_report,
+    save_evaluation_artifacts,
+)
 
 
 @torch.inference_mode()
@@ -71,48 +76,34 @@ def main() -> None:
         all_logits.append(logits.float().cpu())
     predicted = torch.cat(predicted).numpy(); expected = torch.cat(expected).numpy(); snrs = torch.cat(snrs).numpy()
     probabilities = torch.cat(all_logits).softmax(dim=1).numpy()
-    precision, recall, f1, support = precision_recall_fscore_support(expected, predicted, labels=range(len(labels)), zero_division=0)
+    metrics = full_metrics(expected, predicted, probabilities)
     per_snr = {}
     for snr in sorted(set(snrs.tolist())):
         mask = snrs == snr
         if not mask.any():
             continue
-        per_snr[str(snr)] = {
+        per_snr[f"{snr:g}"] = {
             "samples": int(mask.sum()),
-            "accuracy": float((predicted[mask] == expected[mask]).mean()),
-            "macro_f1": float(f1_score(expected[mask], predicted[mask], labels=range(len(labels)), average="macro", zero_division=0)),
-            "micro_f1": float(f1_score(expected[mask], predicted[mask], average="micro", zero_division=0)),
+            **full_metrics(expected[mask], predicted[mask], probabilities[mask]),
+            "si_sdr_db": None,  # BEATs does not separate noise, so there is no SI-SDR.
         }
-    one_hot = np.eye(len(labels), dtype=np.int32)[expected]
-    try:
-        macro_auc = float(roc_auc_score(one_hot, probabilities, multi_class="ovr", average="macro"))
-        mean_ap = float(average_precision_score(one_hot, probabilities, average="macro"))
-    except ValueError:
-        # Small/debug test slices may not contain every class.
-        macro_auc, mean_ap = float("nan"), float("nan")
-    accuracy = float(accuracy_score(expected, predicted))
-    macro_precision = float(precision_score(expected, predicted, average="macro", zero_division=0))
-    macro_recall = float(recall_score(expected, predicted, average="macro", zero_division=0))
-    macro_f1 = float(f1_score(expected, predicted, average="macro", zero_division=0))
-    micro_f1 = float(f1_score(expected, predicted, average="micro", zero_division=0))
     result = {
         "dataset": "mix-dataset", "task": "single-label_36", "split": args.split,
         "samples": int(len(dataset)), "checkpoint": str(args.checkpoint),
-        "accuracy": accuracy, "precision": macro_precision, "recall": macro_recall,
-        "macro_f1": macro_f1, "micro_f1": micro_f1,
-        "test_accuracy": accuracy, "test_precision": macro_precision,
-        "test_recall": macro_recall, "test_macro_f1": macro_f1,
-        "test_micro_f1": micro_f1, "test_map": mean_ap,
-        "test_balanced_accuracy": float(balanced_accuracy_score(expected, predicted)),
-        "test_macro_auc": macro_auc, "per_snr": per_snr,
-        "per_class": {label: {"f1": float(f1[i]), "support": int(support[i])} for i, label in enumerate(labels)},
+        "accuracy": metrics["accuracy"], "precision": metrics["precision"],
+        "recall": metrics["recall"], "macro_f1": metrics["macro_f1"], "micro_f1": metrics["micro_f1"],
+        "test_accuracy": metrics["accuracy"], "test_top3_accuracy": metrics["top3_accuracy"],
+        "test_precision": metrics["precision"], "test_recall": metrics["recall"],
+        "test_macro_f1": metrics["macro_f1"], "test_micro_f1": metrics["micro_f1"],
+        "test_map": metrics["map"], "test_balanced_accuracy": metrics["balanced_accuracy"],
+        "test_macro_auc": metrics["macro_auc"], "test_si_sdr_db": None,
+        "per_snr": per_snr,
+        "per_class": per_class_metrics(expected, predicted, probabilities, labels),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     save_evaluation_artifacts(args.output_dir, result, labels, expected, predicted)
-    print("| Test Accuracy | Test Precision | Test Recall | Test Macro-F1 | Test Micro-F1 | Test mAP | Test Balanced Acc | Test Macro-AUC |")
-    print("| --- | --- | --- | --- | --- | --- | --- | --- |")
-    print("| {test_accuracy:.4f} | {test_precision:.4f} | {test_recall:.4f} | {test_macro_f1:.4f} | {test_micro_f1:.4f} | {test_map:.4f} | {test_balanced_accuracy:.4f} | {test_macro_auc:.4f} |".format(**result))
+    print_report(result)
 
 
 if __name__ == "__main__":

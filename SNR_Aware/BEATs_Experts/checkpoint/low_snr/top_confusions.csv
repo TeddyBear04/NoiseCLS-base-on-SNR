@@ -1,0 +1,51 @@
+true_label,predicted_label,count,true_class_samples,percent_of_true_class
+Hi-hat,Acoustic guitar,16,60,26.666666666666668
+Scissors,Writing,13,60,21.666666666666668
+Chime,Glockenspiel,12,60,20.0
+Glockenspiel,Chime,11,60,18.333333333333332
+Cough,Laughter,10,60,16.666666666666668
+Hi-hat,Applause,10,60,16.666666666666668
+Tearing,Scissors,10,60,16.666666666666668
+Finger snapping,"Gunshot, gunfire",9,60,15.0
+Hi-hat,Cowbell,9,60,15.0
+Trumpet,Clarinet,9,60,15.0
+Saxophone,Trumpet,8,60,13.333333333333334
+Writing,Meow,7,60,11.666666666666666
+Clarinet,Saxophone,6,60,10.0
+Meow,Bark,6,60,10.0
+Microwave oven,Bus,6,60,10.0
+Scissors,Microwave oven,6,60,10.0
+Shatter,Keys jangling,6,60,10.0
+Squeak,Meow,6,60,10.0
+Squeak,Telephone,6,60,10.0
+Tearing,Computer keyboard,6,60,10.0
+Trumpet,Saxophone,6,60,10.0
+Bark,Meow,5,60,8.333333333333334
+Cowbell,Chime,5,60,8.333333333333334
+Electric piano,Acoustic guitar,5,60,8.333333333333334
+Electric piano,Glockenspiel,5,60,8.333333333333334
+Glockenspiel,Acoustic guitar,5,60,8.333333333333334
+Keys jangling,Scissors,5,60,8.333333333333334
+"Violin, fiddle",Flute,5,60,8.333333333333334
+Computer keyboard,Knock,4,60,6.666666666666667
+Computer keyboard,Telephone,4,60,6.666666666666667
+Drawer open or close,Scissors,4,60,6.666666666666667
+Finger snapping,Laughter,4,60,6.666666666666667
+Fireworks,"Gunshot, gunfire",4,60,6.666666666666667
+Fireworks,Keys jangling,4,60,6.666666666666667
+"Gunshot, gunfire",Bus,4,60,6.666666666666667
+Keys jangling,Computer keyboard,4,60,6.666666666666667
+Keys jangling,Microwave oven,4,60,6.666666666666667
+Keys jangling,Tambourine,4,60,6.666666666666667
+Knock,Drawer open or close,4,60,6.666666666666667
+Knock,Finger snapping,4,60,6.666666666666667
+Knock,Writing,4,60,6.666666666666667
+Laughter,Shatter,4,60,6.666666666666667
+Microwave oven,Keys jangling,4,60,6.666666666666667
+Microwave oven,Tambourine,4,60,6.666666666666667
+Saxophone,Clarinet,4,60,6.666666666666667
+Shatter,Meow,4,60,6.666666666666667
+Tearing,Writing,4,60,6.666666666666667
+Telephone,Scissors,4,60,6.666666666666667
+"Violin, fiddle",Clarinet,4,60,6.666666666666667
+Acoustic guitar,Applause,3,60,5.0

@@ -25,7 +25,7 @@
     "encoder_lr": 0.00001
   },
   "dataset_splitter": {
-    "dataset_path": "dataset/mix-dataset",
+    "dataset_path": "/marimo/dataset/mix-dataset",
     "manifest_file": "manifest.csv",
     "selected_labels_file": "labels.txt",
     "train_split": "train",
