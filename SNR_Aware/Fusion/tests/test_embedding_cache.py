@@ -73,3 +73,70 @@ def test_dataset_rejects_misaligned_branches(tmp_path):
         assert "row" in str(error).lower()
     else:
         raise AssertionError("misaligned cache must raise")
+
+
+def test_write_cache_round_trips_in_loader_order(tmp_path):
+    """Row alignment is the cache's contract, and nothing else checks it.
+
+    A drift here would train the fusion head on mismatched labels without
+    failing visibly, so the writer is exercised end to end with stand-in
+    embedders that encode each row's index and branch into its vector.
+    """
+    import dataset.embedding_cache as embedding_cache
+
+    batch_sizes = [3, 4, 2]
+    codes = {"beats_low": 1, "beats_mid": 2, "dpcrn_high": 3}
+    levels = [-5.0, 0.0, 5.0, 10.0, 15.0, 20.0]
+
+    class FakeLoader:
+        """Irregular batch sizes, so a per-batch ordering bug cannot hide."""
+
+        def __init__(self):
+            self.batches, row = [], 0
+            for size in batch_sizes:
+                self.batches.append({
+                    "mixture": torch.arange(row, row + size).float().unsqueeze(1),
+                    "target": torch.arange(row, row + size) % 36,
+                    "snr": torch.tensor([levels[(row + i) % 6] for i in range(size)]),
+                })
+                row += size
+
+        def __iter__(self):
+            return iter(self.batches)
+
+        def __len__(self):
+            return len(self.batches)
+
+    def make_embedder(code, width):
+        def embed(_model, waveform):
+            return waveform[:, 0].unsqueeze(1).repeat(1, width) * 100 + code
+        return embed
+
+    original = embedding_cache.EMBEDDERS
+    embedding_cache.EMBEDDERS = {
+        name: make_embedder(codes[name], embedding_cache.BRANCH_DIMS[name])
+        for name in embedding_cache.BRANCH_ORDER
+    }
+    try:
+        embedding_cache.write_cache(
+            {name: None for name in embedding_cache.BRANCH_ORDER},
+            FakeLoader(), "probe", tmp_path, torch.device("cpu"),
+        )
+    finally:
+        embedding_cache.EMBEDDERS = original
+
+    loader = FakeLoader()
+    expected_targets = torch.cat([batch["target"] for batch in loader.batches])
+    expected_snrs = torch.cat([batch["snr"] for batch in loader.batches])
+
+    cached = embedding_cache.EmbeddingCacheDataset(tmp_path, "probe")
+    assert len(cached) == sum(batch_sizes)
+    start = 0
+    for name in embedding_cache.BRANCH_ORDER:
+        width = embedding_cache.BRANCH_DIMS[name]
+        for row in range(len(cached)):
+            piece = cached[row]["features"][start:start + width]
+            assert torch.allclose(piece, torch.full((width,), row * 100.0 + codes[name]), atol=0.5)
+        start += width
+    assert torch.equal(cached.targets, expected_targets)
+    assert torch.allclose(cached.snrs, expected_snrs)
