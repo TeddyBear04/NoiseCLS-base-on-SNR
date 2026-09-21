@@ -337,6 +337,12 @@ def ablation(config: dict[str, Any], device: torch.device) -> None:
     rows: list[dict[str, Any]] = []
 
     for name, selected in ABLATION_ROWS:
+        # Reseed before every row: train_fusion never reseeds, so without this
+        # each row starts from whatever RNG state the previous row left behind
+        # (weight init and batch shuffling both drift). With a fresh seed here,
+        # the "fusion" row reproduces train36's checkpoint exactly instead of
+        # publishing a second, unexplained accuracy for the same configuration.
+        set_seed(config["experiment"]["seed"])
         branch_dims = {branch: BRANCH_DIMS[branch] for branch in BRANCH_ORDER if branch in selected}
         result = train_fusion(config, cache_dir, branch_dims, device)
 
