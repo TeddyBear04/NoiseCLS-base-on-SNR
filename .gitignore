@@ -4,6 +4,7 @@
 *.ckpt
 *.onnx
 *.h5
+*.npy
 
 # Python
 __pycache__/
