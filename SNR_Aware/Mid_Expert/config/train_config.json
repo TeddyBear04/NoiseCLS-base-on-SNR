@@ -1,0 +1,67 @@
+{
+  "experiment": {
+    "name": "mid_expert_teacher_36",
+    "task": "single_label_noise_classification",
+    "num_classes": 36,
+    "seed": 2026
+  },
+  "dataset": {
+    "path": "/marimo/dataset/mix-dataset",
+    "manifest_file": "manifest.csv",
+    "labels_file": "labels.txt",
+    "clip_seconds": 4.0,
+    "sample_rate": 16000,
+    "train_split": "train",
+    "validation_split": "validation",
+    "test_split": "test"
+  },
+  "pretrained": {
+    "candidates": [
+      "../BEATs_Experts/checkpoint/pretrained/BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt",
+      "../../BEATs/C_Noise_Separation_Fusion/checkpoint/checkpoint4/pretrained/BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt",
+      "/marimo/checkpoint/BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt"
+    ]
+  },
+  "teacher": {
+    "source_column": "noise_path",
+    "dedup": false,
+
+    "head_epochs": 50,
+    "head_lr": 0.001,
+    "head_batch_size": 512,
+    "head_patience": 10,
+    "extract_batch_size": 64,
+
+    "finetune_epochs": 8,
+    "trainable_blocks": 12,
+    "head_ft_lr": 0.0001,
+    "encoder_lr": 0.00001,
+    "batch_size": 32,
+    "validation_batch_size": 64,
+    "accumulation_steps": 1,
+    "gradient_clip_norm": 5.0,
+    "patience": 3,
+    "workers": 4
+  },
+  "gates": {
+    "teacher_acc_floor": 0.75,
+    "teacher_acc_ceiling": 0.95,
+    "baseline_mid_accuracy": 0.6681
+  },
+  "outputs": {
+    "dir": "artifacts",
+    "embedding_cache": "teacher_emb.pt",
+    "checkpoint": "teacher_noise_best.pt",
+    "history": "teacher_history.json",
+    "bank": "teacher_bank.pt",
+    "summary": "teacher_summary.json"
+  },
+  "runtime": {
+    "device": "cuda",
+    "pin_memory": true,
+    "smoke_test": false,
+    "smoke_train_rows": 400,
+    "smoke_validation_rows": 200,
+    "smoke_bank_rows": 800
+  }
+}
