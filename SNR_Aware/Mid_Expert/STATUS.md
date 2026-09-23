@@ -32,7 +32,7 @@ Tất cả trong `SNR_Aware/Mid_Expert/` trên nhánh **`mid-expert`**:
 | `STATUS.md` | File này. Tiến độ + handoff. | ✅ |
 | `mid_expert_lib.py` | Hàm thuần, test local được. | ✅ |
 | `test_mid_expert.py` | Unit test local — `python test_mid_expert.py` → 16 passed. | ✅ |
-| `mid_expert.ipynb` | Deliverable, chạy trên molab. | ⬜ |
+| `mid_expert.ipynb` | Deliverable, chạy trên molab. Hiện có Task 5. | 🟡 |
 
 **Molab lấy code bằng cách clone repo**, nên mọi thứ cần chạy đều phải commit + push lên nhánh `mid-expert`. `.gitignore` đã chặn `*.pt`, nên checkpoint và bank teacher không vào git — chúng sinh ra và ở lại trên molab.
 
@@ -41,7 +41,8 @@ Tất cả trong `SNR_Aware/Mid_Expert/` trên nhánh **`mid-expert`**:
 - Notebook mới, CONFIG gộp **một cell**, không tách file config.
 - Training chạy **trên molab**, không local, không `pip install`.
 - Local có torch 2.13.0+cpu, numpy, scipy, soundfile, sklearn — **không có pytest**. Test chạy bằng `python test_mid_expert.py` với runner thuần ở cuối file.
-- Dataset local: `36_labels/` (cùng schema với `/marimo/dataset/mix-dataset`). Dùng được để audit và test nhỏ.
+- Dataset local: `36_labels/` (cùng schema với `/marimo/dataset/mix-dataset`). Dùng được để audit và test nhỏ. Local **không có `torchaudio`** (molab thì có), nên `noise_pipeline.mix_data` không import được ở local.
+- **Checkpoint pretrained BEATs không đi theo git** (`.gitignore` chặn `*.pt`). Trên máy này bản duy nhất nằm ở `BEATs/C_Noise_Separation_Fusion/checkpoint/checkpoint4/pretrained/` (347 MB) — `SNR_Aware/BEATs_Experts/checkpoint/pretrained/` chỉ có `.gitkeep`. Trên molab phải có sẵn; notebook thử lần lượt các đường dẫn trong `CONFIG["pretrained_candidates"]` và dừng với thông báo rõ nếu không thấy.
 - Seed 2026.
 - Siêu tham số loss lấy từ repo CRD chính thức: `r=1, a=1, b=0.8, ρ=4, τ=0.07, proj=128, N=4096`. **Không tự đặt.**
 - Trước mọi thay đổi phương pháp: tra paper (ICML/ICLR/NeurIPS) xem có làm vậy không, rồi mới sửa. Ghi rõ chỗ nào có paper chống lưng, chỗ nào là ý riêng.
@@ -67,7 +68,7 @@ Task molab không "xong" khi code viết xong — chỉ xong khi có output th�
 | 2 | CONFIG + `mid_slice_mask` / `normalize_snr` | local | ✅ | 16 test pass |
 | 3 | FiLM conditioning | local | ✅ | Khởi tạo bằng 0 ⇒ identity; có `film_deviation` để bắt collapse |
 | 4 | CRD loss + bank negative | local | ✅ | **Chốt dừng đã bật và đã xử lý** — xem bên dưới |
-| 5 | Teacher trên noise sạch + bank | molab | ⬜ | **Bỏ bước dedup** — xem Task 1 |
+| 5 | Teacher trên noise sạch + bank | molab | 🟡 | Notebook xong, **chờ user chạy trên molab**. Không dedup — xem Task 1 |
 | 6 | Student run 2 (CE only) | molab | ⬜ | Control quan trọng nhất |
 | 7 | Student run 3 (+KD+CRD) | molab | ⬜ | |
 | 8 | Student run 4 (remix) | local + molab | ⬜ | **Đã mở khoá** — `LINEAR_OK=True` |
