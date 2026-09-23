@@ -32,7 +32,9 @@ Tất cả trong `SNR_Aware/Mid_Expert/` trên nhánh **`mid-expert`**:
 | `STATUS.md` | File này. Tiến độ + handoff. | ✅ |
 | `mid_expert_lib.py` | Hàm thuần, test local được. | ✅ |
 | `test_mid_expert.py` | Unit test local — `python test_mid_expert.py` → 16 passed. | ✅ |
-| `main.py` + `tasks/run_36.py` + `config/train_config.json` | Deliverable Task 5, chạy trên molab bằng `nohup` | 🟡 |
+| `main.py` + `tasks/run_36.py` | Stage `teacher36`, `bank36` | ✅ |
+| `tasks/student_36.py` | Stage `student36`, `test36` — dùng chung code path cho run 2/3/4 | 🟡 |
+| `config/train_config.json` | Toàn bộ tham số. Đổi `run` + `loss.a_kd` + `loss.b_crd` để chuyển giữa các run | ✅ |
 | `README.md` | Lệnh chạy, các stage, ý nghĩa chốt dừng | ✅ |
 
 **Molab lấy code bằng cách clone repo**, nên mọi thứ cần chạy đều phải commit + push lên nhánh `mid-expert`. `.gitignore` đã chặn `*.pt`, nên checkpoint và bank teacher không vào git — chúng sinh ra và ở lại trên molab.
@@ -70,8 +72,8 @@ Task molab không "xong" khi code viết xong — chỉ xong khi có output th�
 | 3 | FiLM conditioning | local | ✅ | Khởi tạo bằng 0 ⇒ identity; có `film_deviation` để bắt collapse |
 | 4 | CRD loss + bank negative | local | ✅ | **Chốt dừng đã bật và đã xử lý** — xem bên dưới |
 | 5 | Teacher trên noise sạch + bank | molab | ✅ | **acc 0.7799, GATE=PASS**, bank 43.200 hàng verify xong |
-| 6 | Student run 2 (CE only) | molab | ⬜ | Control quan trọng nhất |
-| 7 | Student run 3 (+KD+CRD) | molab | ⬜ | |
+| 6 | Student run 2 (CE only) | molab | 🟡 | Code xong, **chờ chạy**. Control quan trọng nhất |
+| 7 | Student run 3 (+KD+CRD) | molab | 🟡 | Cùng code path với run 2, chỉ đổi `a_kd=1.0, b_crd=0.8` |
 | 8 | Student run 4 (remix) | local + molab | ⬜ | **Đã mở khoá** — `LINEAR_OK=True` |
 | 9 | Báo cáo + ablation | molab | ⬜ | |
 

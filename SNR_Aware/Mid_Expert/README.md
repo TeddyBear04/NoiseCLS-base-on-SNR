@@ -58,8 +58,44 @@ train, 1 epoch), xong rồi mới đặt lại `false`.
 |---|---|---|
 | `teacher36` | Train teacher trên noise sạch: head trên embedding đóng băng, rồi finetune 12 block | `artifacts/teacher_noise_best.pt`, `teacher_history.json`, `teacher_summary.json` |
 | `bank36` | Precompute embedding + logits của teacher cho **cả 43.200 hàng** | `artifacts/teacher_bank.pt` |
+| `student36` | Train student trên mixture, toàn dải SNR, FiLM theo SNR | `artifacts/student_<run>.pt`, `student_<run>_history.json` |
+| `test36` | Chấm student trên test, tách riêng lát mid và từng mức SNR | `student_<run>_test.json`, `student_<run>_predictions.npz` |
 
 `teacher36` **thoát với mã 2** nếu chốt dừng bật, nên `set -e` sẽ chặn `bank36` chạy tiếp.
+
+Teacher đã chạy xong (acc 0.7799, `GATE=PASS`), nên vòng tiếp theo chỉ cần:
+
+```bash
+nohup bash -c '
+set -e
+python -u main.py student36 --config config/train_config.json
+python -u main.py test36    --config config/train_config.json
+' > run2.log 2>&1 &
+
+tail -f run2.log
+```
+
+### Các run
+
+`run2` → `run3` → `run4` chạy **cùng một code path**, chỉ khác config. Cố ý như vậy:
+nếu control và treatment đi qua hai nhánh code khác nhau thì chênh lệch giữa chúng có
+thể đến từ code chứ không phải phương pháp, và ablation mất ý nghĩa.
+
+| Run | `run` | `a_kd` | `b_crd` | `remix` | Trả lời câu hỏi |
+|---|---|---|---|---|---|
+| 2 | `run2_ce_only` | 0.0 | 0.0 | off | Bao nhiêu phần cải thiện chỉ do có thêm data — **control quan trọng nhất** |
+| 3 | `run3_kd_crd` | 1.0 | 0.8 | off | CRD + KD có đáng không |
+| 4 | `run4_remix` | 1.0 | 0.8 | on | Augment có cộng dồn không |
+
+Không có run 2 thì không phát biểu được gì về run 3.
+
+Mỗi epoch in **tách riêng `ce`, `kd`, `crd`**. Nếu `crd` không giảm thì phần contrastive
+không học được gì, và mọi cải thiện là do KD cộng data — cần biết điều đó trước khi viết
+kết luận.
+
+Cũng in `film_dev` mỗi epoch. Nếu nó đứng ở 0 thì FiLM đã sụp về identity và run này thực
+chất là "baseline train lại" — vẫn là control hợp lệ, nhưng phải nói đúng như vậy trong
+báo cáo thay vì nhận là điều kiện hoá theo SNR có tác dụng.
 
 ## Chốt dừng
 

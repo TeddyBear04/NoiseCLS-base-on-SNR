@@ -28,8 +28,15 @@ from torch.utils.data import DataLoader, Dataset, TensorDataset
 
 HERE = Path(__file__).resolve().parent.parent
 BEATS_PROJECT = HERE.parent / "BEATs_Experts"
-if str(BEATS_PROJECT) not in sys.path:
-    sys.path.insert(0, str(BEATS_PROJECT))
+
+# Order matters. Both projects have a `config/` directory, and `train_beats_head`
+# does `from config.paths import BEATS_CHECKPOINT` — so BEATs_Experts has to come
+# first or our own `config/` shadows it and that import dies. Our code never
+# imports `config` as a module; it reads the JSON by path.
+for _path in (HERE, BEATS_PROJECT):
+    if str(_path) in sys.path:
+        sys.path.remove(str(_path))
+    sys.path.insert(0, str(_path))
 
 from noise_pipeline.mix_data import load_float_audio, load_mix_manifest  # noqa: E402
 from train_beats_head import initialize_head, load_beats, metrics  # noqa: E402
@@ -112,7 +119,7 @@ class NoiseOnlyDataset(Dataset):
 class Corpus:
     """Manifest, labels, and the row-order the bank must preserve."""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, column: str | None = None):
         dataset = config["dataset"]
         self.root = Path(dataset["path"])
         self.rows = load_mix_manifest(self.root)
@@ -123,7 +130,7 @@ class Corpus:
         self.index_of = {id(row): i for i, row in enumerate(self.rows)}
         self.samples = int(dataset["clip_seconds"] * dataset["sample_rate"])
         self.rate = dataset["sample_rate"]
-        self.column = config["teacher"]["source_column"]
+        self.column = column or config["teacher"]["source_column"]
         self.by_split: dict[str, list] = {}
         for row in self.rows:
             self.by_split.setdefault(row["split"], []).append(row)
@@ -577,17 +584,29 @@ def command_bank36(config: dict) -> None:
           flush=True)
 
 
-COMMANDS = {"teacher36": command_teacher36, "bank36": command_bank36}
+STAGES = ("teacher36", "bank36", "student36", "test36")
+
+
+def resolve_stage(name: str):
+    """Look the stage up lazily — ``student_36`` imports from this module, so binding
+    its commands at import time would be a cycle."""
+    if name == "teacher36":
+        return command_teacher36
+    if name == "bank36":
+        return command_bank36
+    from tasks import student_36
+    return {"student36": student_36.command_student36,
+            "test36": student_36.command_test36}[name]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=sorted(COMMANDS))
+    parser.add_argument("stage", choices=STAGES)
     parser.add_argument("--config", type=Path, default=HERE / "config/train_config.json")
     arguments = parser.parse_args()
     config = load_config(arguments.config)
     print(f"stage={arguments.stage} config={arguments.config}", flush=True)
-    COMMANDS[arguments.stage](config)
+    resolve_stage(arguments.stage)(config)
 
 
 if __name__ == "__main__":

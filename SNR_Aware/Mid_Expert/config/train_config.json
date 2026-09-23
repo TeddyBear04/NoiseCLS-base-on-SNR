@@ -43,10 +43,47 @@
     "patience": 3,
     "workers": 4
   },
+  "run": "run2_ce_only",
+
+  "mid_band_db": [5.0, 10.0],
+
+  "student": {
+    "source_column": "mixture_path",
+    "finetune_epochs": 8,
+    "trainable_blocks": 12,
+    "head_lr": 0.0001,
+    "encoder_lr": 0.00001,
+    "film_lr": 0.001,
+    "batch_size": 32,
+    "validation_batch_size": 64,
+    "accumulation_steps": 1,
+    "gradient_clip_norm": 5.0,
+    "patience": 3,
+    "workers": 4,
+    "film": {
+      "enabled": true,
+      "hidden": 128,
+      "snr_jitter_db": 2.0,
+      "placement": "pooled"
+    }
+  },
+
+  "loss": {
+    "r_ce": 1.0,
+    "a_kd": 0.0,
+    "b_crd": 0.0,
+    "rho_kd": 4.0,
+    "tau_nce": 0.07,
+    "proj_dim": 128,
+    "n_negatives": 4096,
+    "negative_mode": "different_label",
+    "_note": "run2 = a_kd 0, b_crd 0. run3 = a_kd 1.0, b_crd 0.8. Values come from the CRD reference repo (-r 1 -a 1 -b 0.8); do not invent replacements. rho=4 measured 60% of maximum soft-label entropy on this teacher; rho=8 measured 94% and would teach noise."
+  },
+
   "gates": {
     "teacher_acc_floor": 0.75,
-    "teacher_acc_ceiling": 0.95,
-    "baseline_mid_accuracy": 0.6681
+    "baseline_mid_accuracy": 0.6681,
+    "baseline_mid_macro_f1": 0.6602
   },
   "outputs": {
     "dir": "artifacts",
