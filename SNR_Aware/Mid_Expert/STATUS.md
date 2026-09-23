@@ -72,7 +72,7 @@ Task molab không "xong" khi code viết xong — chỉ xong khi có output th�
 | 3 | FiLM conditioning | local | ✅ | Khởi tạo bằng 0 ⇒ identity; có `film_deviation` để bắt collapse |
 | 4 | CRD loss + bank negative | local | ✅ | **Chốt dừng đã bật và đã xử lý** — xem bên dưới |
 | 5 | Teacher trên noise sạch + bank | molab | ✅ | **acc 0.7799, GATE=PASS**, bank 43.200 hàng verify xong |
-| 6 | Student run 2 (CE only) | molab | 🟡 | Code xong, **chờ chạy**. Control quan trọng nhất |
+| 6 | Student run 2 (CE only) | molab | ✅ | **test mid 0.6657 / 0.6565, hoà baseline (−0.24pt)** |
 | 7 | Student run 3 (+KD+CRD) | molab | 🟡 | Cùng code path với run 2, chỉ đổi `a_kd=1.0, b_crd=0.8` |
 | 8 | Student run 4 (remix) | local + molab | ⬜ | **Đã mở khoá** — `LINEAR_OK=True` |
 | 9 | Báo cáo + ablation | molab | ⬜ | |
@@ -220,11 +220,52 @@ Teacher thuộc *nhãn*, nhưng biểu diễn của nó vẫn mã hoá quan hệ
 | BEATs baseline | 0.6806 | 0.6556 | 0.6681 | 0.6602 | — |
 | Mid expert cũ | 0.6787 | 0.6444 | 0.6616 | 0.6547 | −0.0065 |
 | **Teacher (noise sạch)** | — | — | **0.7799** | **0.7795** | **+0.1118 = trần trên** |
-| Run 2 (CE, full data) | | | | | |
+| **Run 2 (CE, full data + FiLM)** | 0.6694 | 0.6620 | **0.6657** | **0.6565** | **−0.0024** |
 | Run 3 (+KD+CRD) | | | | | |
 | Run 4 (+remix) | | | | | |
 
 ---
+
+### Task 6 — run 2 (✅ chạy trên molab, 2026-09-24)
+
+```
+best val_mid_accuracy = 0.6935   val_mid_macro_f1 = 0.6925
+test mid accuracy     = 0.6657   macro_f1        = 0.6565
+                        baseline  0.6681           0.6602
+                        delta    −0.0024          −0.0037
+per_snr: 5 dB → 0.6694,  10 dB → 0.6620
+```
+
+Dự đoán trước khi chạy là 0.665–0.678; thực tế 0.6657, mép dưới nhưng trong khoảng.
+
+#### ⚠️ Chênh lệch validation–test 2.8 điểm
+
+`val_mid 0.6935` so với `test_mid 0.6657`. Checkpoint được chọn theo chính lát mid của
+validation qua 8 epoch, nên con số validation **bị thiên lệch lạc quan** và **không được
+đưa vào báo cáo**. Chỉ báo cáo test.
+
+Thiên lệch này áp cho mọi run như nhau, nên so run 3 với run 2 **trên test** vẫn công
+bằng. Đừng bao giờ so val của run này với test của run kia.
+
+#### ⚠️ Giả thuyết "đói dữ liệu" không đứng vững
+
+| | acc lát mid | dữ liệu train |
+|---|---|---|
+| Mid expert cũ | 0.6616 | 10.080 clip (chỉ mid) |
+| Run 2 | 0.6657 | 30.240 clip (mọi SNR) |
+| Baseline | 0.6681 | 30.240 clip (mọi SNR) |
+
+Gấp **3 lần dữ liệu** chỉ đổi được **+0.41 điểm** — nằm gọn trong nhiễu (±1.0). DESIGN.md
+§1 nêu hai nguyên nhân khiến mid expert cũ thua; **nguyên nhân "đói dữ liệu" giờ đo được
+là không đáng kể**. Cộng thêm FiLM và việc chọn checkpoint theo lát mid cũng không kéo
+được gì.
+
+Điều này làm thí nghiệm **sạch hơn**, không phải tệ hơn: toàn bộ gánh nặng chuyển sang
+KD + CRD. Nếu run 3 vượt baseline thì đó là **privileged information** làm nên chuyện,
+không phải dữ liệu, không phải FiLM, không phải cách chọn checkpoint. Control đã loại
+xong ba biến gây nhiễu.
+
+Trong báo cáo: đừng viết "expert cũ thua vì thiếu dữ liệu". Số liệu nói ngược.
 
 ## Ý nghĩa thống kê — bắt buộc cho Task 9
 
