@@ -1,4 +1,4 @@
-"""Task 6/7/8 — train the student on mixtures across every SNR.
+"""Task 6/7/8  -  train the student on mixtures across every SNR.
 
     python -u main.py student36 --config config/train_config.json
     python -u main.py test36    --config config/train_config.json
@@ -34,7 +34,7 @@ class StudentModel(nn.Module):
 
     ``forward`` returns the pooled embedding alongside the logits because the CRD
     term needs it. FiLM sits on the pooled embedding rather than inside the encoder
-    blocks — see the deviation list in STATUS.md; the paper conditions at several
+    blocks  -  see the deviation list in STATUS.md; the paper conditions at several
     layers, and doing that here would mean patching the vendored BEATs.
     """
 
@@ -57,7 +57,7 @@ def jitter_snr(snr_db: torch.Tensor, sigma_db: float, generator: torch.Generator
 
     Training on the true SNR and testing on a regressed one would leave the student
     brittle in exactly the place it has to work. sigma is an ASSUMPTION until the
-    gate exists and its RMSE is known — see STATUS.md.
+    gate exists and its RMSE is known  -  see STATUS.md.
     """
     if sigma_db <= 0:
         return snr_db
@@ -105,6 +105,16 @@ class TeacherBank:
     """
 
     def __init__(self, path: Path, device: torch.device, proj_dim: int, seed: int):
+        if not Path(path).exists():
+            raise FileNotFoundError(
+                f"{path} is missing, and KD or CRD needs it.\n"
+                "Rebuild it with:  python -u main.py bank36 --config <config>\n"
+                "That is one inference pass over the manifest, not a retrain. The teacher\n"
+                "is frozen, so the rebuilt bank is identical to the original. It only needs\n"
+                "artifacts/teacher_noise_best.pt to still exist. If that is gone too, the\n"
+                "teacher has to be retrained with `main.py teacher36` first.\n"
+                "Note `*.pt` is gitignored, so these files never travel with the repo."
+            )
         payload = torch.load(path, map_location="cpu", weights_only=False)
         self.z = payload["z"].to(device).float()
         self.logits = payload["logits"].to(device).float()
@@ -157,7 +167,7 @@ def command_student36(config: dict) -> None:
     if config["runtime"]["smoke_test"]:
         train_rows = train_rows[:config["runtime"]["smoke_train_rows"]]
         validation_rows = validation_rows[:config["runtime"]["smoke_validation_rows"]]
-        print("SMOKE TEST — results are not reportable", flush=True)
+        print("SMOKE TEST  -  results are not reportable", flush=True)
 
     use_kd = loss_config["a_kd"] > 0
     use_crd = loss_config["b_crd"] > 0
@@ -311,7 +321,7 @@ def command_student36(config: dict) -> None:
           f"val_mid_macro_f1={best['mid']['macro_f1']:.4f}", flush=True)
 
     if model.film is not None and history and history[-1]["film_deviation"] < 1e-3:
-        print("NOTE film_deviation stayed at zero — FiLM collapsed to identity and this "
+        print("NOTE film_deviation stayed at zero  -  FiLM collapsed to identity and this "
               "run is effectively 'baseline retrained'. Still a valid control; say so "
               "in the report rather than claiming SNR conditioning did anything.",
               flush=True)
@@ -346,7 +356,7 @@ def command_test36(config: dict) -> None:
     corpus = Corpus(config, column="mixture_path")
     checkpoint_path = out_dir / f"student_{run_name}.pt"
     if not checkpoint_path.exists():
-        raise FileNotFoundError(f"{checkpoint_path} is missing — run `main.py student36` first.")
+        raise FileNotFoundError(f"{checkpoint_path} is missing  -  run `main.py student36` first.")
     saved = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
     model, _ = build_student(config, corpus, device)

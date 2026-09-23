@@ -1,12 +1,12 @@
-"""Task 5 — train the teacher on clean noise, then precompute its embedding bank.
+"""Task 5  -  train the teacher on clean noise, then precompute its embedding bank.
 
 Two stages, run as two commands so a failure in one does not cost the other:
 
     python -u main.py teacher36 --config config/train_config.json
     python -u main.py bank36    --config config/train_config.json
 
-The teacher sees ``noise_path`` — the clean noise waveform. That is privileged
-information (Lopez-Paz, Bottou, Schölkopf, Vapnik, ICLR 2016): it exists only at
+The teacher sees ``noise_path``  -  the clean noise waveform. That is privileged
+information (Lopez-Paz, Bottou, Scholkopf, Vapnik, ICLR 2016): it exists only at
 training time. The student trained later sees the mixture and nothing else, so
 nothing here leaks into inference.
 """
@@ -30,7 +30,7 @@ HERE = Path(__file__).resolve().parent.parent
 BEATS_PROJECT = HERE.parent / "BEATs_Experts"
 
 # Order matters. Both projects have a `config/` directory, and `train_beats_head`
-# does `from config.paths import BEATS_CHECKPOINT` — so BEATs_Experts has to come
+# does `from config.paths import BEATS_CHECKPOINT`  -  so BEATs_Experts has to come
 # first or our own `config/` shadows it and that import dies. Our code never
 # imports `config` as a module; it reads the JSON by path.
 for _path in (HERE, BEATS_PROJECT):
@@ -59,7 +59,7 @@ def resolve_pretrained(candidates: list[str]) -> Path:
         print(f"  not found: {path}", flush=True)
     raise FileNotFoundError(
         "No BEATs pretrained checkpoint found.\n"
-        "`*.pt` is gitignored, so it never arrives with `git clone` — the file has to be\n"
+        "`*.pt` is gitignored, so it never arrives with `git clone`  -  the file has to be\n"
         "on this machine already. Add the right path to pretrained.candidates in the config."
     )
 
@@ -90,7 +90,7 @@ class NoiseOnlyDataset(Dataset):
 
     ``row_index`` is what keeps the bank aligned with ``manifest.csv``. The student
     looks the bank up by that index; a one-row shift would pair every mixture with
-    some other clip's noise and raise nothing at all — the run would just score
+    some other clip's noise and raise nothing at all  -  the run would just score
     worse and the method would take the blame.
     """
 
@@ -372,7 +372,7 @@ def soft_label_report(logits: torch.Tensor, rho: float) -> dict:
 
     This is the number KD actually consumes, and it is NOT the same thing as
     validation accuracy. The 2026-09-24 run made that concrete: the teacher hit
-    train accuracy 1.0000 with train loss 0.0001 — total memorisation — while
+    train accuracy 1.0000 with train loss 0.0001  -  total memorisation  -  while
     validation accuracy sat at 0.7799 and the accuracy gate happily said PASS.
     Accuracy cannot see memorisation; entropy can.
     """
@@ -385,7 +385,7 @@ def soft_label_report(logits: torch.Tensor, rho: float) -> dict:
 
 
 def report_gate(accuracy: float, config: dict, train_logits: torch.Tensor | None = None) -> str:
-    """The stop gate from DESIGN.md §10. Prints a verdict the log makes obvious."""
+    """The stop gate from DESIGN.md ?10. Prints a verdict the log makes obvious."""
     gates = config["gates"]
     floor = gates["teacher_acc_floor"]
     baseline = gates["baseline_mid_accuracy"]
@@ -403,7 +403,7 @@ def report_gate(accuracy: float, config: dict, train_logits: torch.Tensor | None
                   f"entropy={r['entropy']:.4f}/{r['entropy_max']:.4f} ({share:.0%})",
                   flush=True)
         print("  Pick rho so entropy lands near 50-70% of the maximum. Measured on the\n"
-              "  2026-09-24 teacher, rho=4 gave 60% while rho=8 gave 94% — nearly uniform,\n"
+              "  2026-09-24 teacher, rho=4 gave 60% while rho=8 gave 94%  -  nearly uniform,\n"
               "  which teaches noise rather than class similarity. Higher is NOT safer.",
               flush=True)
 
@@ -435,7 +435,7 @@ def command_teacher36(config: dict) -> None:
     if runtime["smoke_test"]:
         train_rows = train_rows[:runtime["smoke_train_rows"]]
         validation_rows = validation_rows[:runtime["smoke_validation_rows"]]
-        print("SMOKE TEST — results are not reportable", flush=True)
+        print("SMOKE TEST  -  results are not reportable", flush=True)
     print(f"device={device} teacher_train={len(train_rows)} "
           f"validation={len(validation_rows)} dedup={teacher['dedup']}", flush=True)
 
@@ -495,7 +495,7 @@ def command_teacher36(config: dict) -> None:
 def command_bank36(config: dict) -> None:
     """Precompute the teacher's embeddings and logits for EVERY manifest row.
 
-    The teacher is frozen from here on, so this bank is exact and never goes stale —
+    The teacher is frozen from here on, so this bank is exact and never goes stale  - 
     unlike the rolling memory buffer the CRD reference has to use.
     """
     device = seed_everything(config["experiment"]["seed"])
@@ -508,7 +508,7 @@ def command_bank36(config: dict) -> None:
     checkpoint_path = out_dir / outputs["checkpoint"]
     if not checkpoint_path.exists():
         raise FileNotFoundError(
-            f"{checkpoint_path} is missing — run `main.py teacher36` first."
+            f"{checkpoint_path} is missing  -  run `main.py teacher36` first."
         )
     saved = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
@@ -568,7 +568,7 @@ def command_bank36(config: dict) -> None:
     print(f"\nteacher accuracy on TRAIN rows = {train_accuracy:.4f}", flush=True)
     if train_accuracy > 0.99:
         print("  The teacher has memorised the training set. That is expected with 12\n"
-              "  trainable blocks, and it does not sink KD — measured on 2026-09-24 the\n"
+              "  trainable blocks, and it does not sink KD  -  measured on 2026-09-24 the\n"
               "  dark knowledge still matched the real validation confusion structure\n"
               "  (cosine 0.42, top-1 confusion agreement 26.5% against 2.9% by chance).\n"
               "  What it does mean is that temperature is doing the work, so check it:",
@@ -588,7 +588,7 @@ STAGES = ("teacher36", "bank36", "student36", "test36")
 
 
 def resolve_stage(name: str):
-    """Look the stage up lazily — ``student_36`` imports from this module, so binding
+    """Look the stage up lazily  -  ``student_36`` imports from this module, so binding
     its commands at import time would be a cycle."""
     if name == "teacher36":
         return command_teacher36
