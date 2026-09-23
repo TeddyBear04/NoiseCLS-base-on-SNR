@@ -69,13 +69,23 @@ Task molab không "xong" khi code viết xong — chỉ xong khi có output th�
 | 2 | CONFIG + `mid_slice_mask` / `normalize_snr` | local | ✅ | 16 test pass |
 | 3 | FiLM conditioning | local | ✅ | Khởi tạo bằng 0 ⇒ identity; có `film_deviation` để bắt collapse |
 | 4 | CRD loss + bank negative | local | ✅ | **Chốt dừng đã bật và đã xử lý** — xem bên dưới |
-| 5 | Teacher trên noise sạch + bank | molab | 🟡 | Notebook xong, **chờ user chạy trên molab**. Không dedup — xem Task 1 |
+| 5 | Teacher trên noise sạch + bank | molab | ✅ | **acc 0.7799, GATE=PASS**, bank 43.200 hàng verify xong |
 | 6 | Student run 2 (CE only) | molab | ⬜ | Control quan trọng nhất |
 | 7 | Student run 3 (+KD+CRD) | molab | ⬜ | |
 | 8 | Student run 4 (remix) | local + molab | ⬜ | **Đã mở khoá** — `LINEAR_OK=True` |
 | 9 | Báo cáo + ablation | molab | ⬜ | |
 
-**Bước kế tiếp:** viết `mid_expert.ipynb` cho Task 5 (teacher trên noise sạch + bank), push, rồi user clone về molab chạy. Chốt dừng: acc teacher < 0.75 thì **dừng hẳn và hỏi** — tiền đề privileged-information sụp.
+**Bước kế tiếp:** Task 6 — student run 2 (chỉ CE, full SNR, có FiLM). Đây là **control quan trọng nhất**: không có nó thì không phát biểu được gì về CRD ở run 3.
+
+Dự đoán để đối chiếu sau (ghi trước khi chạy, để khỏi tự lừa mình):
+
+| Run | acc lát mid dự kiến | vs baseline 0.6681 |
+|---|---|---|
+| Run 2 (CE, full data + FiLM) | 0.665 – 0.678 | ≈ 0, ±0.5pt |
+| Run 3 (+KD+CRD) | 0.672 – 0.690 | +0.5 đến +2pt |
+| Run 4 (+remix) | 0.675 – 0.695 | +1 đến +3pt |
+
+Dự đoán teacher trước đó là 0.76–0.78; thực tế 0.7799 — trúng mép trên.
 
 ## Hai chốt dừng
 
@@ -134,10 +144,72 @@ Thiếu bước 2 ⇒ giá trị vào critic là exponential thô chứ không p
 
 Hệ quả: `b=0.8` của repo CRD **dùng được nguyên xi**, và mục lệch-paper #4 **không phát sinh**.
 
-### Task 5 — teacher (trần trên)
+### Task 5 — teacher (✅ chạy trên molab, 2026-09-24)
+
+```json
+{
+  "teacher_val_accuracy": 0.7799,
+  "teacher_val_macro_f1": 0.7795,
+  "teacher_gate": "PASS",
+  "audit": { "rows": 43200, "unique_source": 30240, "reuse_ratio": 1.0 }
+}
 ```
-chưa chạy
+
+Bank: `z=(43200, 768)`, `logits=(43200, 36)`, 69 MB, assert alignment **pass**.
+
+**Trần trên = 0.7799.** Khoảng trống so với baseline trên lát mid: **+11.2 điểm**
+(0.7799 − 0.6681). `reuse_ratio = 1.0` xác nhận quyết định không dedup là đúng.
+
+Đối chiếu: bản `BEATs/B_Noise_only/` cũ đạt 0.7528 với 2 block trainable. Recipe 12 block
+ở đây được **+2.7 điểm**, nên phần finetune sâu là đáng.
+
+#### Đường cong — hai điều đáng chú ý
+
 ```
+head  val_f1 : [0.7694, 0.766, 0.7593, 0.7429, ... 0.7367]   ← đỉnh ngay epoch 1
+ft train_acc : [0.9588, 0.9995, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+ft train_loss: [0.1683, 0.01, 0.0026, 0.0011, 0.0006, 0.0003, 0.0002, 0.0001]
+ft val_acc   : [0.7792, 0.7781, 0.7759, 0.7789, 0.7799, 0.7787, 0.7787, 0.7773]
+```
+
+1. **Giai đoạn head đạt đỉnh ở epoch 1 rồi tụt đều.** Warm-start từ hàng predictor
+   AudioSet đã gần tối ưu sẵn; train thêm chỉ làm hỏng. 11 epoch chạy để lấy epoch 1.
+   Với student có thể hạ `head_patience` xuống 3.
+2. **Teacher thuộc lòng tập train từ epoch 3** — train acc 1.0000, loss 0.0001, trong khi
+   val đứng yên 0.776–0.780. Khoảng cách tổng quát hoá 22 điểm. Toàn bộ phần finetune
+   đóng góp (+1.05 điểm so với head) đến ở epoch 1; epoch 2–8 không thêm gì.
+
+### ⚠️ Gate đo nhầm đại lượng — đã sửa
+
+Gate kiểm tra **validation accuracy** (0.7799 → PASS). Nhưng KD tiêu thụ logits của
+teacher trên chính **các hàng train**, nơi teacher đã thuộc lòng. Accuracy không nhìn
+thấy được việc thuộc lòng; entropy thì có.
+
+Đo trên bank, 30.240 hàng train:
+
+| ρ | max_prob | entropy / 3.5835 | |
+|---|---|---|---|
+| 1 | 0.9996 | 0.0036 (0%) | one-hot tuyệt đối |
+| 2 | 0.9582 | 0.2746 (8%) | |
+| **4** | **0.5490** | **2.1665 (60%)** | **vùng hợp lý** |
+| 8 | 0.1683 | 3.3640 (94%) | gần như đều — dạy nhiễu |
+| 16 | 0.0712 | 3.5473 (99%) | |
+
+**Lời khuyên `RAISE_RHO` cũ của tôi là có hại và đã bị gỡ.** DESIGN.md §10 và gate bảo
+"teacher quá mạnh thì nâng ρ lên 8"; đo thật thì ρ=8 đẩy phân phối về 94% entropy tối đa,
+KD sẽ dạy nhiễu thay vì quan hệ giữa các lớp. **ρ cao hơn KHÔNG an toàn hơn.**
+
+### KD vẫn dùng được — đã kiểm chứng
+
+Lo "teacher thuộc lòng ⇒ soft label vô dụng" là **sai**. Đo cấu trúc dark knowledge trên
+TRAIN (ρ=4) so với cấu trúc nhầm lẫn thật trên VALID:
+
+- cosine trung bình: **0.42**
+- đoán đúng lớp bị nhầm nhiều nhất: **26.5%** vs ngẫu nhiên 2.9% — gấp **9 lần**
+- và có nghĩa âm học: Trumpet→Clarinet, Tearing↔Scissors, Writing→Scissors
+
+Teacher thuộc *nhãn*, nhưng biểu diễn của nó vẫn mã hoá quan hệ giống nhau giữa các lớp —
+đúng thứ KD cần. **Giữ `ρ=4`, `a_kd=1.0`, `b_crd=0.8` như kế hoạch.**
 
 ### Bảng so sánh chính
 
@@ -145,12 +217,59 @@ chưa chạy
 |---|---|---|---|---|---|
 | BEATs baseline | 0.6806 | 0.6556 | 0.6681 | 0.6602 | — |
 | Mid expert cũ | 0.6787 | 0.6444 | 0.6616 | 0.6547 | −0.0065 |
-| Teacher (noise sạch) | — | — | — | — | _trần trên_ |
+| **Teacher (noise sạch)** | — | — | **0.7799** | **0.7795** | **+0.1118 = trần trên** |
 | Run 2 (CE, full data) | | | | | |
 | Run 3 (+KD+CRD) | | | | | |
 | Run 4 (+remix) | | | | | |
 
 ---
+
+## Ý nghĩa thống kê — bắt buộc cho Task 9
+
+Lát mid của test chỉ có **2.160 clip**. Sai số chuẩn của accuracy ở vùng p≈0.67 là
+
+```
+sqrt(0.67 × 0.33 / 2160) ≈ 0.0101  →  ±1.0 điểm
+```
+
+Mức cải thiện dự kiến của run 3 là +0.5 đến +2 điểm, tức **nằm trong hoặc sát nhiễu** nếu
+so theo kiểu hai mẫu độc lập. Chính việc mid expert cũ thua 0.65 điểm cũng nằm trong đó.
+
+**Task 9 phải dùng kiểm định McNemar theo cặp**, không so hai tỉ lệ. Mọi model đều chấm
+trên đúng 2.160 clip giống nhau, nên chỉ cần đếm số clip mà hai model bất đồng:
+
+```
+b = số clip A đúng, B sai
+c = số clip A sai,  B đúng
+χ² = (|b − c| − 1)² / (b + c)     # hiệu chỉnh liên tục, 1 bậc tự do
+```
+
+Nhạy hơn hẳn vì bỏ qua phần lớn clip mà cả hai cùng đúng hoặc cùng sai. Không có nó thì
+không được phát biểu "vượt baseline".
+
+## ⚠️ Số liệu phản bác một lập luận trong DESIGN.md §2
+
+Teacher đạt ~0.78 **phẳng đều ở mọi mức SNR** (per_snr: −5 → 0.7796, 20 → 0.7676), vì bài
+của nó là noise sạch, không phụ thuộc SNR. So với baseline theo từng mức:
+
+| SNR | baseline | teacher | khoảng trống |
+|---|---|---|---|
+| −5 | 0.7278 | ~0.78 | +5.2 |
+| 0 | 0.7083 | ~0.78 | +7.2 |
+| **5** | **0.6806** | ~0.78 | **+10.0** |
+| **10** | **0.6556** | ~0.78 | **+12.5** |
+| 15 | 0.6102 | ~0.78 | +17.0 |
+| 20 | 0.5315 | ~0.78 | +24.9 |
+
+Khoảng trống **tăng đơn điệu theo SNR**, lớn nhất ở 20 dB. DESIGN.md §2 lập luận mid là
+nơi CRD lợi nhất; đo thật thì phần còn để học nhiều nhất nằm ở **high SNR**.
+
+Lập luận của tôi dựa vào giả thuyết "ở 20 dB embedding quá xa để kéo về" — đã ghi trong
+§2 là phần ngoại suy chưa ai đo, và giờ nó còn đi ngược thứ duy nhất đo được.
+
+Không làm hỏng đồ án: phạm vi là nhánh mid, và mid vẫn có 10–12.5 điểm để khai thác.
+Nhưng **trong báo cáo đừng viết "mid là nơi phương pháp này phát huy tốt nhất"** — bảng
+trên phản bác ngay.
 
 ## Danh sách lệch khỏi paper (gom cho báo cáo)
 

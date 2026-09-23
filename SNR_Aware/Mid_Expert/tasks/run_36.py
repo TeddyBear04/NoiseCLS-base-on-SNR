@@ -360,26 +360,53 @@ def finetune(model, head, corpus, train_rows, validation_rows, device, config):
     return best, history, best_state
 
 
-def report_gate(accuracy: float, config: dict) -> str:
+def soft_label_report(logits: torch.Tensor, rho: float) -> dict:
+    """Confidence and entropy of the teacher's soft labels at temperature ``rho``.
+
+    This is the number KD actually consumes, and it is NOT the same thing as
+    validation accuracy. The 2026-09-24 run made that concrete: the teacher hit
+    train accuracy 1.0000 with train loss 0.0001 — total memorisation — while
+    validation accuracy sat at 0.7799 and the accuracy gate happily said PASS.
+    Accuracy cannot see memorisation; entropy can.
+    """
+    probabilities = torch.softmax(logits.float() / rho, dim=1)
+    entropy = -(probabilities * torch.log(probabilities + 1e-12)).sum(dim=1).mean()
+    return {"rho": rho,
+            "max_prob": float(probabilities.max(dim=1).values.mean()),
+            "entropy": float(entropy),
+            "entropy_max": float(np.log(logits.shape[1]))}
+
+
+def report_gate(accuracy: float, config: dict, train_logits: torch.Tensor | None = None) -> str:
     """The stop gate from DESIGN.md §10. Prints a verdict the log makes obvious."""
     gates = config["gates"]
-    floor, ceiling = gates["teacher_acc_floor"], gates["teacher_acc_ceiling"]
+    floor = gates["teacher_acc_floor"]
     baseline = gates["baseline_mid_accuracy"]
     print("", flush=True)
-    print(f"teacher val_accuracy      = {accuracy:.4f}", flush=True)
+    print(f"teacher val_accuracy       = {accuracy:.4f}", flush=True)
     print(f"BEATs baseline (mid slice) = {baseline:.4f}", flush=True)
     print(f"headroom                   = {accuracy - baseline:+.4f}", flush=True)
+
+    if train_logits is not None:
+        print("\nsoft labels on TRAIN rows (what KD reads):", flush=True)
+        for rho in (1.0, 2.0, 4.0, 8.0):
+            r = soft_label_report(train_logits, rho)
+            share = r["entropy"] / r["entropy_max"]
+            print(f"  rho={rho:>4}  max_prob={r['max_prob']:.4f}  "
+                  f"entropy={r['entropy']:.4f}/{r['entropy_max']:.4f} ({share:.0%})",
+                  flush=True)
+        print("  Pick rho so entropy lands near 50-70% of the maximum. Measured on the\n"
+              "  2026-09-24 teacher, rho=4 gave 60% while rho=8 gave 94% — nearly uniform,\n"
+              "  which teaches noise rather than class similarity. Higher is NOT safer.",
+              flush=True)
+
     if accuracy < floor:
-        print(f"GATE=STOP  accuracy below {floor:.2f}. The teacher sees CLEAN noise and "
+        print(f"\nGATE=STOP  accuracy below {floor:.2f}. The teacher sees CLEAN noise and "
               "still barely beats a baseline that sees the mixture, so the "
               "privileged-information premise has failed. Do not run the student.",
               flush=True)
         return "STOP"
-    if accuracy > ceiling:
-        print(f"GATE=RAISE_RHO  accuracy above {ceiling:.2f}. Soft labels are near one-hot "
-              "and KD will carry no information; set rho_kd=8 for the student.", flush=True)
-        return "RAISE_RHO"
-    print("GATE=PASS", flush=True)
+    print("\nGATE=PASS", flush=True)
     return "PASS"
 
 
@@ -525,6 +552,29 @@ def command_bank36(config: dict) -> None:
     print(f"bank -> {out_dir / outputs['bank']} ({megabytes:.0f} MB), "
           f"z={tuple(bank['z'].shape)} logits={tuple(bank['logits'].shape)}", flush=True)
     print("bank alignment verified against the manifest", flush=True)
+
+    # The soft labels KD will read. Validation accuracy cannot see memorisation,
+    # so check the temperature here, where every training row's logits exist.
+    train_mask = torch.tensor([r["split"] == config["dataset"]["train_split"] for r in rows])
+    train_logits = bank["logits"][train_mask].float()
+    train_accuracy = float((train_logits.argmax(1) == bank["y"][train_mask]).float().mean())
+    print(f"\nteacher accuracy on TRAIN rows = {train_accuracy:.4f}", flush=True)
+    if train_accuracy > 0.99:
+        print("  The teacher has memorised the training set. That is expected with 12\n"
+              "  trainable blocks, and it does not sink KD — measured on 2026-09-24 the\n"
+              "  dark knowledge still matched the real validation confusion structure\n"
+              "  (cosine 0.42, top-1 confusion agreement 26.5% against 2.9% by chance).\n"
+              "  What it does mean is that temperature is doing the work, so check it:",
+              flush=True)
+    for rho in (1.0, 2.0, 4.0, 8.0):
+        report = soft_label_report(train_logits, rho)
+        share = report["entropy"] / report["entropy_max"]
+        print(f"  rho={rho:>4}  max_prob={report['max_prob']:.4f}  "
+              f"entropy={report['entropy']:.4f}/{report['entropy_max']:.4f} ({share:.0%})",
+              flush=True)
+    print("  Aim for 50-70% of maximum entropy. rho=4 measured 60%; rho=8 measured 94%,\n"
+          "  which is nearly uniform and teaches noise. Higher temperature is NOT safer.",
+          flush=True)
 
 
 COMMANDS = {"teacher36": command_teacher36, "bank36": command_bank36}
