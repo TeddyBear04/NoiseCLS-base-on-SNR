@@ -8,14 +8,18 @@
 
 **Tech Stack:** PyTorch, BEATs (vendored tại `SNR_Aware/BEATs_Experts/models/beats/`), soundfile, torchaudio, scikit-learn. Chạy trên molab (GPU CUDA, bf16 khi có).
 
-**Spec:** `scratchpad/2026-09-24-mid-expert-design.md`
+**Spec:** `SNR_Aware/Mid_Expert/DESIGN.md`
+
+> **Tiến độ thật nằm ở `STATUS.md` — đọc file đó trước.** Plan này là tài liệu lập kế hoạch; một số chỗ đã bị thực tế lật (Task 1 đã chạy và bác bỏ giả định dedup; `crd_loss` ở Task 4 đã bị thay bằng `CRDLoss`). `STATUS.md` giữ danh sách cập nhật.
 
 ## Global Constraints
 
 Sao nguyên văn từ spec — mọi task đều ngầm chịu ràng buộc này:
 
-- **Không thêm/sửa file nào trong repo.** Toàn bộ deliverable nằm trong scratchpad. Code repo (`SNR_Aware/`) chỉ được **đọc** và import.
-- **Không dùng git.** Không commit, không branch, không backup.
+- **Deliverable nằm TRONG repo, tại `SNR_Aware/Mid_Expert/`, trên nhánh `mid-expert`.** Molab lấy code bằng cách clone repo, nên mọi thứ cần chạy đều phải commit + push. Các thư mục khác của repo chỉ được **đọc** và import.
+- **`.gitignore` đã chặn `*.pt`** — checkpoint và bank teacher không vào git; chúng sinh ra và ở lại trên molab.
+- **Local không có pytest.** Chạy test bằng `python test_mid_expert.py` (runner thuần ở cuối file), không `pip install`.
+- **Dataset có bản local** tại `36_labels/`, cùng schema với `/marimo/dataset/mix-dataset` — dùng được để audit và test nhỏ.
 - **Giao hàng là một notebook `.ipynb` mới**, CONFIG gộp trong **một cell duy nhất**, không tách file config riêng.
 - **Training chạy trên molab**, không chạy local, không `pip install`. Unit test cho hàm thuần thì chạy local được (torch có sẵn).
 - Pretrained: `BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt`.
@@ -405,6 +409,11 @@ Run: `python -m pytest test_mid_expert.py -k film -v` → 4 passed
 
 ### Task 4: CRD loss với bank negative tĩnh
 
+> ⚠️ **PHẦN `crd_loss` TRONG TASK NÀY ĐÃ BỊ THAY.** Bản rút gọn thiếu chuẩn hoá
+> phân hoạch `Z` của CRD nên loss lúc khởi tạo đo được 9066.96 (CE ≈ 3.58).
+> Bản đúng là class `CRDLoss` ở cuối Step 7. Các test ở Step 5 bên dưới viết theo
+> API hàm cũ — code thật trong `mid_expert_lib.py` dùng API module.
+
 Đây là phần dễ sai nhất trong cả plan. Sai ở đây thì run 3 sẽ ra kết quả vô nghĩa mà vẫn chạy trót lọt.
 
 **Files:**
@@ -414,7 +423,7 @@ Run: `python -m pytest test_mid_expert.py -k film -v` → 4 passed
 **Interfaces:**
 - Produces:
   - `mid_expert_lib.sample_negatives(labels: Tensor[B], bank_labels: Tensor[M], n: int, generator, mode: str) -> Tensor[B, n]` — chỉ số vào bank.
-  - `mid_expert_lib.crd_loss(z_s: Tensor[B, D], z_t_pos: Tensor[B, D], z_t_neg: Tensor[B, n, D], tau: float, dataset_size: int) -> Tensor[]` — đầu vào **đã L2-normalize**.
+  - `mid_expert_lib.CRDLoss(n_data: int, tau: float).forward(z_s: Tensor[B, D], z_t_pos: Tensor[B, D], z_t_neg: Tensor[B, m, D]) -> Tensor[]` — đầu vào **đã L2-normalize**. Là module chứ không phải hàm, vì phải giữ buffer `Z`.
   - `mid_expert_lib.Projection(in_dim: int, out_dim: int = 128)` — Linear + L2 norm.
 
 - [ ] **Step 1: Viết failing test cho lấy mẫu negative**
@@ -577,23 +586,65 @@ def crd_loss(
     z_t_pos  [B, D]     embedding teacher của CÙNG clip, đã L2-normalize
     z_t_neg  [B, N, D]  embedding teacher của N clip khác, đã L2-normalize
     """
-    n_neg = z_t_neg.shape[1]
-    ratio = n_neg / float(dataset_size)
-    eps = 1e-7
-
-    pos_logit = (z_s * z_t_pos).sum(dim=-1) / tau
-    neg_logit = torch.bmm(z_t_neg, z_s.unsqueeze(-1)).squeeze(-1) / tau
-
-    # h = e^l / (e^l + ratio) = sigmoid(l - log(ratio)) — dạng ổn định số học,
-    # tránh tràn khi l lớn.
-    shift = math.log(ratio)
-    h_pos = torch.sigmoid(pos_logit - shift)
-    h_neg = torch.sigmoid(neg_logit - shift)
-
-    log_pos = torch.log(h_pos + eps).mean()
-    log_neg = torch.log(1.0 - h_neg + eps).sum(dim=1).mean()
-    return -(log_pos + log_neg)
+    ...
 ```
+
+> ⚠️ **BẢN TRÊN ĐÃ BỊ THAY. ĐỪNG IMPLEMENT NÓ.**
+>
+> Bản rút gọn ban đầu bỏ mất bước chuẩn hoá phân hoạch `Z` của CRD, khiến loss
+> lúc khởi tạo đo được **9066.96** so với CE ≈ 3.58 — gấp 2531 lần. Đã đối chiếu
+> `HobbitLong/RepDistiller` (`crd/memory.py` + `crd/criterion.py`): pipeline thật
+> có **hai** bước, bản cũ chỉ có bước một.
+>
+> 1. `out = exp(⟨v, v'⟩ / T)`
+> 2. `out = out / Z`, với `Z = out.mean() · n_data`, tính **một lần** ở batch đầu
+>    rồi giữ cố định.
+>
+> Thiếu bước 2 thì giá trị vào critic là exponential thô chứ không phải xác suất,
+> nên `log(1 − h_neg)` không nằm gần 0 và cộng 4096 số hạng thì nổ.
+>
+> **Không chia số hạng negative cho `n_neg`.** Repo gốc cộng qua negative và chỉ
+> chia cho batch size — phần đó của plan vốn đã đúng. Chia cho `n_neg` mới là
+> lệch paper; implement `Z` là quay về đúng paper.
+
+Bản đúng, là một module vì nó phải giữ buffer `Z`:
+
+```python
+class CRDLoss(torch.nn.Module):
+    """Contrastive Representation Distillation (Tian, Krishnan, Isola, ICLR 2020).
+
+        P      = exp(<g_t, g_s> / tau) / Z        (Z cố định sau batch đầu)
+        Pn     = 1 / n_data
+        log_D1 = log( P_pos / (P_pos + m*Pn) )
+        log_D0 = log( m*Pn  / (P_neg + m*Pn) )
+        loss   = -(log_D1.sum() + log_D0.sum()) / batch_size
+    """
+
+    def __init__(self, n_data: int, tau: float = 0.07, eps: float = 1e-7) -> None:
+        super().__init__()
+        self.n_data, self.tau, self.eps = n_data, tau, eps
+        self.register_buffer("Z", torch.tensor(-1.0))
+
+    def forward(self, z_s, z_t_pos, z_t_neg):
+        # z_s [B, D], z_t_pos [B, D], z_t_neg [B, m, D] — đều đã L2-normalize
+        batch = z_s.shape[0]
+        m = z_t_neg.shape[1]
+        pos = torch.exp((z_s * z_t_pos).sum(-1, keepdim=True) / self.tau)
+        neg = torch.exp(torch.bmm(z_t_neg, z_s.unsqueeze(-1)).squeeze(-1) / self.tau)
+
+        if self.Z.item() < 0:
+            with torch.no_grad():
+                self.Z.fill_(torch.cat([pos, neg], dim=1).mean().item() * self.n_data)
+
+        p_pos, p_neg = pos / self.Z, neg / self.Z
+        pn = 1.0 / float(self.n_data)
+        log_d1 = torch.log(p_pos / (p_pos + m * pn + self.eps))
+        log_d0 = torch.log((m * pn) / (p_neg + m * pn + self.eps))
+        return -(log_d1.sum() + log_d0.sum()) / batch
+```
+
+Độ lớn kỳ vọng lúc khởi tạo ≈ `log(m+1)` ≈ 8.3 với `m=4096` — cùng thang với
+CE ≈ 3.58, nên `b=0.8` của repo CRD dùng được nguyên xi.
 
 `import math` phải có ở đầu `mid_expert_lib.py`.
 
@@ -618,7 +669,9 @@ def test_crd_loss_magnitude_is_not_dominated_by_negative_term():
 
 Run: `python -m pytest test_mid_expert.py -k magnitude -s -v`
 
-**Ghi lại con số in ra.** Nếu nó lớn hơn CE (~3.6 ở khởi tạo với 36 lớp) quá hai bậc độ lớn thì `b=0.8` của repo CRD không chuyển sang bài này được nguyên xi, và phải chuẩn hoá lại số hạng negative (chia cho `n_neg`) — **và phải ghi rõ trong báo cáo rằng đây là chỗ ta lệch khỏi repo gốc, kèm lý do**. Không im lặng đổi.
+**Đã chạy, 2026-09-24: đo được 9066.96 so với CE ≈ 3.58 — gấp 2531 lần.** Chốt dừng này đã bật.
+
+Nguyên nhân **không phải** `b=0.8` sai, mà là bản `crd_loss` rút gọn trong plan thiếu bước chuẩn hoá phân hoạch `Z` của CRD. Đã đối chiếu `HobbitLong/RepDistiller`. Cách xử lý đúng là **implement `Z`** (quay về đúng paper), **không** chia số hạng negative cho `n_neg` (đó mới là lệch paper). Xem `CRDLoss` ở Step 7. Sau khi sửa, độ lớn kỳ vọng ≈ `log(m+1)` ≈ 8.3 — cùng thang với CE, nên `b=0.8` dùng được nguyên xi và **không phát sinh mục lệch-paper nào**.
 
 ---
 
@@ -840,7 +893,7 @@ Lưu `run2_metrics.json`. **Nếu `film_deviation` gần 0 suốt quá trình** 
 - Modify: `mid_expert.ipynb`
 
 **Interfaces:**
-- Consumes: `teacher_bank.pt`, `Projection`, `crd_loss`, `sample_negatives`, `train_student` từ Task 6.
+- Consumes: `teacher_bank.pt`, `Projection`, `CRDLoss`, `sample_negatives`, `train_student` từ Task 6.
 - Produces: `student_run3.pt`, `run3_metrics.json`.
 
 - [ ] **Step 1: Nạp bank lên GPU một lần**
@@ -885,7 +938,7 @@ p_s   = g_s(z_s)                       # [B, 128]
 p_pos = bank_proj[row_index]           # [B, 128]
 neg_idx = sample_negatives(target.cpu(), bank_y, n_neg, gen, mode).to(device)
 p_neg = bank_proj[neg_idx]             # [B, n_neg, 128]
-crd = crd_loss(p_s, p_pos, p_neg, tau=tau, dataset_size=DATASET_SIZE)
+crd = crd_criterion(p_s, p_pos, p_neg)   # CRDLoss(n_data=DATASET_SIZE, tau=tau), tạo 1 lần trước vòng train
 
 loss = r_ce * ce + a_kd * kd + b_crd * crd
 ```
@@ -1050,4 +1103,4 @@ Theo thứ tự đáng làm (spec §7): (a) `b_crd=0` giữ KD; (b) `negative_mo
 - §3.2 nói FiLM đè lên 3 block cuối; đổi thành pooled embedding, ghi là lệch paper (Task 3).
 - §4.1 nói bank "không stale"; đúng với `z` nhưng không đúng với phần chiếu `g_t`, đã sửa lại cách diễn đạt (Task 7 Step 2).
 
-**Type consistency.** `mid_slice_mask(snr_db, low, high)`, `normalize_snr(snr_db)`, `FiLM(dim, hidden).forward(z, snr_db)`, `film_deviation(film)`, `Projection(in_dim, out_dim).forward(x)`, `sample_negatives(labels, bank_labels, n, generator, mode)`, `crd_loss(z_s, z_t_pos, z_t_neg, tau, dataset_size)`, `remix_at_snr(speech, noise, target_snr_db) -> (mixture, scaled_noise)` — dùng nhất quán ở Task 3, 4, 6, 7, 8. Bank keys `z / logits / y / snr / sample_id` nhất quán giữa Task 5 Step 5, Step 6 và Task 7 Step 1.
+**Type consistency.** `mid_slice_mask(snr_db, low, high)`, `normalize_snr(snr_db)`, `FiLM(dim, hidden).forward(z, snr_db)`, `film_deviation(film)`, `Projection(in_dim, out_dim).forward(x)`, `sample_negatives(labels, bank_labels, n, generator, mode)`, `CRDLoss(n_data, tau).forward(z_s, z_t_pos, z_t_neg)`, `remix_at_snr(speech, noise, target_snr_db) -> (mixture, scaled_noise)` — dùng nhất quán ở Task 3, 4, 6, 7, 8. Bank keys `z / logits / y / snr / sample_id` nhất quán giữa Task 5 Step 5, Step 6 và Task 7 Step 1.

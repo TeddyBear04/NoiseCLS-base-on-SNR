@@ -30,8 +30,8 @@ Tất cả trong `SNR_Aware/Mid_Expert/` trên nhánh **`mid-expert`**:
 | `DESIGN.md` | Spec đã duyệt. Vì sao làm thế này. | ✅ |
 | `PLAN.md` | Plan 9 task, có code cụ thể từng step. | ✅ |
 | `STATUS.md` | File này. Tiến độ + handoff. | ✅ |
-| `mid_expert_lib.py` | Hàm thuần, test local được. | ⬜ |
-| `test_mid_expert.py` | Unit test local. | ⬜ |
+| `mid_expert_lib.py` | Hàm thuần, test local được. | ✅ |
+| `test_mid_expert.py` | Unit test local — `python test_mid_expert.py` → 16 passed. | ✅ |
 | `mid_expert.ipynb` | Deliverable, chạy trên molab. | ⬜ |
 
 **Molab lấy code bằng cách clone repo**, nên mọi thứ cần chạy đều phải commit + push lên nhánh `mid-expert`. `.gitignore` đã chặn `*.pt`, nên checkpoint và bank teacher không vào git — chúng sinh ra và ở lại trên molab.
@@ -64,16 +64,16 @@ Task molab không "xong" khi code viết xong — chỉ xong khi có output th�
 | # | Task | Nơi chạy | Trạng thái | Ghi chú |
 |---|---|---|---|---|
 | 1 | Audit manifest + check tuyến tính | local | ✅ | Xong. Kết quả bên dưới — **lật 2 giả định của spec** |
-| 2 | CONFIG + `mid_slice_mask` / `normalize_snr` | local | 🟡 | Subagent đang làm |
-| 3 | FiLM conditioning | local | 🟡 | Subagent đang làm |
-| 4 | CRD loss + bank negative | local | 🟡 | Subagent đang làm. Step 9 là chốt dừng |
+| 2 | CONFIG + `mid_slice_mask` / `normalize_snr` | local | ✅ | 16 test pass |
+| 3 | FiLM conditioning | local | ✅ | Khởi tạo bằng 0 ⇒ identity; có `film_deviation` để bắt collapse |
+| 4 | CRD loss + bank negative | local | ✅ | **Chốt dừng đã bật và đã xử lý** — xem bên dưới |
 | 5 | Teacher trên noise sạch + bank | molab | ⬜ | **Bỏ bước dedup** — xem Task 1 |
 | 6 | Student run 2 (CE only) | molab | ⬜ | Control quan trọng nhất |
 | 7 | Student run 3 (+KD+CRD) | molab | ⬜ | |
 | 8 | Student run 4 (remix) | local + molab | ⬜ | **Đã mở khoá** — `LINEAR_OK=True` |
 | 9 | Báo cáo + ablation | molab | ⬜ | |
 
-**Bước kế tiếp:** chờ Task 2–4 xong → review → viết notebook cho Task 5.
+**Bước kế tiếp:** viết `mid_expert.ipynb` cho Task 5 (teacher trên noise sạch + bank), push, rồi user clone về molab chạy. Chốt dừng: acc teacher < 0.75 thì **dừng hẳn và hỏi** — tiền đề privileged-information sụp.
 
 ## Hai chốt dừng
 
@@ -111,10 +111,26 @@ Manifest có **nhiều cột hơn spec tưởng**: ngoài `mixture_path` / `nois
 
 `noise_scale` và `post_gain` chỉ là metadata provenance, đã nướng vào file — không cần dùng lúc train.
 
-### Task 4 Step 9 — độ lớn crd_loss
-```
-chưa có
-```
+### Task 4 Step 9 — độ lớn crd_loss (✅ chốt dừng đã bật và đã xử lý)
+
+| | giá trị |
+|---|---|
+| Đo lần đầu (bản rút gọn trong plan) | **9066.96** |
+| CE lúc khởi tạo, 36 lớp = ln 36 | 3.58 |
+| Tỉ lệ | **2531×** — vượt xa ngưỡng 100× |
+| Sau khi sửa | **10.97** |
+| Dự đoán lý thuyết `log(m+1)`, m=4096 | 8.32 |
+
+**Nguyên nhân không phải `b=0.8` sai, mà là bản `crd_loss` trong plan của tôi thiếu một bước của CRD.** Đối chiếu `HobbitLong/RepDistiller` (`crd/memory.py` + `crd/criterion.py`): pipeline thật có hai bước, plan chỉ có bước một.
+
+1. `out = exp(⟨v, v'⟩ / T)`
+2. `out = out / Z`, với `Z = out.mean() · n_data`, tính **một lần** ở batch đầu rồi giữ cố định.
+
+Thiếu bước 2 ⇒ giá trị vào critic là exponential thô chứ không phải xác suất ⇒ `log(1 − h_neg)` không nằm gần 0 ⇒ cộng 4096 số hạng thì nổ. Có `Z` thì `P_neg ≈ 1/n_data` nên `log_D0 ≈ 0`, cộng bao nhiêu cũng vẫn nhỏ — đúng như CRD gốc.
+
+**Cách xử lý: implement `Z` (quay về đúng paper), KHÔNG chia số hạng negative cho `n_neg`.** Repo gốc cộng qua negative rồi chỉ chia cho batch size — phần đó plan vốn đã đúng. Chia cho `n_neg` mới là lệch paper.
+
+Hệ quả: `b=0.8` của repo CRD **dùng được nguyên xi**, và mục lệch-paper #4 **không phát sinh**.
 
 ### Task 5 — teacher (trần trên)
 ```
@@ -141,7 +157,7 @@ Mỗi mục trong báo cáo phải viết "theo tinh thần của", **không** v
 1. **FiLM đặt một lần trên embedding đã pool**, không per-layer như paper gốc. Lý do: per-layer phải vá BEATs vendored. Bản per-layer để làm ablation.
 2. **`g_t` đóng băng, chỉ `g_s` học.** CRD gốc học cả hai projection. Lý do: chiếu lại 43.200 vector có gradient mỗi batch là bất khả thi.
 3. **Phần chiếu bank làm mới mỗi epoch** ⇒ stale trong phạm vi một epoch. (Bank `z` thì tĩnh thật.)
-4. _(có thể phát sinh)_ Nếu Task 4 Step 9 buộc chuẩn hoá lại số hạng negative.
+4. ~~Nếu Task 4 Step 9 buộc chuẩn hoá lại số hạng negative.~~ **Không phát sinh.** Chốt dừng đã bật nhưng nguyên nhân là plan thiếu bước chuẩn hoá `Z` của CRD, không phải `b=0.8` sai. Sửa xong là quay về đúng paper, không lệch thêm gì.
 
 Cộng bốn chỗ ngoại suy ở §2 của DESIGN.md: ngoại suy "gộp thắng chia" sang câu hỏi hẹp về lát mid; lập luận mid là nơi CRD lợi nhất; FiLM theo SNR liên tục cho phân loại noise; trọng số `w(snr)` đặt tay (đã đẩy xuống ablation).
 
