@@ -78,16 +78,54 @@ def split_metrics(logits, targets, snrs, labels, band) -> dict:
 def collect_predictions(model, loader, device) -> dict:
     """One inference pass. Metrics and per-clip predictions both come out of it."""
     model.eval()
-    all_logits, all_targets, all_snrs = [], [], []
+    all_logits, all_targets, all_snrs, all_rows, all_emb = [], [], [], [], []
     for batch in loader:
         snr = batch["snr"].float().to(device, non_blocking=True)
         with autocast(device):
-            logits, _ = model(batch["audio"].to(device, non_blocking=True), snr)
+            logits, pooled = model(batch["audio"].to(device, non_blocking=True), snr)
         all_logits.append(logits.float().cpu())
+        all_emb.append(pooled.float().cpu())
         all_targets.append(batch["target"])
         all_snrs.append(batch["snr"])
+        all_rows.append(batch["row_index"])
     return {"logits": torch.cat(all_logits), "target": torch.cat(all_targets),
-            "snr": torch.cat(all_snrs)}
+            "snr": torch.cat(all_snrs), "row_index": torch.cat(all_rows),
+            "embedding": torch.cat(all_emb)}
+
+
+def noise_purity(student_embedding: torch.Tensor, teacher_embedding: torch.Tensor) -> dict:
+    """How far the mixture's representation has moved toward the clean noise's.
+
+    This is the mechanism check, and it is a different question from accuracy. The
+    classification metrics say whether the label came out right; these say whether
+    the student actually learned to represent a mixture the way the teacher
+    represents the clean noise inside it - that is, whether speech got removed in
+    embedding space. CRD optimises exactly this, so a CRD run that does not move
+    these numbers on held-out data did not do its job, no matter what accuracy did.
+
+    They sit where SI-SDR sits for the separation branches: SI-SDR scores waveform
+    separation, these score separation in embedding space, which is the only place
+    this branch ever separates anything.
+
+        cos_pos       mean cosine to the SAME clip's clean-noise embedding
+        cos_neg       mean cosine to every OTHER clip's clean-noise embedding
+        gap           cos_pos - cos_neg, how identifiable the right noise is
+        retrieval@1   share of clips whose nearest clean-noise embedding is its own
+    """
+    student = torch.nn.functional.normalize(student_embedding.float(), dim=1)
+    teacher = torch.nn.functional.normalize(teacher_embedding.float(), dim=1)
+    similarity = student @ teacher.T
+    n = similarity.shape[0]
+    positive = similarity.diagonal()
+    # Mean over off-diagonal entries, without materialising a second matrix.
+    negative = (similarity.sum() - positive.sum()) / (n * (n - 1))
+    return {
+        "emb_cos_pos": float(positive.mean()),
+        "emb_cos_neg": float(negative),
+        "emb_gap": float(positive.mean() - negative),
+        "emb_retrieval_top1": float((similarity.argmax(dim=1) ==
+                                     torch.arange(n)).float().mean()),
+    }
 
 
 def evaluate_student(model, loader, device, labels, band) -> dict:
@@ -387,7 +425,32 @@ def command_test36(config: dict) -> None:
           "Do not call it an improvement without the paired McNemar test in Task 9.",
           flush=True)
 
-    payload = {"run": run_name, "test": result,
+    # The mechanism check the accuracy metrics cannot answer: did the mixture's
+    # representation actually move toward the clean noise's? Measured per slice
+    # against the frozen teacher bank, on held-out test clips.
+    purity = {}
+    bank_path = out_dir / outputs["bank"]
+    if bank_path.exists():
+        bank_z = torch.load(bank_path, map_location="cpu",
+                            weights_only=False)["z"].float()
+        for slice_name, mask in (("mid", mid_slice_mask(collected["snr"].float(),
+                                                        band[0], band[1])),
+                                 ("snr_5", collected["snr"] == 5),
+                                 ("snr_10", collected["snr"] == 10)):
+            if not bool(mask.any()):
+                continue
+            purity[slice_name] = noise_purity(collected["embedding"][mask],
+                                              bank_z[collected["row_index"][mask]])
+        print(chr(10) + "embedding purity (mechanism check, not accuracy):", flush=True)
+        for slice_name, values in purity.items():
+            print(f"  {slice_name:<7} cos_pos={values['emb_cos_pos']:.4f} "
+                  f"cos_neg={values['emb_cos_neg']:.4f} "
+                  f"gap={values['emb_gap']:.4f} "
+                  f"retrieval@1={values['emb_retrieval_top1']:.4f}", flush=True)
+    else:
+        print(f"{bank_path} missing - skipping the embedding purity check.", flush=True)
+
+    payload = {"run": run_name, "test": result, "purity": purity,
                "baseline": {"accuracy": baseline["baseline_mid_accuracy"],
                             "macro_f1": baseline["baseline_mid_macro_f1"]}}
     (out_dir / f"student_{run_name}_test.json").write_text(

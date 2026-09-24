@@ -66,8 +66,17 @@ SNR_SHEET_COLUMNS = [
     "Phuong phap", "Phien ban", "SNR (dB)", "So mau (support)",
     "Top-1 Accuracy", "Top-3 Accuracy", "Balanced Acc",
     "Precision Macro", "Recall Macro", "Macro-F1", "Micro-F1",
-    "mAP", "Macro-AUC", "SI-SDR (dB)", "SI-SDR improvement", "Ghi chu",
+    "mAP", "Macro-AUC", "SI-SDR (dB)", "SI-SDR improvement",
+    "Emb cos(mixture, noise sach)", "Emb cos(khac clip)", "Emb gap",
+    "Emb retrieval@1", "Ghi chu",
 ]
+
+PURITY_COLUMNS = {
+    "Emb cos(mixture, noise sach)": "emb_cos_pos",
+    "Emb cos(khac clip)": "emb_cos_neg",
+    "Emb gap": "emb_gap",
+    "Emb retrieval@1": "emb_retrieval_top1",
+}
 
 SHEET_METHOD = {
     "run1_baseline": ("BEATs-MidExpert", "run1-baseline"),
@@ -85,11 +94,13 @@ SHEET_NOTE = {
 }
 
 
-def snr_sheet_row(row: dict) -> dict:
+def snr_sheet_row(row: dict, purity: dict | None = None) -> dict:
     method, version = SHEET_METHOD.get(row["run"], (row["run"], "final"))
     def value(key):
         v = row.get(key, "")
         return round(v, 4) if isinstance(v, float) else v
+    extra = {name: (round(purity[key], 4) if purity and key in purity else "")
+             for name, key in PURITY_COLUMNS.items()}
     return {
         "Phuong phap": method,
         "Phien ban": version,
@@ -106,6 +117,7 @@ def snr_sheet_row(row: dict) -> dict:
         "Macro-AUC": value("macro_auc_ovr"),
         "SI-SDR (dB)": "",
         "SI-SDR improvement": "",
+        **extra,
         "Ghi chu": SHEET_NOTE.get(row["run"], ""),
     }
 
@@ -342,11 +354,19 @@ def command_report36(config: dict) -> None:
               ["run", "slice", "samples", *METRIC_COLUMNS])
     write_csv(results_dir / "ket_qua_tong_hop.csv",
               [sheet_row(r) for r in summary], SHEET_COLUMNS)
-    snr_rows = [r for r in summary if r["slice"].startswith("snr_") and r["run"] in SHEET_METHOD]
+    # Only 5 and 10 dB: that is the band this branch was assigned, and the other
+    # levels are not what the report claims anything about.
+    wanted = {"snr_5", "snr_10"}
+    snr_rows = [r for r in summary if r["slice"] in wanted and r["run"] in SHEET_METHOD]
     snr_rows.sort(key=lambda r: (list(SHEET_METHOD).index(r["run"]),
                                  int(r["slice"].replace("snr_", ""))))
+    purity_by_run = {}
+    for path in out_dir.glob("student_*_test.json"):
+        name = path.name[len("student_"):-len("_test.json")]
+        purity_by_run[name] = json.loads(path.read_text(encoding="utf-8")).get("purity", {})
     write_csv(results_dir / "theo_tung_snr.csv",
-              [snr_sheet_row(r) for r in snr_rows], SNR_SHEET_COLUMNS)
+              [snr_sheet_row(r, purity_by_run.get(r["run"], {}).get(r["slice"]))
+               for r in snr_rows], SNR_SHEET_COLUMNS)
     write_csv(results_dir / "metrics_per_class.csv", per_class,
               ["run", "slice", "label", "precision", "recall", "f1", "support",
                "average_precision"])
