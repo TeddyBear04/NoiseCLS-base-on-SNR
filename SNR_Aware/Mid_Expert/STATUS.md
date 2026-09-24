@@ -267,6 +267,27 @@ xong ba biến gây nhiễu.
 
 Trong báo cáo: đừng viết "expert cũ thua vì thiếu dữ liệu". Số liệu nói ngược.
 
+### Phương sai giữa hai lượt chạy giống hệt nhau — đo được 0.70 điểm
+
+Run 2 bị chạy hai lần do sự cố config (xem bên dưới). Cùng code, cùng config, cùng
+seed 2026:
+
+| | val_mid acc | val_mid macro-F1 |
+|---|---|---|
+| Lượt 1 | 0.6935 | 0.6925 |
+| Lượt 2 | 0.7005 | 0.7000 |
+| Chênh | **+0.70 pt** | +0.75 pt |
+
+Seed không khử được bất định của cuDNN và thứ tự cộng trên GPU. **Chênh lệch dưới ~0.7
+điểm giữa hai run bất kỳ là nhiễu thuần**, kể cả trên validation.
+
+Cộng với sai số chuẩn ±1.0 điểm trên 2.160 clip test, bar để một run được coi là thắng
+thật: hoặc vượt trên **1 điểm**, hoặc qua **McNemar theo cặp**. Dự đoán cho run 3 là
++0.5 đến +2 điểm, nên nửa dưới của khoảng đó sẽ không phân biệt được với nhiễu.
+
+Ghi nhận tình cờ này vào báo cáo — nó là ước lượng phương sai duy nhất ta có mà không
+phải trả thêm compute.
+
 ## Ý nghĩa thống kê — bắt buộc cho Task 9
 
 Lát mid của test chỉ có **2.160 clip**. Sai số chuẩn của accuracy ở vùng p≈0.67 là
