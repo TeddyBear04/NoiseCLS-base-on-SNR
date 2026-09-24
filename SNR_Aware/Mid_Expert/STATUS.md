@@ -407,6 +407,64 @@ thắng trước khi CRD kịp hội tụ. Đó là chỗ còn dư địa nếu 
 **Run 3 đỉnh ở epoch 3, run 2 đỉnh ở epoch 1.** KD+CRD dịch điểm tối ưu về sau, nên quyết
 định giữ 6 epoch thay vì cắt về 1 là đúng — cắt về 1 sẽ bỏ mất đỉnh thật.
 
+### ⚠️ Bộ metric đầy đủ lật một phần câu chuyện: mAP và AUC **giảm**
+
+Bốn con số ban đầu (acc, macro-F1) chỉ kể một nửa. Khi xuất đủ 8 metric:
+
+| Lát mid 5–10 dB | Top-1 | Top-3 | Macro-F1 | mAP | Macro-AUC |
+|---|---|---|---|---|---|
+| Run 2 (control) | 0.6644 | 0.8181 | 0.6551 | **0.7452** | **0.9704** |
+| Run 3 (+KD+CRD) | **0.6750** | 0.8199 | **0.6669** | 0.7311 | 0.9639 |
+| Δ | **+1.06** | +0.19 | **+1.18** | **−1.41** | **−0.65** |
+
+**Run 3 thắng ở Top-1 và Macro-F1 nhưng THUA ở mAP và Macro-AUC.** Top-3 gần như hoà
+(+0.19 điểm).
+
+Theo từng mức SNR, Δ(run3 − run2):
+
+| SNR | Top-1 | Top-3 | Macro-F1 | mAP | AUC |
+|---|---|---|---|---|---|
+| −5 | −0.74 | −0.09 | −0.74 | −1.06 | −0.42 |
+| 0 | −0.56 | +0.28 | −0.37 | −1.15 | −0.39 |
+| **5** | **+1.30** | +0.37 | **+1.58** | −1.72 | −0.62 |
+| **10** | **+0.83** | 0.00 | **+0.69** | −1.10 | −0.70 |
+| 15 | +0.19 | +0.65 | −0.15 | −0.74 | −0.75 |
+| **20** | **+1.57** | **+1.57** | **+1.01** | **+0.18** | −0.61 |
+
+Hai điều đọc được:
+
+1. **mAP và AUC giảm ở gần như mọi mức SNR** (mAP chỉ dương ở 20 dB; AUC âm ở cả sáu
+   mức, không ngoại lệ). Nghĩa là KD+CRD **làm sắc quyết định Top-1 nhưng làm xấu chất
+   lượng xếp hạng** trên toàn 36 lớp. Biểu diễn không tốt lên một cách tổng thể — phần
+   cải thiện nằm ở ranh giới quyết định.
+
+2. **Mức lợi tăng theo SNR, lớn nhất ở 20 dB** (+1.57 Top-1, và là mức duy nhất mAP
+   dương). Ở −5 và 0 dB thì phương pháp **làm hại**. Điều này khớp với khoảng trống của
+   teacher (tăng đơn điệu theo SNR) và **củng cố thêm việc DESIGN.md §2 nói sai**: chỗ
+   phương pháp này phát huy nhất là **nhánh high**, không phải mid.
+
+**Cho báo cáo:** phải nêu cả mAP và AUC giảm. Nếu chỉ đưa accuracy với macro-F1 thì là
+chọn lọc số liệu, và hội đồng mở bảng CSV ra là thấy ngay.
+
+### File CSV kết quả
+
+`artifacts/results/` có bốn bảng:
+
+| File | Nội dung |
+|---|---|
+| `ket_qua_tong_hop.csv` | Đúng schema bảng kết quả của bạn, dán thẳng vào được |
+| `metrics_by_run.csv` | Cùng số liệu, tên cột máy đọc được |
+| `metrics_per_class.csv` | Từng nhãn: precision, recall, F1, support, AP |
+| `comparison.csv` | Δ giữa các run + McNemar theo cặp |
+
+Mỗi run × mỗi lát (all, 5–10, và từng mức SNR). Baseline lấy từ file metrics của chính
+nó, ô nào file đó không ghi thì để trống.
+
+**Hai cột `SI-SDR` và `SI-SDR improvement` để trống có chủ ý.** Chúng đo chất lượng tách
+waveform, mà nhánh này **cố ý không tách waveform** — CRD kéo embedding thay vì tổng hợp
+lại tín hiệu, và đó chính là thứ giúp nó tránh artifact đã dìm DPCRN xuống 0.144. Điền số
+vào đó là đặt một con số dưới một tiêu đề không mô tả nó.
+
 ### ⚠️ Ba chuỗi nohup chạy song song — nguyên nhân của mọi thứ lộn xộn
 
 Trong phiên này có lúc **ba chuỗi `nohup` chạy đồng thời**, tất cả ghi vào cùng
