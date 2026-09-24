@@ -607,9 +607,23 @@ def resolve_stage(name: str):
 # full student run completed as run 2 while its log said so on line 1 and nobody
 # was reading line 1. Passing --run makes the choice explicit in the command, in
 # the log, and in the checkpoint name, and it cannot be reverted by a pull.
+#   run2_ce_only   the control. Isolates data + FiLM + mid-slice selection.
+#   run3_kd_crd    the planned treatment. CRD repo calls this `-a 1 -b 0.8`.
+#   run3b_crd_only CRD without KD. This is the CRD paper's PRIMARY setting
+#                  (`-a 0 -b 0.8`); CRD+KD is its add-on. Worth running here for a
+#                  specific reason: the teacher reached train accuracy 1.0000, so on
+#                  every training row KD's target is a softened one-hot on the class
+#                  CE already supplies. That part is closer to label smoothing than
+#                  to knowledge transfer, and only the non-target ranking carries
+#                  anything extra (measured: cosine 0.42 against the real confusion
+#                  structure). Comparing this against run3 says whether the gain is
+#                  representation transfer or smoothing.
+#   run3c_kd_only  the complement, to finish the attribution.
 RUNS = {
     "run2_ce_only": {"a_kd": 0.0, "b_crd": 0.0, "remix": False},
     "run3_kd_crd": {"a_kd": 1.0, "b_crd": 0.8, "remix": False},
+    "run3b_crd_only": {"a_kd": 0.0, "b_crd": 0.8, "remix": False},
+    "run3c_kd_only": {"a_kd": 1.0, "b_crd": 0.0, "remix": False},
     "run4_remix": {"a_kd": 1.0, "b_crd": 0.8, "remix": True},
 }
 RUN_REQUIRED = ("student36", "test36")
