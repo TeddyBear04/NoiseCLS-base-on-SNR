@@ -59,6 +59,56 @@ METHOD_NAMES = {
 }
 SLICE_NAMES = {"full": "all", "mid": "5-10"}
 
+# The "Theo tung SNR" sheet in Result.xlsx, column for column, so these rows paste
+# straight in beside the other branches. One row per method per SNR level only -
+# that sheet carries no "all" or "mid" aggregate rows.
+SNR_SHEET_COLUMNS = [
+    "Phuong phap", "Phien ban", "SNR (dB)", "So mau (support)",
+    "Top-1 Accuracy", "Top-3 Accuracy", "Balanced Acc",
+    "Precision Macro", "Recall Macro", "Macro-F1", "Micro-F1",
+    "mAP", "Macro-AUC", "SI-SDR (dB)", "SI-SDR improvement", "Ghi chu",
+]
+
+SHEET_METHOD = {
+    "run1_baseline": ("BEATs-MidExpert", "run1-baseline"),
+    "run2_ce_only": ("BEATs-MidExpert", "run2-ce-only"),
+    "run3b_crd_only": ("BEATs-MidExpert", "run3b-crd-only"),
+    "run3c_kd_only": ("BEATs-MidExpert", "run3c-kd-only"),
+    "run3_kd_crd": ("BEATs-MidExpert", "run3-kd-crd"),
+}
+SHEET_NOTE = {
+    "run1_baseline": "Baseline dung lai: CE thuan, KHONG FiLM, chon checkpoint theo toan bo validation. Khong tach waveform nen khong co SI-SDR.",
+    "run2_ce_only": "CE thuan + FiLM theo SNR, chon checkpoint theo lat mid 5-10 dB. Control cho run3.",
+    "run3b_crd_only": "CE + CRD (b=0.8), khong KD. Setting chinh cua paper CRD.",
+    "run3c_kd_only": "CE + KD (a=1.0, rho=4), khong CRD.",
+    "run3_kd_crd": "CE + KD + CRD. Phuong phap day du. Teacher nhin noise sach (privileged info), student chi nhin mixture.",
+}
+
+
+def snr_sheet_row(row: dict) -> dict:
+    method, version = SHEET_METHOD.get(row["run"], (row["run"], "final"))
+    def value(key):
+        v = row.get(key, "")
+        return round(v, 4) if isinstance(v, float) else v
+    return {
+        "Phuong phap": method,
+        "Phien ban": version,
+        "SNR (dB)": int(row["slice"].replace("snr_", "")),
+        "So mau (support)": row.get("samples", ""),
+        "Top-1 Accuracy": value("accuracy"),
+        "Top-3 Accuracy": value("top3_accuracy"),
+        "Balanced Acc": value("balanced_accuracy"),
+        "Precision Macro": value("macro_precision"),
+        "Recall Macro": value("macro_recall"),
+        "Macro-F1": value("macro_f1"),
+        "Micro-F1": value("micro_f1"),
+        "mAP": value("macro_map"),
+        "Macro-AUC": value("macro_auc_ovr"),
+        "SI-SDR (dB)": "",
+        "SI-SDR improvement": "",
+        "Ghi chu": SHEET_NOTE.get(row["run"], ""),
+    }
+
 
 def sheet_row(row: dict) -> dict:
     slice_name = row["slice"]
@@ -292,6 +342,11 @@ def command_report36(config: dict) -> None:
               ["run", "slice", "samples", *METRIC_COLUMNS])
     write_csv(results_dir / "ket_qua_tong_hop.csv",
               [sheet_row(r) for r in summary], SHEET_COLUMNS)
+    snr_rows = [r for r in summary if r["slice"].startswith("snr_") and r["run"] in SHEET_METHOD]
+    snr_rows.sort(key=lambda r: (list(SHEET_METHOD).index(r["run"]),
+                                 int(r["slice"].replace("snr_", ""))))
+    write_csv(results_dir / "theo_tung_snr.csv",
+              [snr_sheet_row(r) for r in snr_rows], SNR_SHEET_COLUMNS)
     write_csv(results_dir / "metrics_per_class.csv", per_class,
               ["run", "slice", "label", "precision", "recall", "f1", "support",
                "average_precision"])
