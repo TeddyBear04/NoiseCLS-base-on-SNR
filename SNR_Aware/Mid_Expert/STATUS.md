@@ -111,6 +111,76 @@ Gặp một trong hai thì **dừng, báo cáo, hỏi**:
 
 ---
 
+## ⛔ KẾT QUẢ CUỐI: phương pháp KHÔNG vượt baseline khi baseline được dựng lại đúng cách
+
+Lượt chạy sạch 2026-09-24 (một chuỗi duy nhất, `artifacts/` xoá trắng, 5 run, cùng
+teacher 0.7793). Lát mid 5–10 dB, 2.160 clip:
+
+| Phiên bản | Top-1 | Top-3 | Macro-F1 | mAP | Macro-AUC |
+|---|---|---|---|---|---|
+| `beats_baseline` (công bố, file cũ) | 0.6681 | – | 0.6602 | – | – |
+| **`run1_baseline`** (dựng lại) | **0.6736** | 0.8273 | 0.6652 | **0.7512** | **0.9712** |
+| `run2_ce_only` | 0.6653 | 0.8190 | 0.6560 | 0.7451 | 0.9704 |
+| `run3b_crd_only` | 0.6690 | 0.8231 | 0.6619 | 0.7472 | 0.9697 |
+| `run3c_kd_only` | 0.6745 | 0.8204 | 0.6651 | 0.7464 | 0.9697 |
+| `run3_kd_crd` | 0.6759 | 0.8264 | **0.6678** | 0.7382 | 0.9678 |
+
+### McNemar theo cặp với baseline dựng lại
+
+| So với `run1_baseline` | Δ Top-1 | p | Có ý nghĩa? |
+|---|---|---|---|
+| `run2_ce_only` | −0.83 | 0.057 | không (baseline **tốt hơn**, sát mép) |
+| `run3b_crd_only` | −0.46 | 0.377 | không (baseline tốt hơn) |
+| `run3c_kd_only` | +0.09 | 0.917 | không |
+| **`run3_kd_crd`** | **+0.23** | **0.757** | **không** |
+
+**Không run nào vượt được baseline.** `run3_kd_crd` hơn đúng 0.23 điểm với p = 0.757 —
+không phân biệt được với nhiễu.
+
+### Vì sao con số "+0.69 điểm" trước đó là ảo
+
+Trước đó tôi so với baseline **công bố** (0.6681), lấy từ một lượt train khác. Baseline
+dựng lại trong cùng điều kiện đạt **0.6736** — cao hơn 0.55 điểm. Toàn bộ "cải thiện"
+nằm gọn trong khoảng chênh giữa hai lượt train của **cùng một công thức**, đúng bằng
+phương sai 0.70 điểm đã đo được trước đó.
+
+**Đây chính là lý do `run1_baseline` phải tồn tại.** Không có nó thì báo cáo sẽ công bố
+một cải thiện không có thật.
+
+### Quy trách nhiệm: KD, không phải CRD
+
+| Run | Top-1 | so với run2 |
+|---|---|---|
+| `run2_ce_only` (không KD, không CRD) | 0.6653 | — |
+| `run3b_crd_only` (chỉ CRD) | 0.6690 | +0.37 |
+| `run3c_kd_only` (chỉ KD) | 0.6745 | **+0.92** |
+| `run3_kd_crd` (cả hai) | 0.6759 | +1.06 |
+
+**KD mang gần hết phần cải thiện; CRD đóng góp ít.** `run3c` (chỉ KD) gần bằng `run3`
+(cả hai). Điều này **phản bác tiền đề trung tâm của DESIGN.md**: CRD — cơ chế "đảo ngược
+separation" trong không gian embedding — không phải thứ tạo ra kết quả.
+
+Và `run2` vs `run3c` là cặp **duy nhất** đạt ý nghĩa thống kê (p = 0.040). Nhưng cả hai
+đều không phân biệt được với baseline, nên nó chỉ nói KD bù lại phần mà FiLM + chọn
+checkpoint theo lát mid đã làm mất.
+
+### mAP và AUC: baseline thắng tuyệt đối
+
+`run1_baseline` có **mAP 0.7512 và AUC 0.9712 cao nhất bảng**. `run3_kd_crd` thấp nhất
+(0.7382 / 0.9678). Thêm KD+CRD làm **xấu** chất lượng xếp hạng trên 36 lớp.
+
+### Kết luận trung thực cho báo cáo
+
+> Với bài toán này, teacher–student distillation từ noise sạch **không cải thiện** phân
+> loại noise ở dải mid SNR so với baseline BEATs được huấn luyện trong cùng điều kiện.
+> Chênh lệch quan sát được (+0.23 điểm, McNemar p = 0.757) nằm trong phương sai giữa các
+> lượt chạy (đo được 0.70 điểm). Trong các thành phần, KD đóng góp nhiều hơn CRD, tức cơ
+> chế chuyển giao biểu diễn được giả định ban đầu không phải nguồn của hiệu ứng.
+
+Đây là **kết quả âm, nhưng là kết quả âm được kiểm soát tốt** — có control, có baseline
+dựng lại, có kiểm định theo cặp, có bộ metric đầy đủ. Giá trị khoa học nằm ở chỗ đó, và
+nó đáng tin hơn nhiều so với việc công bố +0.69 điểm dựa trên một so sánh khập khiễng.
+
 ## Kết quả
 
 ### Task 1 — audit (✅ chạy local trên `36_labels/`, 2026-09-24)

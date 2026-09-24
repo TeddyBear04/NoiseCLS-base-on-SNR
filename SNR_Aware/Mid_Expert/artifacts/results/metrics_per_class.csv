@@ -1,145 +1,361 @@
 run,slice,label,precision,recall,f1,support,average_precision
-run2_ce_only,full,Acoustic guitar,0.574561,0.727778,0.642157,180,0.756161
-run2_ce_only,full,Applause,0.62212,0.75,0.680101,180,0.739092
-run2_ce_only,full,Bark,0.830688,0.872222,0.850949,180,0.925907
-run2_ce_only,full,"Burping, eructation",0.81761,0.722222,0.766962,180,0.850822
-run2_ce_only,full,Bus,0.72973,0.75,0.739726,180,0.794363
-run2_ce_only,full,Chime,0.549451,0.555556,0.552486,180,0.657633
-run2_ce_only,full,Clarinet,0.782258,0.538889,0.638158,180,0.737404
-run2_ce_only,full,Computer keyboard,0.679487,0.588889,0.630952,180,0.721206
-run2_ce_only,full,Cough,0.793548,0.683333,0.734328,180,0.756599
-run2_ce_only,full,Cowbell,0.673267,0.755556,0.712042,180,0.791809
-run2_ce_only,full,Drawer open or close,0.472826,0.483333,0.478022,180,0.525033
-run2_ce_only,full,Electric piano,0.7,0.816667,0.753846,180,0.85911
-run2_ce_only,full,Fart,0.805882,0.761111,0.782857,180,0.858141
-run2_ce_only,full,Finger snapping,0.686275,0.583333,0.630631,180,0.672339
-run2_ce_only,full,Fireworks,0.862745,0.733333,0.792793,180,0.860524
-run2_ce_only,full,Flute,0.768182,0.938889,0.845,180,0.932038
-run2_ce_only,full,Glockenspiel,0.466387,0.616667,0.5311,180,0.517035
-run2_ce_only,full,Gong,0.788018,0.95,0.861461,180,0.966488
-run2_ce_only,full,"Gunshot, gunfire",0.58547,0.761111,0.661836,180,0.786769
+run1_baseline,full,Acoustic guitar,0.566524,0.733333,0.639225,180,0.786144
+run1_baseline,full,Applause,0.598214,0.744444,0.663366,180,0.728
+run1_baseline,full,Bark,0.822917,0.877778,0.849462,180,0.927548
+run1_baseline,full,"Burping, eructation",0.744681,0.777778,0.76087,180,0.856373
+run1_baseline,full,Bus,0.736559,0.761111,0.748634,180,0.79296
+run1_baseline,full,Chime,0.582857,0.566667,0.574648,180,0.674139
+run1_baseline,full,Clarinet,0.724359,0.627778,0.672619,180,0.745799
+run1_baseline,full,Computer keyboard,0.627119,0.616667,0.621849,180,0.726277
+run1_baseline,full,Cough,0.763636,0.7,0.730435,180,0.769785
+run1_baseline,full,Cowbell,0.660194,0.755556,0.704663,180,0.791054
+run1_baseline,full,Drawer open or close,0.438424,0.494444,0.464752,180,0.535932
+run1_baseline,full,Electric piano,0.714286,0.805556,0.75718,180,0.850182
+run1_baseline,full,Fart,0.866667,0.722222,0.787879,180,0.858607
+run1_baseline,full,Finger snapping,0.654321,0.588889,0.619883,180,0.680703
+run1_baseline,full,Fireworks,0.795455,0.777778,0.786517,180,0.860639
+run1_baseline,full,Flute,0.769585,0.927778,0.84131,180,0.935441
+run1_baseline,full,Glockenspiel,0.495327,0.588889,0.538071,180,0.536731
+run1_baseline,full,Gong,0.912568,0.927778,0.92011,180,0.973815
+run1_baseline,full,"Gunshot, gunfire",0.678571,0.738889,0.707447,180,0.787823
+run1_baseline,full,Harmonica,0.844086,0.872222,0.857923,180,0.922663
+run1_baseline,full,Hi-hat,0.592593,0.177778,0.273504,180,0.513728
+run1_baseline,full,Keys jangling,0.566667,0.472222,0.515152,180,0.585945
+run1_baseline,full,Knock,0.447826,0.572222,0.502439,180,0.610079
+run1_baseline,full,Laughter,0.486486,0.7,0.574032,180,0.730917
+run1_baseline,full,Meow,0.682292,0.727778,0.704301,180,0.792498
+run1_baseline,full,Microwave oven,0.610294,0.461111,0.525316,180,0.534542
+run1_baseline,full,Saxophone,0.631579,0.6,0.615385,180,0.742024
+run1_baseline,full,Scissors,0.513889,0.411111,0.45679,180,0.486475
+run1_baseline,full,Shatter,0.666667,0.622222,0.643678,180,0.724592
+run1_baseline,full,Squeak,0.855263,0.361111,0.507812,180,0.556133
+run1_baseline,full,Tambourine,0.764151,0.9,0.826531,180,0.915569
+run1_baseline,full,Tearing,0.739837,0.505556,0.60066,180,0.645745
+run1_baseline,full,Telephone,0.52193,0.661111,0.583333,180,0.705989
+run1_baseline,full,Trumpet,0.687861,0.661111,0.674221,180,0.738884
+run1_baseline,full,"Violin, fiddle",0.789809,0.688889,0.735905,180,0.805127
+run1_baseline,full,Writing,0.432558,0.516667,0.470886,180,0.544124
+run1_baseline,mid,Acoustic guitar,0.56962,0.75,0.647482,60,0.804181
+run1_baseline,mid,Applause,0.6,0.75,0.666667,60,0.75145
+run1_baseline,mid,Bark,0.833333,0.916667,0.873016,60,0.951538
+run1_baseline,mid,"Burping, eructation",0.753623,0.866667,0.806202,60,0.903426
+run1_baseline,mid,Bus,0.726027,0.883333,0.796992,60,0.863067
+run1_baseline,mid,Chime,0.584906,0.516667,0.548673,60,0.636519
+run1_baseline,mid,Clarinet,0.73913,0.566667,0.641509,60,0.695385
+run1_baseline,mid,Computer keyboard,0.65,0.65,0.65,60,0.748035
+run1_baseline,mid,Cough,0.721311,0.733333,0.727273,60,0.778989
+run1_baseline,mid,Cowbell,0.681818,0.75,0.714286,60,0.799595
+run1_baseline,mid,Drawer open or close,0.371429,0.433333,0.4,60,0.455346
+run1_baseline,mid,Electric piano,0.796875,0.85,0.822581,60,0.914102
+run1_baseline,mid,Fart,0.847826,0.65,0.735849,60,0.847263
+run1_baseline,mid,Finger snapping,0.672727,0.616667,0.643478,60,0.700394
+run1_baseline,mid,Fireworks,0.907407,0.816667,0.859649,60,0.924243
+run1_baseline,mid,Flute,0.734177,0.966667,0.834532,60,0.93822
+run1_baseline,mid,Glockenspiel,0.521127,0.616667,0.564885,60,0.544513
+run1_baseline,mid,Gong,0.95082,0.966667,0.958678,60,0.992987
+run1_baseline,mid,"Gunshot, gunfire",0.730159,0.766667,0.747967,60,0.807914
+run1_baseline,mid,Harmonica,0.896552,0.866667,0.881356,60,0.925096
+run1_baseline,mid,Hi-hat,0.5,0.116667,0.189189,60,0.467874
+run1_baseline,mid,Keys jangling,0.589286,0.55,0.568966,60,0.676619
+run1_baseline,mid,Knock,0.492958,0.583333,0.534351,60,0.637544
+run1_baseline,mid,Laughter,0.505618,0.75,0.604027,60,0.78301
+run1_baseline,mid,Meow,0.691176,0.783333,0.734375,60,0.828653
+run1_baseline,mid,Microwave oven,0.684211,0.433333,0.530612,60,0.518491
+run1_baseline,mid,Saxophone,0.641509,0.566667,0.60177,60,0.730661
+run1_baseline,mid,Scissors,0.595238,0.416667,0.490196,60,0.560092
+run1_baseline,mid,Shatter,0.732143,0.683333,0.706897,60,0.778709
+run1_baseline,mid,Squeak,0.863636,0.316667,0.463415,60,0.571008
+run1_baseline,mid,Tambourine,0.84127,0.883333,0.861789,60,0.907626
+run1_baseline,mid,Tearing,0.651163,0.466667,0.543689,60,0.600191
+run1_baseline,mid,Telephone,0.522727,0.766667,0.621622,60,0.805112
+run1_baseline,mid,Trumpet,0.721311,0.733333,0.727273,60,0.808601
+run1_baseline,mid,"Violin, fiddle",0.803571,0.75,0.775862,60,0.829451
+run1_baseline,mid,Writing,0.43662,0.516667,0.473282,60,0.557257
+run2_ce_only,full,Acoustic guitar,0.574561,0.727778,0.642157,180,0.755917
+run2_ce_only,full,Applause,0.621005,0.755556,0.681704,180,0.738916
+run2_ce_only,full,Bark,0.830688,0.872222,0.850949,180,0.925959
+run2_ce_only,full,"Burping, eructation",0.816456,0.716667,0.763314,180,0.851441
+run2_ce_only,full,Bus,0.733696,0.75,0.741758,180,0.794417
+run2_ce_only,full,Chime,0.555556,0.555556,0.555556,180,0.657554
+run2_ce_only,full,Clarinet,0.788618,0.538889,0.640264,180,0.737783
+run2_ce_only,full,Computer keyboard,0.679487,0.588889,0.630952,180,0.721122
+run2_ce_only,full,Cough,0.788462,0.683333,0.732143,180,0.756412
+run2_ce_only,full,Cowbell,0.676617,0.755556,0.713911,180,0.791704
+run2_ce_only,full,Drawer open or close,0.475138,0.477778,0.476454,180,0.524885
+run2_ce_only,full,Electric piano,0.696682,0.816667,0.751918,180,0.858698
+run2_ce_only,full,Fart,0.815476,0.761111,0.787356,180,0.858165
+run2_ce_only,full,Finger snapping,0.677419,0.583333,0.626866,180,0.672332
+run2_ce_only,full,Fireworks,0.862745,0.733333,0.792793,180,0.860879
+run2_ce_only,full,Flute,0.761261,0.938889,0.840796,180,0.932158
+run2_ce_only,full,Glockenspiel,0.462185,0.611111,0.526316,180,0.516451
+run2_ce_only,full,Gong,0.788018,0.95,0.861461,180,0.966533
+run2_ce_only,full,"Gunshot, gunfire",0.590517,0.761111,0.665049,180,0.786982
 run2_ce_only,full,Harmonica,0.843243,0.866667,0.854795,180,0.919761
-run2_ce_only,full,Hi-hat,0.642857,0.2,0.305085,180,0.487546
-run2_ce_only,full,Keys jangling,0.570423,0.45,0.503106,180,0.553237
-run2_ce_only,full,Knock,0.483092,0.555556,0.516796,180,0.597045
-run2_ce_only,full,Laughter,0.474453,0.722222,0.572687,180,0.728843
-run2_ce_only,full,Meow,0.717391,0.733333,0.725275,180,0.790537
-run2_ce_only,full,Microwave oven,0.559441,0.444444,0.495356,180,0.523119
-run2_ce_only,full,Saxophone,0.653631,0.65,0.651811,180,0.734266
-run2_ce_only,full,Scissors,0.488722,0.361111,0.415335,180,0.469033
-run2_ce_only,full,Shatter,0.699387,0.633333,0.664723,180,0.721071
-run2_ce_only,full,Squeak,0.795455,0.388889,0.522388,180,0.555434
-run2_ce_only,full,Tambourine,0.782609,0.9,0.837209,180,0.915311
-run2_ce_only,full,Tearing,0.700787,0.494444,0.579805,180,0.630386
-run2_ce_only,full,Telephone,0.6,0.65,0.624,180,0.703816
-run2_ce_only,full,Trumpet,0.661458,0.705556,0.682796,180,0.739176
-run2_ce_only,full,"Violin, fiddle",0.709497,0.705556,0.707521,180,0.794251
-run2_ce_only,full,Writing,0.376,0.522222,0.437209,180,0.538716
-run2_ce_only,mid,Acoustic guitar,0.55,0.733333,0.628571,60,0.774811
-run2_ce_only,mid,Applause,0.6,0.75,0.666667,60,0.755046
-run2_ce_only,mid,Bark,0.833333,0.916667,0.873016,60,0.95322
-run2_ce_only,mid,"Burping, eructation",0.810345,0.783333,0.79661,60,0.901243
-run2_ce_only,mid,Bus,0.733333,0.916667,0.814815,60,0.862256
-run2_ce_only,mid,Chime,0.517241,0.5,0.508475,60,0.625857
-run2_ce_only,mid,Clarinet,0.736842,0.466667,0.571429,60,0.692147
-run2_ce_only,mid,Computer keyboard,0.649123,0.616667,0.632479,60,0.746703
-run2_ce_only,mid,Cough,0.767857,0.716667,0.741379,60,0.771584
-run2_ce_only,mid,Cowbell,0.707692,0.766667,0.736,60,0.811914
-run2_ce_only,mid,Drawer open or close,0.433962,0.383333,0.40708,60,0.448785
-run2_ce_only,mid,Electric piano,0.73913,0.85,0.790698,60,0.911829
-run2_ce_only,mid,Fart,0.763636,0.7,0.730435,60,0.846657
-run2_ce_only,mid,Finger snapping,0.72,0.6,0.654545,60,0.698809
-run2_ce_only,mid,Fireworks,0.958333,0.766667,0.851852,60,0.903583
-run2_ce_only,mid,Flute,0.75,0.95,0.838235,60,0.923138
-run2_ce_only,mid,Glockenspiel,0.468354,0.616667,0.532374,60,0.514571
-run2_ce_only,mid,Gong,0.819444,0.983333,0.893939,60,0.99102
-run2_ce_only,mid,"Gunshot, gunfire",0.647887,0.766667,0.70229,60,0.806808
-run2_ce_only,mid,Harmonica,0.85,0.85,0.85,60,0.914856
-run2_ce_only,mid,Hi-hat,0.555556,0.166667,0.25641,60,0.46007
-run2_ce_only,mid,Keys jangling,0.62,0.516667,0.563636,60,0.658615
-run2_ce_only,mid,Knock,0.507692,0.55,0.528,60,0.627088
-run2_ce_only,mid,Laughter,0.510638,0.8,0.623377,60,0.793615
-run2_ce_only,mid,Meow,0.712121,0.783333,0.746032,60,0.832458
-run2_ce_only,mid,Microwave oven,0.585366,0.4,0.475248,60,0.503843
-run2_ce_only,mid,Saxophone,0.641509,0.566667,0.60177,60,0.720305
-run2_ce_only,mid,Scissors,0.628571,0.366667,0.463158,60,0.564311
-run2_ce_only,mid,Shatter,0.75,0.7,0.724138,60,0.780249
-run2_ce_only,mid,Squeak,0.769231,0.333333,0.465116,60,0.571754
-run2_ce_only,mid,Tambourine,0.828125,0.883333,0.854839,60,0.898486
-run2_ce_only,mid,Tearing,0.55102,0.45,0.495413,60,0.578183
-run2_ce_only,mid,Telephone,0.576923,0.75,0.652174,60,0.795958
-run2_ce_only,mid,Trumpet,0.69697,0.766667,0.730159,60,0.808395
-run2_ce_only,mid,"Violin, fiddle",0.75,0.75,0.75,60,0.817407
-run2_ce_only,mid,Writing,0.384615,0.5,0.434783,60,0.562137
-run3_kd_crd,full,Acoustic guitar,0.564854,0.75,0.644391,180,0.777708
-run3_kd_crd,full,Applause,0.64574,0.8,0.71464,180,0.761235
-run3_kd_crd,full,Bark,0.855491,0.822222,0.838527,180,0.925783
-run3_kd_crd,full,"Burping, eructation",0.8,0.755556,0.777143,180,0.858806
-run3_kd_crd,full,Bus,0.708543,0.783333,0.744063,180,0.751889
-run3_kd_crd,full,Chime,0.690647,0.533333,0.601881,180,0.61555
-run3_kd_crd,full,Clarinet,0.65,0.722222,0.684211,180,0.742706
-run3_kd_crd,full,Computer keyboard,0.525862,0.677778,0.592233,180,0.69528
-run3_kd_crd,full,Cough,0.714286,0.694444,0.704225,180,0.732371
-run3_kd_crd,full,Cowbell,0.678049,0.772222,0.722078,180,0.806119
-run3_kd_crd,full,Drawer open or close,0.587302,0.411111,0.48366,180,0.510005
-run3_kd_crd,full,Electric piano,0.725,0.805556,0.763158,180,0.822648
-run3_kd_crd,full,Fart,0.6875,0.794444,0.737113,180,0.855903
-run3_kd_crd,full,Finger snapping,0.625731,0.594444,0.609687,180,0.676057
-run3_kd_crd,full,Fireworks,0.796178,0.694444,0.74184,180,0.803584
-run3_kd_crd,full,Flute,0.789474,0.916667,0.848329,180,0.927278
-run3_kd_crd,full,Glockenspiel,0.512821,0.555556,0.533333,180,0.463254
-run3_kd_crd,full,Gong,0.845,0.938889,0.889474,180,0.967181
-run3_kd_crd,full,"Gunshot, gunfire",0.580087,0.744444,0.652068,180,0.764519
-run3_kd_crd,full,Harmonica,0.861878,0.866667,0.864266,180,0.91922
-run3_kd_crd,full,Hi-hat,0.724138,0.233333,0.352941,180,0.482137
-run3_kd_crd,full,Keys jangling,0.585034,0.477778,0.525994,180,0.579498
-run3_kd_crd,full,Knock,0.576471,0.544444,0.56,180,0.622889
-run3_kd_crd,full,Laughter,0.580488,0.661111,0.618182,180,0.684352
-run3_kd_crd,full,Meow,0.661692,0.738889,0.698163,180,0.788619
-run3_kd_crd,full,Microwave oven,0.535714,0.5,0.517241,180,0.49458
-run3_kd_crd,full,Saxophone,0.706215,0.694444,0.70028,180,0.800966
-run3_kd_crd,full,Scissors,0.443038,0.388889,0.414201,180,0.425753
-run3_kd_crd,full,Shatter,0.672316,0.661111,0.666667,180,0.735816
-run3_kd_crd,full,Squeak,0.701923,0.405556,0.514085,180,0.533364
-run3_kd_crd,full,Tambourine,0.75,0.9,0.818182,180,0.899688
-run3_kd_crd,full,Tearing,0.594771,0.505556,0.546547,180,0.604962
-run3_kd_crd,full,Telephone,0.580645,0.6,0.590164,180,0.693663
-run3_kd_crd,full,Trumpet,0.731544,0.605556,0.662614,180,0.740951
-run3_kd_crd,full,"Violin, fiddle",0.804196,0.638889,0.712074,180,0.744052
-run3_kd_crd,full,Writing,0.412766,0.538889,0.46747,180,0.521056
-run3_kd_crd,mid,Acoustic guitar,0.560976,0.766667,0.647887,60,0.810797
-run3_kd_crd,mid,Applause,0.604938,0.816667,0.695035,60,0.764593
-run3_kd_crd,mid,Bark,0.894737,0.85,0.871795,60,0.958727
-run3_kd_crd,mid,"Burping, eructation",0.806452,0.833333,0.819672,60,0.892907
-run3_kd_crd,mid,Bus,0.782609,0.9,0.837209,60,0.818407
-run3_kd_crd,mid,Chime,0.682927,0.466667,0.554455,60,0.571595
-run3_kd_crd,mid,Clarinet,0.646154,0.7,0.672,60,0.708466
-run3_kd_crd,mid,Computer keyboard,0.518987,0.683333,0.589928,60,0.698476
-run3_kd_crd,mid,Cough,0.666667,0.733333,0.698413,60,0.743962
-run3_kd_crd,mid,Cowbell,0.671429,0.783333,0.723077,60,0.803318
-run3_kd_crd,mid,Drawer open or close,0.538462,0.35,0.424242,60,0.453268
-run3_kd_crd,mid,Electric piano,0.825397,0.866667,0.845528,60,0.894853
-run3_kd_crd,mid,Fart,0.657534,0.8,0.721805,60,0.868425
-run3_kd_crd,mid,Finger snapping,0.589286,0.55,0.568966,60,0.628732
-run3_kd_crd,mid,Fireworks,0.895833,0.716667,0.796296,60,0.864701
-run3_kd_crd,mid,Flute,0.77027,0.95,0.850746,60,0.923858
-run3_kd_crd,mid,Glockenspiel,0.507692,0.55,0.528,60,0.486324
-run3_kd_crd,mid,Gong,0.875,0.933333,0.903226,60,0.981657
-run3_kd_crd,mid,"Gunshot, gunfire",0.657534,0.8,0.721805,60,0.802218
-run3_kd_crd,mid,Harmonica,0.881356,0.866667,0.87395,60,0.925266
-run3_kd_crd,mid,Hi-hat,0.647059,0.183333,0.285714,60,0.399632
-run3_kd_crd,mid,Keys jangling,0.66,0.55,0.6,60,0.648066
-run3_kd_crd,mid,Knock,0.603774,0.533333,0.566372,60,0.614357
-run3_kd_crd,mid,Laughter,0.608696,0.7,0.651163,60,0.717856
-run3_kd_crd,mid,Meow,0.695652,0.8,0.744186,60,0.835199
-run3_kd_crd,mid,Microwave oven,0.54902,0.466667,0.504505,60,0.447414
-run3_kd_crd,mid,Saxophone,0.72549,0.616667,0.666667,60,0.807464
-run3_kd_crd,mid,Scissors,0.52,0.433333,0.472727,60,0.515819
-run3_kd_crd,mid,Shatter,0.762712,0.75,0.756303,60,0.815866
-run3_kd_crd,mid,Squeak,0.709677,0.366667,0.483516,60,0.547516
-run3_kd_crd,mid,Tambourine,0.753623,0.866667,0.806202,60,0.884788
-run3_kd_crd,mid,Tearing,0.517857,0.483333,0.5,60,0.570472
-run3_kd_crd,mid,Telephone,0.597222,0.716667,0.651515,60,0.801197
-run3_kd_crd,mid,Trumpet,0.792453,0.7,0.743363,60,0.812989
-run3_kd_crd,mid,"Violin, fiddle",0.869565,0.666667,0.754717,60,0.779782
-run3_kd_crd,mid,Writing,0.423077,0.55,0.478261,60,0.520234
+run2_ce_only,full,Hi-hat,0.642857,0.2,0.305085,180,0.488336
+run2_ce_only,full,Keys jangling,0.566434,0.45,0.501548,180,0.552403
+run2_ce_only,full,Knock,0.483092,0.555556,0.516796,180,0.596641
+run2_ce_only,full,Laughter,0.476364,0.727778,0.575824,180,0.728729
+run2_ce_only,full,Meow,0.713514,0.733333,0.723288,180,0.790547
+run2_ce_only,full,Microwave oven,0.56338,0.444444,0.496894,180,0.523347
+run2_ce_only,full,Saxophone,0.657303,0.65,0.653631,180,0.733814
+run2_ce_only,full,Scissors,0.481481,0.361111,0.412698,180,0.468834
+run2_ce_only,full,Shatter,0.695122,0.633333,0.662791,180,0.721016
+run2_ce_only,full,Squeak,0.795455,0.388889,0.522388,180,0.555151
+run2_ce_only,full,Tambourine,0.786408,0.9,0.839378,180,0.915324
+run2_ce_only,full,Tearing,0.700787,0.494444,0.579805,180,0.630763
+run2_ce_only,full,Telephone,0.595855,0.638889,0.616622,180,0.703582
+run2_ce_only,full,Trumpet,0.663212,0.711111,0.686327,180,0.739341
+run2_ce_only,full,"Violin, fiddle",0.711111,0.711111,0.711111,180,0.794443
+run2_ce_only,full,Writing,0.376984,0.527778,0.439815,180,0.538642
+run2_ce_only,mid,Acoustic guitar,0.55,0.733333,0.628571,60,0.774423
+run2_ce_only,mid,Applause,0.6,0.75,0.666667,60,0.754805
+run2_ce_only,mid,Bark,0.833333,0.916667,0.873016,60,0.952794
+run2_ce_only,mid,"Burping, eructation",0.807018,0.766667,0.786325,60,0.901721
+run2_ce_only,mid,Bus,0.733333,0.916667,0.814815,60,0.862435
+run2_ce_only,mid,Chime,0.526316,0.5,0.512821,60,0.62578
+run2_ce_only,mid,Clarinet,0.756757,0.466667,0.57732,60,0.692077
+run2_ce_only,mid,Computer keyboard,0.649123,0.616667,0.632479,60,0.747068
+run2_ce_only,mid,Cough,0.767857,0.716667,0.741379,60,0.771094
+run2_ce_only,mid,Cowbell,0.707692,0.766667,0.736,60,0.811821
+run2_ce_only,mid,Drawer open or close,0.423077,0.366667,0.392857,60,0.448689
+run2_ce_only,mid,Electric piano,0.75,0.85,0.796875,60,0.911835
+run2_ce_only,mid,Fart,0.777778,0.7,0.736842,60,0.8467
+run2_ce_only,mid,Finger snapping,0.705882,0.6,0.648649,60,0.698012
+run2_ce_only,mid,Fireworks,0.958333,0.766667,0.851852,60,0.90364
+run2_ce_only,mid,Flute,0.75,0.95,0.838235,60,0.923543
+run2_ce_only,mid,Glockenspiel,0.468354,0.616667,0.532374,60,0.514154
+run2_ce_only,mid,Gong,0.819444,0.983333,0.893939,60,0.990807
+run2_ce_only,mid,"Gunshot, gunfire",0.647887,0.766667,0.70229,60,0.807022
+run2_ce_only,mid,Harmonica,0.85,0.85,0.85,60,0.914602
+run2_ce_only,mid,Hi-hat,0.555556,0.166667,0.25641,60,0.46088
+run2_ce_only,mid,Keys jangling,0.62,0.516667,0.563636,60,0.658093
+run2_ce_only,mid,Knock,0.507692,0.55,0.528,60,0.626225
+run2_ce_only,mid,Laughter,0.515789,0.816667,0.632258,60,0.792569
+run2_ce_only,mid,Meow,0.701493,0.783333,0.740157,60,0.832864
+run2_ce_only,mid,Microwave oven,0.585366,0.4,0.475248,60,0.503934
+run2_ce_only,mid,Saxophone,0.648148,0.583333,0.614035,60,0.719448
+run2_ce_only,mid,Scissors,0.628571,0.366667,0.463158,60,0.56534
+run2_ce_only,mid,Shatter,0.75,0.7,0.724138,60,0.780148
+run2_ce_only,mid,Squeak,0.769231,0.333333,0.465116,60,0.571436
+run2_ce_only,mid,Tambourine,0.828125,0.883333,0.854839,60,0.897945
+run2_ce_only,mid,Tearing,0.55102,0.45,0.495413,60,0.577094
+run2_ce_only,mid,Telephone,0.584416,0.75,0.656934,60,0.7953
+run2_ce_only,mid,Trumpet,0.69697,0.766667,0.730159,60,0.808452
+run2_ce_only,mid,"Violin, fiddle",0.754098,0.766667,0.760331,60,0.817345
+run2_ce_only,mid,Writing,0.3875,0.516667,0.442857,60,0.561816
+run3_kd_crd,full,Acoustic guitar,0.570248,0.766667,0.654028,180,0.783168
+run3_kd_crd,full,Applause,0.646018,0.811111,0.719212,180,0.756762
+run3_kd_crd,full,Bark,0.847458,0.833333,0.840336,180,0.931705
+run3_kd_crd,full,"Burping, eructation",0.845679,0.761111,0.80117,180,0.863657
+run3_kd_crd,full,Bus,0.704082,0.766667,0.734043,180,0.769279
+run3_kd_crd,full,Chime,0.692308,0.55,0.613003,180,0.637129
+run3_kd_crd,full,Clarinet,0.663043,0.677778,0.67033,180,0.730583
+run3_kd_crd,full,Computer keyboard,0.57277,0.677778,0.620865,180,0.719141
+run3_kd_crd,full,Cough,0.724138,0.7,0.711864,180,0.750091
+run3_kd_crd,full,Cowbell,0.731579,0.772222,0.751351,180,0.807978
+run3_kd_crd,full,Drawer open or close,0.616667,0.411111,0.493333,180,0.519518
+run3_kd_crd,full,Electric piano,0.751295,0.805556,0.77748,180,0.831746
+run3_kd_crd,full,Fart,0.681373,0.772222,0.723958,180,0.854215
+run3_kd_crd,full,Finger snapping,0.677419,0.583333,0.626866,180,0.672015
+run3_kd_crd,full,Fireworks,0.770588,0.727778,0.748571,180,0.802716
+run3_kd_crd,full,Flute,0.782407,0.938889,0.853535,180,0.934335
+run3_kd_crd,full,Glockenspiel,0.52551,0.572222,0.547872,180,0.473183
+run3_kd_crd,full,Gong,0.848039,0.961111,0.901042,180,0.965643
+run3_kd_crd,full,"Gunshot, gunfire",0.617512,0.744444,0.675063,180,0.764057
+run3_kd_crd,full,Harmonica,0.901734,0.866667,0.883853,180,0.926123
+run3_kd_crd,full,Hi-hat,0.741379,0.238889,0.361345,180,0.515543
+run3_kd_crd,full,Keys jangling,0.577181,0.477778,0.522796,180,0.593526
+run3_kd_crd,full,Knock,0.551724,0.533333,0.542373,180,0.620434
+run3_kd_crd,full,Laughter,0.56682,0.683333,0.619647,180,0.696766
+run3_kd_crd,full,Meow,0.640777,0.733333,0.683938,180,0.794391
+run3_kd_crd,full,Microwave oven,0.535032,0.466667,0.498516,180,0.513977
+run3_kd_crd,full,Saxophone,0.689474,0.727778,0.708108,180,0.795344
+run3_kd_crd,full,Scissors,0.440994,0.394444,0.416422,180,0.451473
+run3_kd_crd,full,Shatter,0.666667,0.644444,0.655367,180,0.737099
+run3_kd_crd,full,Squeak,0.698113,0.411111,0.517483,180,0.548832
+run3_kd_crd,full,Tambourine,0.729358,0.883333,0.798995,180,0.895407
+run3_kd_crd,full,Tearing,0.542373,0.533333,0.537815,180,0.627061
+run3_kd_crd,full,Telephone,0.601093,0.611111,0.606061,180,0.707484
+run3_kd_crd,full,Trumpet,0.69697,0.638889,0.666667,180,0.752713
+run3_kd_crd,full,"Violin, fiddle",0.822695,0.644444,0.722741,180,0.756386
+run3_kd_crd,full,Writing,0.389558,0.538889,0.452214,180,0.531627
+run3_kd_crd,mid,Acoustic guitar,0.546512,0.783333,0.643836,60,0.815204
+run3_kd_crd,mid,Applause,0.632911,0.833333,0.719424,60,0.760972
+run3_kd_crd,mid,Bark,0.866667,0.866667,0.866667,60,0.959996
+run3_kd_crd,mid,"Burping, eructation",0.830508,0.816667,0.823529,60,0.889466
+run3_kd_crd,mid,Bus,0.757143,0.883333,0.815385,60,0.83954
+run3_kd_crd,mid,Chime,0.731707,0.5,0.594059,60,0.605485
+run3_kd_crd,mid,Clarinet,0.655738,0.666667,0.661157,60,0.692097
+run3_kd_crd,mid,Computer keyboard,0.561644,0.683333,0.616541,60,0.729999
+run3_kd_crd,mid,Cough,0.676923,0.733333,0.704,60,0.758571
+run3_kd_crd,mid,Cowbell,0.723077,0.783333,0.752,60,0.804319
+run3_kd_crd,mid,Drawer open or close,0.540541,0.333333,0.412371,60,0.460095
+run3_kd_crd,mid,Electric piano,0.852459,0.866667,0.859504,60,0.901564
+run3_kd_crd,mid,Fart,0.628571,0.733333,0.676923,60,0.857405
+run3_kd_crd,mid,Finger snapping,0.645833,0.516667,0.574074,60,0.636615
+run3_kd_crd,mid,Fireworks,0.849057,0.75,0.79646,60,0.869456
+run3_kd_crd,mid,Flute,0.763158,0.966667,0.852941,60,0.928298
+run3_kd_crd,mid,Glockenspiel,0.545455,0.6,0.571429,60,0.480688
+run3_kd_crd,mid,Gong,0.852941,0.966667,0.90625,60,0.974282
+run3_kd_crd,mid,"Gunshot, gunfire",0.681159,0.783333,0.728682,60,0.800424
+run3_kd_crd,mid,Harmonica,0.928571,0.866667,0.896552,60,0.936223
+run3_kd_crd,mid,Hi-hat,0.647059,0.183333,0.285714,60,0.440517
+run3_kd_crd,mid,Keys jangling,0.634615,0.55,0.589286,60,0.673912
+run3_kd_crd,mid,Knock,0.555556,0.5,0.526316,60,0.614917
+run3_kd_crd,mid,Laughter,0.60274,0.733333,0.661654,60,0.72256
+run3_kd_crd,mid,Meow,0.666667,0.8,0.727273,60,0.830928
+run3_kd_crd,mid,Microwave oven,0.577778,0.433333,0.495238,60,0.470306
+run3_kd_crd,mid,Saxophone,0.684211,0.65,0.666667,60,0.793153
+run3_kd_crd,mid,Scissors,0.490566,0.433333,0.460177,60,0.529583
+run3_kd_crd,mid,Shatter,0.762712,0.75,0.756303,60,0.819008
+run3_kd_crd,mid,Squeak,0.741935,0.383333,0.505495,60,0.566416
+run3_kd_crd,mid,Tambourine,0.772727,0.85,0.809524,60,0.880903
+run3_kd_crd,mid,Tearing,0.484375,0.516667,0.5,60,0.59549
+run3_kd_crd,mid,Telephone,0.614286,0.716667,0.661538,60,0.811315
+run3_kd_crd,mid,Trumpet,0.683333,0.683333,0.683333,60,0.805856
+run3_kd_crd,mid,"Violin, fiddle",0.911111,0.683333,0.780952,60,0.785491
+run3_kd_crd,mid,Writing,0.405063,0.533333,0.460432,60,0.535307
+run3b_crd_only,full,Acoustic guitar,0.590308,0.744444,0.658477,180,0.789316
+run3b_crd_only,full,Applause,0.656863,0.744444,0.697917,180,0.749518
+run3b_crd_only,full,Bark,0.845304,0.85,0.847645,180,0.936795
+run3b_crd_only,full,"Burping, eructation",0.815951,0.738889,0.77551,180,0.861105
+run3b_crd_only,full,Bus,0.73743,0.733333,0.735376,180,0.784108
+run3b_crd_only,full,Chime,0.472973,0.583333,0.522388,180,0.652791
+run3b_crd_only,full,Clarinet,0.704403,0.622222,0.660767,180,0.73743
+run3b_crd_only,full,Computer keyboard,0.660377,0.583333,0.619469,180,0.70948
+run3b_crd_only,full,Cough,0.760736,0.688889,0.723032,180,0.749064
+run3b_crd_only,full,Cowbell,0.663507,0.777778,0.716113,180,0.804157
+run3b_crd_only,full,Drawer open or close,0.503067,0.455556,0.478134,180,0.528656
+run3b_crd_only,full,Electric piano,0.748691,0.794444,0.770889,180,0.850364
+run3b_crd_only,full,Fart,0.823171,0.75,0.784884,180,0.860952
+run3b_crd_only,full,Finger snapping,0.701987,0.588889,0.640483,180,0.688607
+run3b_crd_only,full,Fireworks,0.763314,0.716667,0.739255,180,0.840502
+run3b_crd_only,full,Flute,0.777778,0.933333,0.848485,180,0.935664
+run3b_crd_only,full,Glockenspiel,0.481781,0.661111,0.557377,180,0.539457
+run3b_crd_only,full,Gong,0.869792,0.927778,0.897849,180,0.970913
+run3b_crd_only,full,"Gunshot, gunfire",0.591304,0.755556,0.663415,180,0.784542
+run3b_crd_only,full,Harmonica,0.840426,0.877778,0.858696,180,0.925281
+run3b_crd_only,full,Hi-hat,0.65625,0.233333,0.344262,180,0.494223
+run3b_crd_only,full,Keys jangling,0.574194,0.494444,0.531343,180,0.59258
+run3b_crd_only,full,Knock,0.497487,0.55,0.522427,180,0.606893
+run3b_crd_only,full,Laughter,0.492308,0.711111,0.581818,180,0.721823
+run3b_crd_only,full,Meow,0.678947,0.716667,0.697297,180,0.784208
+run3b_crd_only,full,Microwave oven,0.539474,0.455556,0.493976,180,0.520735
+run3b_crd_only,full,Saxophone,0.640449,0.633333,0.636872,180,0.751142
+run3b_crd_only,full,Scissors,0.485507,0.372222,0.421384,180,0.461328
+run3b_crd_only,full,Shatter,0.692771,0.638889,0.66474,180,0.729049
+run3b_crd_only,full,Squeak,0.770833,0.411111,0.536232,180,0.570006
+run3b_crd_only,full,Tambourine,0.784314,0.888889,0.833333,180,0.908226
+run3b_crd_only,full,Tearing,0.65942,0.505556,0.572327,180,0.631335
+run3b_crd_only,full,Telephone,0.559242,0.655556,0.603581,180,0.703361
+run3b_crd_only,full,Trumpet,0.689266,0.677778,0.683473,180,0.765197
+run3b_crd_only,full,"Violin, fiddle",0.828947,0.7,0.759036,180,0.793186
+run3b_crd_only,full,Writing,0.402715,0.494444,0.44389,180,0.536885
+run3b_crd_only,mid,Acoustic guitar,0.580247,0.783333,0.666667,60,0.816839
+run3b_crd_only,mid,Applause,0.608108,0.75,0.671642,60,0.761828
+run3b_crd_only,mid,Bark,0.857143,0.9,0.878049,60,0.967239
+run3b_crd_only,mid,"Burping, eructation",0.765625,0.816667,0.790323,60,0.901902
+run3b_crd_only,mid,Bus,0.73913,0.85,0.790698,60,0.848589
+run3b_crd_only,mid,Chime,0.492308,0.533333,0.512,60,0.625156
+run3b_crd_only,mid,Clarinet,0.647059,0.55,0.594595,60,0.694724
+run3b_crd_only,mid,Computer keyboard,0.673077,0.583333,0.625,60,0.716271
+run3b_crd_only,mid,Cough,0.733333,0.733333,0.733333,60,0.764445
+run3b_crd_only,mid,Cowbell,0.712121,0.783333,0.746032,60,0.813818
+run3b_crd_only,mid,Drawer open or close,0.470588,0.4,0.432432,60,0.463588
+run3b_crd_only,mid,Electric piano,0.816667,0.816667,0.816667,60,0.917117
+run3b_crd_only,mid,Fart,0.811321,0.716667,0.761062,60,0.859595
+run3b_crd_only,mid,Finger snapping,0.716981,0.633333,0.672566,60,0.681252
+run3b_crd_only,mid,Fireworks,0.84,0.7,0.763636,60,0.89362
+run3b_crd_only,mid,Flute,0.75,0.95,0.838235,60,0.936268
+run3b_crd_only,mid,Glockenspiel,0.5,0.666667,0.571429,60,0.548994
+run3b_crd_only,mid,Gong,0.903226,0.933333,0.918033,60,0.987534
+run3b_crd_only,mid,"Gunshot, gunfire",0.638889,0.766667,0.69697,60,0.804284
+run3b_crd_only,mid,Harmonica,0.868852,0.883333,0.876033,60,0.933622
+run3b_crd_only,mid,Hi-hat,0.478261,0.183333,0.26506,60,0.412377
+run3b_crd_only,mid,Keys jangling,0.59322,0.583333,0.588235,60,0.682042
+run3b_crd_only,mid,Knock,0.548387,0.566667,0.557377,60,0.626614
+run3b_crd_only,mid,Laughter,0.511364,0.75,0.608108,60,0.758854
+run3b_crd_only,mid,Meow,0.703125,0.75,0.725806,60,0.823496
+run3b_crd_only,mid,Microwave oven,0.565217,0.433333,0.490566,60,0.489191
+run3b_crd_only,mid,Saxophone,0.636364,0.583333,0.608696,60,0.754095
+run3b_crd_only,mid,Scissors,0.55,0.366667,0.44,60,0.537555
+run3b_crd_only,mid,Shatter,0.716667,0.716667,0.716667,60,0.792525
+run3b_crd_only,mid,Squeak,0.724138,0.35,0.47191,60,0.580334
+run3b_crd_only,mid,Tambourine,0.847458,0.833333,0.840336,60,0.899559
+run3b_crd_only,mid,Tearing,0.58,0.483333,0.527273,60,0.5902
+run3b_crd_only,mid,Telephone,0.541176,0.766667,0.634483,60,0.807536
+run3b_crd_only,mid,Trumpet,0.721311,0.733333,0.727273,60,0.828209
+run3b_crd_only,mid,"Violin, fiddle",0.846154,0.733333,0.785714,60,0.820596
+run3b_crd_only,mid,Writing,0.46875,0.5,0.483871,60,0.557556
+run3c_kd_only,full,Acoustic guitar,0.560166,0.75,0.64133,180,0.771489
+run3c_kd_only,full,Applause,0.627907,0.75,0.683544,180,0.737546
+run3c_kd_only,full,Bark,0.842105,0.888889,0.864865,180,0.929639
+run3c_kd_only,full,"Burping, eructation",0.781818,0.716667,0.747826,180,0.847584
+run3c_kd_only,full,Bus,0.725806,0.75,0.737705,180,0.788462
+run3c_kd_only,full,Chime,0.620482,0.572222,0.595376,180,0.657926
+run3c_kd_only,full,Clarinet,0.758865,0.594444,0.666667,180,0.73568
+run3c_kd_only,full,Computer keyboard,0.61326,0.616667,0.614958,180,0.706945
+run3c_kd_only,full,Cough,0.763636,0.7,0.730435,180,0.760831
+run3c_kd_only,full,Cowbell,0.69697,0.766667,0.730159,180,0.799373
+run3c_kd_only,full,Drawer open or close,0.508982,0.472222,0.489914,180,0.520886
+run3c_kd_only,full,Electric piano,0.717822,0.805556,0.759162,180,0.851684
+run3c_kd_only,full,Fart,0.803571,0.75,0.775862,180,0.865503
+run3c_kd_only,full,Finger snapping,0.6,0.633333,0.616216,180,0.701345
+run3c_kd_only,full,Fireworks,0.785311,0.772222,0.778711,180,0.839497
+run3c_kd_only,full,Flute,0.763393,0.95,0.846535,180,0.932985
+run3c_kd_only,full,Glockenspiel,0.517413,0.577778,0.545932,180,0.508686
+run3c_kd_only,full,Gong,0.839806,0.961111,0.896373,180,0.972356
+run3c_kd_only,full,"Gunshot, gunfire",0.599119,0.755556,0.668305,180,0.787369
+run3c_kd_only,full,Harmonica,0.872928,0.877778,0.875346,180,0.924911
+run3c_kd_only,full,Hi-hat,0.711538,0.205556,0.318966,180,0.500174
+run3c_kd_only,full,Keys jangling,0.51497,0.477778,0.495677,180,0.575415
+run3c_kd_only,full,Knock,0.535912,0.538889,0.537396,180,0.605544
+run3c_kd_only,full,Laughter,0.475472,0.7,0.566292,180,0.725749
+run3c_kd_only,full,Meow,0.685864,0.727778,0.706199,180,0.797973
+run3c_kd_only,full,Microwave oven,0.485714,0.472222,0.478873,180,0.510926
+run3c_kd_only,full,Saxophone,0.603865,0.694444,0.645995,180,0.751858
+run3c_kd_only,full,Scissors,0.496296,0.372222,0.425397,180,0.466875
+run3c_kd_only,full,Shatter,0.732026,0.622222,0.672673,180,0.742815
+run3c_kd_only,full,Squeak,0.837209,0.4,0.541353,180,0.570902
+run3c_kd_only,full,Tambourine,0.730594,0.888889,0.802005,180,0.913587
+run3c_kd_only,full,Tearing,0.731092,0.483333,0.58194,180,0.637275
+run3c_kd_only,full,Telephone,0.645714,0.627778,0.63662,180,0.690213
+run3c_kd_only,full,Trumpet,0.690476,0.644444,0.666667,180,0.756904
+run3c_kd_only,full,"Violin, fiddle",0.783439,0.683333,0.72997,180,0.78756
+run3c_kd_only,full,Writing,0.422594,0.561111,0.4821,180,0.552213
+run3c_kd_only,mid,Acoustic guitar,0.554217,0.766667,0.643357,60,0.808013
+run3c_kd_only,mid,Applause,0.635135,0.783333,0.701493,60,0.739045
+run3c_kd_only,mid,Bark,0.846154,0.916667,0.88,60,0.961974
+run3c_kd_only,mid,"Burping, eructation",0.754098,0.766667,0.760331,60,0.894087
+run3c_kd_only,mid,Bus,0.746479,0.883333,0.80916,60,0.86456
+run3c_kd_only,mid,Chime,0.584906,0.516667,0.548673,60,0.626811
+run3c_kd_only,mid,Clarinet,0.704545,0.516667,0.596154,60,0.70095
+run3c_kd_only,mid,Computer keyboard,0.616667,0.616667,0.616667,60,0.717707
+run3c_kd_only,mid,Cough,0.721311,0.733333,0.727273,60,0.769897
+run3c_kd_only,mid,Cowbell,0.705882,0.8,0.75,60,0.806984
+run3c_kd_only,mid,Drawer open or close,0.461538,0.4,0.428571,60,0.45802
+run3c_kd_only,mid,Electric piano,0.753623,0.866667,0.806202,60,0.910192
+run3c_kd_only,mid,Fart,0.823529,0.7,0.756757,60,0.873248
+run3c_kd_only,mid,Finger snapping,0.6,0.65,0.624,60,0.695907
+run3c_kd_only,mid,Fireworks,0.884615,0.766667,0.821429,60,0.909049
+run3c_kd_only,mid,Flute,0.7375,0.983333,0.842857,60,0.929622
+run3c_kd_only,mid,Glockenspiel,0.530303,0.583333,0.555556,60,0.514225
+run3c_kd_only,mid,Gong,0.893939,0.983333,0.936508,60,0.990912
+run3c_kd_only,mid,"Gunshot, gunfire",0.666667,0.8,0.727273,60,0.817027
+run3c_kd_only,mid,Harmonica,0.898305,0.883333,0.890756,60,0.932831
+run3c_kd_only,mid,Hi-hat,0.625,0.166667,0.263158,60,0.427465
+run3c_kd_only,mid,Keys jangling,0.540984,0.55,0.545455,60,0.65732
+run3c_kd_only,mid,Knock,0.563636,0.516667,0.53913,60,0.601728
+run3c_kd_only,mid,Laughter,0.54023,0.783333,0.639456,60,0.78151
+run3c_kd_only,mid,Meow,0.701493,0.783333,0.740157,60,0.83653
+run3c_kd_only,mid,Microwave oven,0.482143,0.45,0.465517,60,0.485672
+run3c_kd_only,mid,Saxophone,0.59375,0.633333,0.612903,60,0.74383
+run3c_kd_only,mid,Scissors,0.589744,0.383333,0.464646,60,0.555618
+run3c_kd_only,mid,Shatter,0.741379,0.716667,0.728814,60,0.80033
+run3c_kd_only,mid,Squeak,0.84,0.35,0.494118,60,0.560561
+run3c_kd_only,mid,Tambourine,0.776119,0.866667,0.818898,60,0.902028
+run3c_kd_only,mid,Tearing,0.613636,0.45,0.519231,60,0.592334
+run3c_kd_only,mid,Telephone,0.647059,0.733333,0.6875,60,0.796844
+run3c_kd_only,mid,Trumpet,0.745763,0.733333,0.739496,60,0.822077
+run3c_kd_only,mid,"Violin, fiddle",0.843137,0.716667,0.774775,60,0.810698
+run3c_kd_only,mid,Writing,0.450704,0.533333,0.48855,60,0.575597
