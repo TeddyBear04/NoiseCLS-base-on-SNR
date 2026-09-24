@@ -272,14 +272,21 @@ Trong báo cáo: đừng viết "expert cũ thua vì thiếu dữ liệu". Số 
 Run 2 bị chạy hai lần do sự cố config (xem bên dưới). Cùng code, cùng config, cùng
 seed 2026:
 
-| | val_mid acc | val_mid macro-F1 |
-|---|---|---|
-| Lượt 1 | 0.6935 | 0.6925 |
-| Lượt 2 | 0.7005 | 0.7000 |
-| Chênh | **+0.70 pt** | +0.75 pt |
+| | val_mid acc | val_mid F1 | test_mid acc | test_mid F1 |
+|---|---|---|---|---|
+| Lượt 1 | 0.6935 | 0.6925 | 0.6657 | 0.6565 |
+| Lượt 2 | 0.7005 | 0.7000 | 0.6657 | 0.6602 |
+| Chênh | **+0.70 pt** | +0.75 pt | **0.00** | +0.37 pt |
 
-Seed không khử được bất định của cuDNN và thứ tự cộng trên GPU. **Chênh lệch dưới ~0.7
-điểm giữa hai run bất kỳ là nhiễu thuần**, kể cả trên validation.
+Seed không khử được bất định của cuDNN và thứ tự cộng trên GPU.
+
+Đáng chú ý: **test accuracy trùng khít cả hai lần** (1438/2160), nhưng macro-F1 lệch 0.37
+điểm — cùng số clip đúng, khác phân bố theo lớp. Còn validation thì lệch tới 0.70 điểm,
+vì checkpoint được chọn theo chính lát mid của validation nên early stopping khuếch đại
+nhiễu ở đó.
+
+Kết luận thực dụng: **báo cáo dựa vào test, và ưu tiên accuracy hơn macro-F1 khi so hai
+run** — accuracy ổn định hơn nhiều trên tập này. Chênh macro-F1 dưới ~0.4 điểm là nhiễu.
 
 Cộng với sai số chuẩn ±1.0 điểm trên 2.160 clip test, bar để một run được coi là thắng
 thật: hoặc vượt trên **1 điểm**, hoặc qua **McNemar theo cặp**. Dự đoán cho run 3 là

@@ -1,6 +1,6 @@
 {
-  "teacher_val_accuracy": 0.7799,
-  "teacher_val_macro_f1": 0.7795,
+  "teacher_val_accuracy": 0.7795,
+  "teacher_val_macro_f1": 0.7785,
   "teacher_gate": "PASS",
   "audit": {
     "rows": 43200,

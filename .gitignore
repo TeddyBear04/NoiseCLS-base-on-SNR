@@ -20,3 +20,6 @@ env/
 # OS
 Thumbs.db
 .DS_Store
+
+# artifact transfer archives
+artifacts.zip
