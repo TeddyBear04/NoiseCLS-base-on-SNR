@@ -267,6 +267,53 @@ xong ba biến gây nhiễu.
 
 Trong báo cáo: đừng viết "expert cũ thua vì thiếu dữ liệu". Số liệu nói ngược.
 
+### Epoch: epoch 1 là tốt nhất, mọi epoch sau đều tệ hơn
+
+Lượt run 2 chạy với `finetune_epochs: 10, patience: 10` (patience bằng số epoch nên early
+stopping không bao giờ nổ). Đường cong:
+
+```
+ep  train_acc    ce   val_mid_f1   film_dev
+ 1     0.7179  1.0600    0.7000      14.06   <- TOT NHAT
+ 2     0.8441  0.5617    0.6770      12.94
+ 3     0.9208  0.2916    0.6775      12.94
+ 4     0.9668  0.1267    0.6736      14.50
+ 5     0.9906  0.0401    0.6693      20.88
+ 6     0.9988  0.0078    0.6688      27.25
+ 7     0.9999  0.0013    0.6719      31.50
+ 8     0.9999  0.0007    0.6715      35.00
+ 9     1.0000  0.0003    0.6704      37.75
+10     1.0000  0.0001    0.6730      40.00
+```
+
+`train_acc` leo tới 1.0000, CE sụp xuống 0.0001 — student **thuộc lòng** 30.240 clip,
+y như teacher. Chín epoch sau epoch 1 là overfit thuần, mỗi epoch 72 giây.
+
+**Đã giảm: student `finetune_epochs` 10 -> 6, `patience` 10 -> 3.** Giữ 6 thay vì 1 làm
+bảo hiểm: run 3 có thêm KD + CRD nên bề mặt loss khác, điểm tối ưu có thể dịch về sau.
+Teacher cũng vậy — head peak ngay epoch 1 nên `head_epochs` 50 -> 20, `head_patience`
+10 -> 3.
+
+`film_dev` tăng đều 14 -> 40, nên FiLM **có** học chứ không sụp về identity. Nhưng nó
+học trong lúc val đang tụt, tức phần nó học thuộc về overfit chứ không phải điều kiện
+hoá hữu ích.
+
+**Nếu run 3 cũng peak ở epoch 1** thì vấn đề không còn là số epoch mà là dung lượng hoặc
+learning rate — 12 block trainable trên 30k clip là quá nhiều. Đó sẽ là thay đổi phương
+pháp, nên phải tra paper trước khi sửa.
+
+### Val dễ hơn test khoảng 3.5 điểm, không phải chỉ do selection bias
+
+Ghi nhận trước đó trong file này quy chênh lệch val-test cho selection bias. Số liệu nói
+khác: epoch 1 thắng cách biệt rõ (0.7000 so với 0.6775 của epoch tốt thứ hai), không phải
+một dao động may mắn được chọn ra từ 10 lần đo. Selection bias khi đỉnh rõ như vậy là nhỏ.
+
+Nên phần lớn khoảng cách `val_mid 0.7005` -> `test_mid 0.6657` là **lát mid của validation
+dễ hơn lát mid của test**, chứ không phải ta tự lừa mình khi chọn checkpoint.
+
+Hệ quả cho báo cáo: **không bao giờ đặt số validation cạnh số test của baseline.** Muốn
+xác nhận điều này cần số validation của baseline, hiện chưa có.
+
 ### Phương sai giữa hai lượt chạy giống hệt nhau — đo được 0.70 điểm
 
 Run 2 bị chạy hai lần do sự cố config (xem bên dưới). Cùng code, cùng config, cùng
