@@ -169,6 +169,52 @@ checkpoint theo lát mid đã làm mất.
 `run1_baseline` có **mAP 0.7512 và AUC 0.9712 cao nhất bảng**. `run3_kd_crd` thấp nhất
 (0.7382 / 0.9678). Thêm KD+CRD làm **xấu** chất lượng xếp hạng trên 36 lớp.
 
+### Theo từng mức SNR: phương pháp hoạt động, nhưng KHÔNG ở nhánh mid
+
+`run3_kd_crd` so với `run1_baseline`, Top-1 accuracy, mỗi mức 1.080 clip:
+
+| Lát | n | baseline | run3 | Δ | b | c | p | Có ý nghĩa |
+|---|---|---|---|---|---|---|---|---|
+| −5 dB | 1080 | 0.7259 | 0.7204 | −0.56 | 32 | 26 | 0.512 | không |
+| 0 dB | 1080 | 0.7157 | 0.7194 | +0.37 | 28 | 32 | 0.699 | không |
+| 5 dB | 1080 | 0.6852 | 0.6815 | −0.37 | 41 | 37 | 0.734 | không |
+| 10 dB | 1080 | 0.6620 | 0.6704 | +0.83 | 40 | 49 | 0.396 | không |
+| 15 dB | 1080 | 0.6139 | 0.6259 | +1.20 | 37 | 50 | 0.198 | không |
+| **20 dB** | 1080 | 0.5380 | **0.5593** | **+2.13** | 35 | 58 | **0.0225** | **có** |
+| mid (5–10) | 2160 | 0.6736 | 0.6759 | +0.23 | 81 | 86 | 0.757 | không |
+| toàn test | 6480 | 0.6568 | 0.6628 | +0.60 | 213 | 252 | 0.078 | không |
+
+#### Kiểm tra xu hướng — đây mới là bằng chứng mạnh
+
+`p = 0.0225` ở 20 dB là **một trong tám lát** được kiểm định. Hiệu chỉnh Bonferroni cho
+ngưỡng `0.05/8 = 0.00625`, nên **riêng lát đó không vượt được** — nếu chỉ dựa vào nó thì
+đó là đãi số liệu.
+
+Nhưng giả thuyết ở đây có **hướng định trước**: phân tích khoảng trống của teacher (tăng
+đơn điệu theo SNR, +5.2 ở −5 dB lên +24.9 ở 20 dB) đã dự đoán chính xác điều này **trước
+khi chạy**. Nên phép kiểm đúng là kiểm định xu hướng, và nó chỉ là **một** phép kiểm:
+
+```
+Spearman(SNR, Δ) : rho = 0.943   p = 0.0048
+Kendall  tau     = 0.867   p = 0.0167
+```
+
+**Mức lợi tăng theo SNR một cách có ý nghĩa thống kê.** Đây là kết quả dương duy nhất
+đứng vững trong cả dự án.
+
+#### Hệ quả
+
+Phương pháp **có tác dụng**, nhưng ở **nhánh high (15–20 dB)**, không phải nhánh mid được
+giao. Ở −5 dB nó còn làm hại.
+
+Điều này hoàn toàn khớp với cơ chế: ở SNR cao, speech át noise nên mixture khác xa noise
+sạch, và teacher (nhìn noise sạch, acc phẳng ~0.78 ở mọi SNR) có nhiều thứ để dạy nhất.
+Ở −5 dB mixture gần như đã là noise, teacher không biết gì hơn student.
+
+**DESIGN.md §2 của tôi lập luận ngược lại** — rằng mid là nơi CRD lợi nhất, vì ở 20 dB
+"embedding quá xa để kéo về". Giả thuyết đó giờ bị bác bỏ bằng số liệu: khoảng cách xa
+hơn lại tốt hơn, không phải tệ hơn.
+
 ### Kết luận trung thực cho báo cáo
 
 > Với bài toán này, teacher–student distillation từ noise sạch **không cải thiện** phân
