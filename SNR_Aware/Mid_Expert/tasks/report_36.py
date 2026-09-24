@@ -49,7 +49,8 @@ SHEET_COLUMNS = [
 # DPCRN branch to 0.144. So those two columns stay empty here rather than being
 # filled with a number that would not mean what the column says.
 METHOD_NAMES = {
-    "beats_baseline": "BEATs baseline (mixture)",
+    "beats_baseline": "BEATs baseline (published, metrics file only)",
+    "run1_baseline": "BEATs baseline (rebuilt, CE only, no FiLM)",
     "run2_ce_only": "Mid expert - CE only (control)",
     "run3_kd_crd": "Mid expert - KD + CRD",
     "run3b_crd_only": "Mid expert - CRD only",

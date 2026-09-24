@@ -208,6 +208,8 @@ def command_student36(config: dict) -> None:
 
     best = evaluate_student(model, validation_loader, device, corpus.labels, band)
     best_state = snapshot(model, blocks)
+    print(f"selecting checkpoint on the '{student_config.get('select_on', 'mid')}' slice",
+          flush=True)
     print(f"epoch=0 val_mid_acc={best['mid']['accuracy']:.4f} "
           f"val_mid_f1={best['mid']['macro_f1']:.4f} "
           f"val_full_acc={best['full']['accuracy']:.4f}", flush=True)
@@ -297,9 +299,11 @@ def command_student36(config: dict) -> None:
               f"val_mid_f1={entry['val_mid_macro_f1']:.4f} "
               f"film_dev={deviation:.3f}", flush=True)
 
-        # Selection is on the MID slice, not the whole validation split. This is the
-        # only place specialisation enters the main path, and it costs nothing.
-        if current["mid"]["macro_f1"] > best["mid"]["macro_f1"] + 1e-4:
+        # Which slice selects the checkpoint. "mid" is the only place specialisation
+        # enters the main path, and it costs nothing. run1_baseline uses "full"
+        # because that is what the published baseline recipe did.
+        key = student_config.get("select_on", "mid")
+        if current[key]["macro_f1"] > best[key]["macro_f1"] + 1e-4:
             best, stale = current, 0
             best_state = snapshot(model, blocks)
         else:

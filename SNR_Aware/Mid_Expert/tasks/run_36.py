@@ -622,12 +622,26 @@ def resolve_stage(name: str):
 #                  structure). Comparing this against run3 says whether the gain is
 #                  representation transfer or smoothing.
 #   run3c_kd_only  the complement, to finish the attribution.
+#   run1_baseline  the BEATs recipe rebuilt inside this pipeline: CE only, no FiLM,
+#                  checkpoint chosen on the WHOLE validation split. The published
+#                  baseline's checkpoint is gone and it has no per-clip predictions,
+#                  so its row can only carry the metrics its old file recorded and it
+#                  cannot enter a paired test. This run fixes both: the same eight
+#                  metrics on the same test clips, and McNemar against it becomes
+#                  possible.
 RUNS = {
-    "run2_ce_only": {"a_kd": 0.0, "b_crd": 0.0, "remix": False},
-    "run3_kd_crd": {"a_kd": 1.0, "b_crd": 0.8, "remix": False},
-    "run3b_crd_only": {"a_kd": 0.0, "b_crd": 0.8, "remix": False},
-    "run3c_kd_only": {"a_kd": 1.0, "b_crd": 0.0, "remix": False},
-    "run4_remix": {"a_kd": 1.0, "b_crd": 0.8, "remix": True},
+    "run1_baseline": {"a_kd": 0.0, "b_crd": 0.0, "remix": False,
+                      "film": False, "select_on": "full"},
+    "run2_ce_only": {"a_kd": 0.0, "b_crd": 0.0, "remix": False,
+                     "film": True, "select_on": "mid"},
+    "run3_kd_crd": {"a_kd": 1.0, "b_crd": 0.8, "remix": False,
+                    "film": True, "select_on": "mid"},
+    "run3b_crd_only": {"a_kd": 0.0, "b_crd": 0.8, "remix": False,
+                       "film": True, "select_on": "mid"},
+    "run3c_kd_only": {"a_kd": 1.0, "b_crd": 0.0, "remix": False,
+                      "film": True, "select_on": "mid"},
+    "run4_remix": {"a_kd": 1.0, "b_crd": 0.8, "remix": True,
+                   "film": True, "select_on": "mid"},
 }
 RUN_REQUIRED = ("student36", "test36")
 
@@ -638,8 +652,11 @@ def apply_run(config: dict, name: str) -> dict:
     config["loss"]["a_kd"] = switches["a_kd"]
     config["loss"]["b_crd"] = switches["b_crd"]
     config.setdefault("remix", {})["enabled"] = switches["remix"]
+    config["student"]["film"]["enabled"] = switches["film"]
+    config["student"]["select_on"] = switches["select_on"]
     print(f"run={name} a_kd={switches['a_kd']} b_crd={switches['b_crd']} "
-          f"remix={switches['remix']}", flush=True)
+          f"remix={switches['remix']} film={switches['film']} "
+          f"select_on={switches['select_on']}", flush=True)
     return config
 
 
