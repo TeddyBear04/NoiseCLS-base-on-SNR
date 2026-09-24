@@ -599,13 +599,54 @@ def resolve_stage(name: str):
             "test36": student_36.command_test36}[name]
 
 
+# Which switches each run flips. Everything else comes from the config file.
+#
+# This lives here rather than in the config because the config is tracked in git:
+# hand-editing it means every `git pull` fights the edit, and when the edit loses
+# the run proceeds SILENTLY as the wrong variant. That happened once already -- a
+# full student run completed as run 2 while its log said so on line 1 and nobody
+# was reading line 1. Passing --run makes the choice explicit in the command, in
+# the log, and in the checkpoint name, and it cannot be reverted by a pull.
+RUNS = {
+    "run2_ce_only": {"a_kd": 0.0, "b_crd": 0.0, "remix": False},
+    "run3_kd_crd": {"a_kd": 1.0, "b_crd": 0.8, "remix": False},
+    "run4_remix": {"a_kd": 1.0, "b_crd": 0.8, "remix": True},
+}
+RUN_REQUIRED = ("student36", "test36")
+
+
+def apply_run(config: dict, name: str) -> dict:
+    switches = RUNS[name]
+    config["run"] = name
+    config["loss"]["a_kd"] = switches["a_kd"]
+    config["loss"]["b_crd"] = switches["b_crd"]
+    config.setdefault("remix", {})["enabled"] = switches["remix"]
+    print(f"run={name} a_kd={switches['a_kd']} b_crd={switches['b_crd']} "
+          f"remix={switches['remix']}", flush=True)
+    return config
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stage", choices=STAGES)
     parser.add_argument("--config", type=Path, default=HERE / "config/train_config.json")
+    parser.add_argument("--run", choices=sorted(RUNS),
+                        help="Required for student36 and test36. Sets a_kd, b_crd and remix.")
     arguments = parser.parse_args()
+
+    if arguments.stage in RUN_REQUIRED and arguments.run is None:
+        parser.error(
+            f"{arguments.stage} needs --run. Choose one of: {', '.join(sorted(RUNS))}.\n"
+            "It is required on purpose: the config file is tracked in git, so relying on\n"
+            "a hand edit lets a `git pull` silently turn run 3 back into run 2."
+        )
+    if arguments.stage not in RUN_REQUIRED and arguments.run is not None:
+        parser.error(f"{arguments.stage} ignores --run; drop it to avoid implying otherwise.")
+
     config = load_config(arguments.config)
     print(f"stage={arguments.stage} config={arguments.config}", flush=True)
+    if arguments.run is not None:
+        config = apply_run(config, arguments.run)
     resolve_stage(arguments.stage)(config)
 
 

@@ -63,29 +63,35 @@ train, 1 epoch), xong rồi mới đặt lại `false`.
 
 `teacher36` **thoát với mã 2** nếu chốt dừng bật, nên `set -e` sẽ chặn `bank36` chạy tiếp.
 
-Teacher đã chạy xong (acc 0.7799, `GATE=PASS`), nên vòng tiếp theo chỉ cần:
+### Các run
+
+Chọn run bằng cờ `--run`, **không sửa file config**:
 
 ```bash
 nohup bash -c '
 set -e
-python -u main.py student36 --config config/train_config.json
-python -u main.py test36    --config config/train_config.json
-' > run2.log 2>&1 &
+python -u main.py student36 --config config/train_config.json --run run3_kd_crd
+python -u main.py test36    --config config/train_config.json --run run3_kd_crd
+' > run3.log 2>&1 &
 
-tail -f run2.log
+tail -f run3.log
 ```
 
-### Các run
-
-`run2` → `run3` → `run4` chạy **cùng một code path**, chỉ khác config. Cố ý như vậy:
-nếu control và treatment đi qua hai nhánh code khác nhau thì chênh lệch giữa chúng có
-thể đến từ code chứ không phải phương pháp, và ablation mất ý nghĩa.
-
-| Run | `run` | `a_kd` | `b_crd` | `remix` | Trả lời câu hỏi |
+| Run | `--run` | `a_kd` | `b_crd` | `remix` | Trả lời câu hỏi |
 |---|---|---|---|---|---|
 | 2 | `run2_ce_only` | 0.0 | 0.0 | off | Bao nhiêu phần cải thiện chỉ do có thêm data — **control quan trọng nhất** |
 | 3 | `run3_kd_crd` | 1.0 | 0.8 | off | CRD + KD có đáng không |
 | 4 | `run4_remix` | 1.0 | 0.8 | on | Augment có cộng dồn không |
+
+`--run` là **bắt buộc** với `student36` và `test36`, và `teacher36`/`bank36` thì từ chối
+nó. Lý do: `config/train_config.json` nằm trong git, nên sửa tay là mỗi lần `git pull`
+một lần đánh nhau — và khi bản sửa thua thì run chạy **im lặng** dưới cấu hình sai.
+Chuyện đó đã xảy ra một lần: cả một lượt student chạy xong dưới danh nghĩa run 3 nhưng
+thực chất là run 2, và dòng đầu log đã nói đúng sự thật mà không ai đọc.
+
+Cả ba run đi **cùng một code path**, chỉ khác ba công tắc. Cố ý như vậy: nếu control và
+treatment chạy code khác nhau thì chênh lệch giữa chúng có thể đến từ code chứ không
+phải phương pháp, và ablation mất ý nghĩa.
 
 Không có run 2 thì không phát biểu được gì về run 3.
 
