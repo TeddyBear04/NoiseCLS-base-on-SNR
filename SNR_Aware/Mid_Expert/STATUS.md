@@ -73,11 +73,22 @@ Task molab không "xong" khi code viết xong — chỉ xong khi có output th�
 | 4 | CRD loss + bank negative | local | ✅ | **Chốt dừng đã bật và đã xử lý** — xem bên dưới |
 | 5 | Teacher trên noise sạch + bank | molab | ✅ | **acc 0.7799, GATE=PASS**, bank 43.200 hàng verify xong |
 | 6 | Student run 2 (CE only) | molab | ✅ | **test mid 0.6657 / 0.6565, hoà baseline (−0.24pt)** |
-| 7 | Student run 3 (+KD+CRD) | molab | 🟡 | Cùng code path với run 2, chỉ đổi `a_kd=1.0, b_crd=0.8` |
+| 7 | Student run 3 (+KD+CRD) | molab | ✅ | **test mid 0.6750 / 0.6669 — vượt baseline +0.69pt, nhưng McNemar p=0.10** |
 | 8 | Student run 4 (remix) | local + molab | ⬜ | **Đã mở khoá** — `LINEAR_OK=True` |
 | 9 | Báo cáo + ablation | molab | ⬜ | |
 
-**Bước kế tiếp:** Task 6 — student run 2 (chỉ CE, full SNR, có FiLM). Đây là **control quan trọng nhất**: không có nó thì không phát biểu được gì về CRD ở run 3.
+**Trạng thái: thí nghiệm lõi đã xong.** Run 3 vượt baseline +0.69 điểm nhưng McNemar
+p=0.10, chưa đạt ý nghĩa thống kê. Kết quả đủ để viết báo cáo nếu phát biểu trung thực.
+
+**Nếu muốn làm tiếp, theo thứ tự đáng làm:**
+
+1. `--run run3b_crd_only` (~10 phút) — **câu hội đồng sẽ hỏi**: cải thiện do CRD hay do
+   KD? Đây là setting chính của paper CRD (`-a 0 -b 0.8`). Không có nó thì không quy được
+   công cho cơ chế nào.
+2. `--run run3c_kd_only` (~10 phút) — đóng nốt phần quy trách nhiệm.
+3. Chạy lại run 3 với seed khác — hiệu ứng +1.06pt so run 2 đang ở p=0.10; lặp lại hai ba
+   lần rồi gộp sẽ cho kết luận chắc hơn là đi tinh chỉnh siêu tham số.
+4. `--run run4_remix` — augment, đã xác minh `LINEAR_OK=True` nên chạy được.
 
 Dự đoán để đối chiếu sau (ghi trước khi chạy, để khỏi tự lừa mình):
 
@@ -220,7 +231,8 @@ Teacher thuộc *nhãn*, nhưng biểu diễn của nó vẫn mã hoá quan hệ
 | BEATs baseline | 0.6806 | 0.6556 | 0.6681 | 0.6602 | — |
 | Mid expert cũ | 0.6787 | 0.6444 | 0.6616 | 0.6547 | −0.0065 |
 | **Teacher (noise sạch)** | — | — | **0.7799** | **0.7795** | **+0.1118 = trần trên** |
-| **Run 2 (CE, full data + FiLM)** | 0.6694 | 0.6620 | **0.6657** | **0.6565** | **−0.0024** |
+| Run 2 (CE, full data + FiLM) | 0.6685 | 0.6602 | 0.6644 | 0.6551 | −0.0037 |
+| **Run 3 (+KD+CRD)** | **0.6815** | **0.6685** | **0.6750** | **0.6669** | **+0.0069** |
 | Run 3 (+KD+CRD) | | | | | |
 | Run 4 (+remix) | | | | | |
 
@@ -341,6 +353,83 @@ thật: hoặc vượt trên **1 điểm**, hoặc qua **McNemar theo cặp**. D
 
 Ghi nhận tình cờ này vào báo cáo — nó là ước lượng phương sai duy nhất ta có mà không
 phải trả thêm compute.
+
+### Task 7 — run 3, kết quả cuối (✅ 2026-09-24)
+
+Cùng teacher, cùng code path, chỉ khác `a_kd=1.0, b_crd=0.8`.
+
+| | acc | macro-F1 | @5dB | @10dB |
+|---|---|---|---|---|
+| BEATs baseline | 0.6681 | 0.6602 | 0.6806 | 0.6556 |
+| Run 2 (control) | 0.6644 | 0.6551 | 0.6685 | 0.6602 |
+| **Run 3 (+KD+CRD)** | **0.6750** | **0.6669** | **0.6815** | **0.6685** |
+
+- so baseline: **+0.69 điểm** acc, +0.67 điểm F1
+- so run 2: **+1.06 điểm** acc, +1.18 điểm F1
+- vượt ở **cả hai mức SNR**, không phải một mức kéo mức kia
+
+#### McNemar theo cặp, lát mid, 2.160 clip
+
+```
+cả hai đúng = 1357      cả hai sai = 624
+b (run2 đúng, run3 sai) =  78
+c (run2 sai, run3 đúng) = 101
+chi2 (hiệu chỉnh liên tục) = 2.7039     p = 0.1001
+```
+
+**p = 0.100, KHÔNG đạt ngưỡng 0.05.** Hướng đúng (101 > 78) và sát mép, nhưng chưa có ý
+nghĩa thống kê.
+
+Trong báo cáo phải viết: *"cải thiện +0.69 điểm so với baseline; McNemar theo cặp cho
+p = 0.10, chưa đạt ý nghĩa thống kê ở mức 0.05"*. **Không được viết "vượt baseline" trơn.**
+
+Không có McNemar so trực tiếp với baseline vì checkpoint baseline
+(`BEATs_Experts/checkpoint/audio_best_36.pt`) đã mất trên molab và `*.pt` không đi theo
+git. Run 2 là proxy hợp lệ: cùng recipe, cùng data, cách baseline −0.37 điểm tức trong
+nhiễu.
+
+#### Đường cong run 3
+
+```
+ep      ce      kd     crd  train_acc  val_mid_f1  film_dev  sec
+ 1  1.1903  4.8532  3.1903     0.7533      0.6987      8.62  174
+ 2  0.4829  2.5625  1.9689     0.8857      0.6934      7.66   82
+ 3  0.1915  1.5294  1.5452     0.9520      0.7032      7.38   83   <- TOT NHAT
+ 4  0.0665  0.9691  1.2815     0.9818      0.7000      6.41   82
+ 5  0.0214  0.6502  1.1028     0.9944      0.6979      6.16   83
+ 6  0.0060  0.4639  0.9753     0.9983      0.6973      6.06   83
+```
+
+**`crd` giảm đều 3.19 -> 0.975**, nên phần contrastive học được thật. Nhưng nó **vẫn đang
+giảm ở epoch 6** — chưa hội tụ, trong khi `val_mid_f1` đã đỉnh ở epoch 3 rồi tụt. Overfit
+thắng trước khi CRD kịp hội tụ. Đó là chỗ còn dư địa nếu muốn đẩy tiếp.
+
+**Run 3 đỉnh ở epoch 3, run 2 đỉnh ở epoch 1.** KD+CRD dịch điểm tối ưu về sau, nên quyết
+định giữ 6 epoch thay vì cắt về 1 là đúng — cắt về 1 sẽ bỏ mất đỉnh thật.
+
+### ⚠️ Ba chuỗi nohup chạy song song — nguyên nhân của mọi thứ lộn xộn
+
+Trong phiên này có lúc **ba chuỗi `nohup` chạy đồng thời**, tất cả ghi vào cùng
+`artifacts/`. Đó mới là lý do file `.pt` "biến mất", `teacher_history.json` mới hơn
+checkpoint 16 phút, và config báo 8 epoch trong khi history ghi 10 (chuỗi cũ đọc config
+lúc nó khởi động). **Không phải molab dọn thư mục.**
+
+Hệ quả về tốc độ, đo được:
+
+```
+run3 epoch 1: 174s   <- con 3 chuoi tranh GPU
+run3 epoch 2:  82s   <- sau khi kill 2 chuoi kia
+```
+
+Tranh GPU làm mỗi epoch **chậm gấp đôi**. Run 2 chạy trọn trong lúc bị tranh (179s/epoch,
+17.9 phút); run 3 chỉ epoch đầu bị tranh rồi xuống 82s, tổng 9.8 phút cho cùng 6 epoch.
+
+**Quy tắc cho lần sau: trước khi `nohup`, luôn `ps -eo pid,etime,args | grep main.py` và
+kill chuỗi cũ.**
+
+Ghi chú: `teacher_summary.json` (0.7798) là của chuỗi bị kill. Teacher mà run 3 thật sự
+dùng có val_accuracy **0.7802**, đọc từ log của chuỗi A. Bank thì dựng từ đúng checkpoint
+của chuỗi A nên vẫn nhất quán.
 
 ## Ý nghĩa thống kê — bắt buộc cho Task 9
 
