@@ -1,0 +1,9 @@
+run_a,run_b,slice,samples,accuracy_a,accuracy_b,delta_accuracy,both_correct,both_wrong,only_a_correct,only_b_correct,chi2,p_value,significant_at_0.05
+run2_ce_only,run3_kd_crd,mid,2160,0.664352,0.675,0.010648,1357,624,78,101,2.703911,0.100102,no
+run2_ce_only,run3_kd_crd,full,6480,0.654784,0.659105,0.004321,3988,1954,255,283,1.355019,0.244403,no
+run2_ce_only,run3_kd_crd,snr_-5,1080,0.728704,0.721296,-0.007407,748,262,39,31,0.7,0.402784,no
+run2_ce_only,run3_kd_crd,snr_0,1080,0.718519,0.712963,-0.005556,734,268,42,36,0.320513,0.5713,no
+run2_ce_only,run3_kd_crd,snr_10,1080,0.660185,0.668519,0.008333,669,314,44,53,0.659794,0.416633,no
+run2_ce_only,run3_kd_crd,snr_15,1080,0.619444,0.621296,0.001852,626,366,43,45,0.011364,0.915106,no
+run2_ce_only,run3_kd_crd,snr_20,1080,0.533333,0.549074,0.015741,523,434,53,70,2.081301,0.149113,no
+run2_ce_only,run3_kd_crd,snr_5,1080,0.668519,0.681481,0.012963,688,310,34,48,2.060976,0.151113,no

@@ -584,7 +584,7 @@ def command_bank36(config: dict) -> None:
           flush=True)
 
 
-STAGES = ("teacher36", "bank36", "student36", "test36")
+STAGES = ("teacher36", "bank36", "student36", "test36", "report36")
 
 
 def resolve_stage(name: str):
@@ -594,6 +594,9 @@ def resolve_stage(name: str):
         return command_teacher36
     if name == "bank36":
         return command_bank36
+    if name == "report36":
+        from tasks import report_36
+        return report_36.command_report36
     from tasks import student_36
     return {"student36": student_36.command_student36,
             "test36": student_36.command_test36}[name]

@@ -393,9 +393,14 @@ def command_test36(config: dict) -> None:
     # already ran. Task 9's McNemar test needs them: with 2,160 mid clips the standard
     # error on accuracy is ~1.0 point, so only a paired test resolves the 0.5-2 point
     # effect we expect.
-    np.savez(out_dir / f"student_{run_name}_predictions.npz",
-             sample_id=np.array([r["sample_id"] for r in test_rows]),
-             predicted=collected["logits"].argmax(1).numpy().astype(np.int16),
-             target=collected["target"].numpy().astype(np.int16),
-             snr=collected["snr"].numpy().astype(np.int16))
+    # Logits, not just argmax: mAP and macro-AUC need the scores, and without them
+    # the CSV report can only carry the argmax-based half of the repo's metric set.
+    np.savez_compressed(
+        out_dir / f"student_{run_name}_predictions.npz",
+        sample_id=np.array([r["sample_id"] for r in test_rows]),
+        predicted=collected["logits"].argmax(1).numpy().astype(np.int16),
+        target=collected["target"].numpy().astype(np.int16),
+        snr=collected["snr"].numpy().astype(np.int16),
+        logits=collected["logits"].numpy().astype(np.float16),
+        labels=np.array(corpus.labels))
     print(f"predictions -> {out_dir / f'student_{run_name}_predictions.npz'}", flush=True)
