@@ -159,6 +159,48 @@ def test_crd_loss_magnitude_is_comparable_to_cross_entropy():
     assert float(value) < 100.0
 
 
+def test_spec_augment_zero_ratio_is_identity():
+    from expert_lib import spec_augment
+    x = torch.randn(3, 40, 16)
+    assert torch.equal(spec_augment(x, 0.0, torch.Generator().manual_seed(0)), x)
+
+
+def test_spec_augment_masks_at_most_ratio_of_each_axis_and_keeps_input():
+    from expert_lib import spec_augment
+    x = torch.randn(64, 100, 128) + 5.0  # no natural zeros
+    out = spec_augment(x, 0.3, torch.Generator().manual_seed(1))
+    assert torch.equal(x, x)  # input untouched (clone)
+    for clip in out:
+        zero_frames = int((clip == 0).all(dim=1).sum())
+        zero_bins = int((clip == 0).all(dim=0).sum())
+        assert zero_frames <= 30 and zero_bins <= int(0.3 * 128)
+    assert (out == 0).any()
+
+
+def test_roll_waveform_preserves_content_and_shape():
+    from expert_lib import roll_waveform
+    x = torch.arange(20.0).repeat(4, 1)
+    out = roll_waveform(x, torch.Generator().manual_seed(0))
+    assert out.shape == x.shape
+    for clip in out:
+        assert torch.equal(clip.sort().values, torch.arange(20.0))
+
+
+def test_warmup_cosine_shape():
+    from expert_lib import warmup_cosine
+    assert abs(warmup_cosine(0, 100, 10) - 0.1) < 1e-9
+    assert abs(warmup_cosine(9, 100, 10) - 1.0) < 1e-9
+    assert abs(warmup_cosine(10, 100, 10) - 1.0) < 1e-9
+    assert warmup_cosine(55, 100, 10) < 1.0
+    assert warmup_cosine(100, 100, 10) < 1e-9
+
+
+def test_layer_decay_scales_top_block_gets_full_lr():
+    from expert_lib import layer_decay_scales
+    scales = layer_decay_scales(4, 0.5)
+    assert scales == [0.125, 0.25, 0.5, 1.0]
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(n, f) for n, f in sorted(globals().items())

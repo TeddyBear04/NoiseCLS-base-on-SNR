@@ -53,9 +53,8 @@ from models.audio_io import load_float_audio, load_mix_manifest  # noqa: E402
 from expert_lib import (  # noqa: E402
     CRDLoss, FiLM, Projection, film_deviation, band_slice_mask, sample_negatives,
 )
-from models.sslam import (  # noqa: E402
-    SSLAMEncoder, audioset_head_rows, load_sslam, unfreeze_last_blocks,
-)
+from models.beats_backbone import BEATsEncoder, beats_head_rows, load_beats  # noqa: E402
+from models.sslam import SSLAMEncoder, audioset_head_rows, load_sslam  # noqa: E402
 
 
 #   run1_baseline  the recipe without any privileged information: CE only, no
@@ -242,25 +241,52 @@ class Classifier(nn.Module):
 def build_model(config: dict, device: torch.device, film_enabled: bool,
                 trainable_blocks: int) -> Classifier:
     backbone = config["backbone"]
-    raw = load_sslam(device, backbone["model_id"])
-    trainable = unfreeze_last_blocks(raw, trainable_blocks)
-    print(f"unfroze {trainable/1e6:.1f}M params in the last {trainable_blocks} blocks",
-          flush=True)
-    encoder = SSLAMEncoder(raw, backbone["num_mel_bins"], backbone["norm_divisor"],
-                           config["dataset"]["sample_rate"],
-                           backbone.get("pooling", "mean_patches"))
+    kind = backbone.get("type", "sslam")
+    if kind == "beats":
+        raw, checkpoint = load_beats(device, resolve_checkpoint(backbone["checkpoint_candidates"]),
+                                     backbone.get("dropout", 0.0), backbone.get("layerdrop", 0.0))
+        encoder = BEATsEncoder(raw)
+        head_rows = lambda: beats_head_rows(checkpoint, label_mids(config))  # noqa: E731
+    elif kind == "sslam":
+        raw = load_sslam(device, backbone["model_id"])
+        encoder = SSLAMEncoder(raw, backbone["num_mel_bins"], backbone["norm_divisor"],
+                               config["dataset"]["sample_rate"],
+                               backbone.get("pooling", "mean_patches"))
+        head_rows = lambda: audioset_head_rows(raw, label_mids(config))  # noqa: E731
+    else:
+        raise ValueError(f"unknown backbone type {kind!r}")
+
+    trainable = 0
+    blocks = encoder.blocks()
+    for block in list(blocks)[len(blocks) - trainable_blocks:] if trainable_blocks else []:
+        for parameter in block.parameters():
+            parameter.requires_grad = True
+            trainable += parameter.numel()
+    print(f"backbone={kind} unfroze {trainable/1e6:.1f}M params in the last "
+          f"{trainable_blocks} of {len(blocks)} blocks", flush=True)
+
     film = FiLM(backbone["embedding_dim"],
                 config["student"]["film"]["hidden"]) if film_enabled else None
     model = Classifier(encoder, backbone["embedding_dim"],
                        config["experiment"]["num_classes"], film)
     if backbone.get("head_init", "random") == "audioset":
-        weight, bias = audioset_head_rows(raw, label_mids(config))
+        weight, bias = head_rows()
         with torch.no_grad():
             model.head.weight.copy_(weight)
             model.head.bias.copy_(bias)
         print("head warm-started from the AudioSet rows of our 36 labels", flush=True)
     print(f"pooling={encoder.pooling}", flush=True)
     return model.to(device)
+
+
+def resolve_checkpoint(candidates: list[str]) -> Path:
+    """First existing path; relative entries are taken from this project folder."""
+    for candidate in candidates:
+        path = Path(candidate)
+        path = path if path.is_absolute() else HERE / path
+        if path.exists():
+            return path
+    raise FileNotFoundError("none of the backbone checkpoints exist: " + ", ".join(candidates))
 
 
 def label_mids(config: dict) -> list[str]:

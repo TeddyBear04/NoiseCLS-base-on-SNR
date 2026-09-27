@@ -35,6 +35,8 @@ import torch
 import torchaudio
 from torch import Tensor, nn
 
+from expert_lib import roll_waveform, spec_augment
+
 SSLAM_PRETRAIN = "ta012/SSLAM_pretrain"
 
 # From the model card. AST and EAT, which SSLAM descends from, divide by twice the
@@ -103,15 +105,26 @@ class SSLAMEncoder(nn.Module):
         self.norm_divisor = norm_divisor
         self.sample_rate = sample_rate
         self.pooling = pooling
+        self.augment: dict = {}
+        self.generator = torch.Generator().manual_seed(0)
         if pooling == "cls_fcnorm":
             # The AS2M-finetuned checkpoint classifies from fc_norm(CLS); train that
             # LayerNorm with the head rather than leave it frozen at AudioSet's stats.
             for parameter in self.model.model.fc_norm.parameters():
                 parameter.requires_grad = True
 
+    def blocks(self) -> nn.Module:
+        return block_list(self.model)[1]
+
     def forward(self, waveform: Tensor) -> tuple[Tensor, Tensor]:
+        augment = self.training and bool(self.augment)
+        if augment and self.augment.get("roll"):
+            waveform = roll_waveform(waveform, self.generator)
         mel = waveform_to_mel(waveform, self.sample_rate, self.num_mel_bins,
                               self.norm_divisor).to(waveform.device)
+        if augment and self.augment.get("spec_ratio", 0) > 0:
+            mel = spec_augment(mel.squeeze(1), self.augment["spec_ratio"],
+                               self.generator).unsqueeze(1)
         tokens = self.model.extract_features(mel)
         patches = tokens[:, 1:, :]
         if self.pooling == "cls_fcnorm":
@@ -119,6 +132,15 @@ class SSLAMEncoder(nn.Module):
             # (eat_model.EAT.forward: fc_norm(encode(x)[:, 0]) -> head).
             return patches, self.model.model.fc_norm(tokens[:, 0])
         return patches, patches.mean(dim=1)
+
+
+def block_list(model) -> tuple[str, nn.Module]:
+    """The deepest container that looks like a list of transformer blocks."""
+    candidates = [(name, module) for name, module in model.named_modules()
+                  if isinstance(module, (nn.ModuleList, nn.Sequential)) and len(module) >= 2]
+    if not candidates:
+        raise RuntimeError("No block list found in the SSLAM model.")
+    return max(candidates, key=lambda item: len(item[1]))
 
 
 def trainable_block_names(model, blocks: int) -> tuple[str, ...]:

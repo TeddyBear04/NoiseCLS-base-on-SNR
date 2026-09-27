@@ -10,6 +10,7 @@ that bank had to be caveated for.
 from __future__ import annotations
 
 import json
+import math
 import time
 from pathlib import Path
 
@@ -18,6 +19,7 @@ import torch
 from torch import nn
 
 from expert_lib import (
+    layer_decay_scales, warmup_cosine,
     CRDLoss, Projection, film_deviation, band_slice_mask, sample_negatives,
 )
 from tasks.run_36 import (
@@ -64,11 +66,31 @@ def jitter_snr(snr_db, sigma_db, generator):
 
 
 def optimizer_for(model: Classifier, config: dict, section: str):
+    """Head, FiLM, and encoder groups. With `layer_decay` < 1 each transformer block
+    gets its own group at encoder_lr * decay^(depth from the top); encoder
+    parameters outside the blocks (e.g. SSLAM's fc_norm) take the full encoder_lr.
+    """
     settings = config[section]
-    encoder = [p for p in model.encoder.parameters() if p.requires_grad]
-    groups = [{"params": encoder, "lr": settings["encoder_lr"]},
-              {"params": model.head.parameters(),
-               "lr": settings.get("head_lr", settings.get("head_ft_lr"))}]
+    encoder_lr = settings["encoder_lr"]
+    decay = settings.get("layer_decay", 1.0)
+    trainable = [p for p in model.encoder.parameters() if p.requires_grad]
+    groups = []
+    if decay < 1.0:
+        blocks = list(model.encoder.blocks())
+        scales = layer_decay_scales(len(blocks), decay)
+        in_block = set()
+        for block, scale in zip(blocks, scales):
+            params = [p for p in block.parameters() if p.requires_grad]
+            in_block.update(id(p) for p in params)
+            if params:
+                groups.append({"params": params, "lr": encoder_lr * scale})
+        rest = [p for p in trainable if id(p) not in in_block]
+        if rest:
+            groups.append({"params": rest, "lr": encoder_lr})
+    else:
+        groups.append({"params": trainable, "lr": encoder_lr})
+    groups.append({"params": list(model.head.parameters()),
+                   "lr": settings.get("head_lr", settings.get("head_ft_lr"))})
     if model.film is not None:
         groups.append({"params": model.film.parameters(),
                        "lr": settings.get("film_lr", 1e-3)})
@@ -83,8 +105,14 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
     groups = optimizer_for(model, config, section)
     for params in extra_params:
         groups.append({"params": params, "lr": settings.get("film_lr", 1e-3)})
-    optimizer = torch.optim.AdamW(groups, weight_decay=1e-4)
+    groups = [g for g in groups if g["params"]]
+    optimizer = torch.optim.AdamW(groups, weight_decay=settings.get("weight_decay", 1e-4))
     watched = [p for group in groups for p in group["params"]]
+
+    # Train-time augmentation lives on the encoder and only fires in train mode, so
+    # validation, test and the online teacher always see the clip as recorded.
+    model.encoder.augment = dict(settings.get("augment", {}))
+    model.encoder.generator = torch.Generator().manual_seed(config["experiment"]["seed"])
 
     train_loader = corpus.loader(train_rows, settings["batch_size"],
                                  settings["workers"], True, device,
@@ -102,6 +130,16 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
           f"val_full_acc={best['full']['accuracy']:.4f}", flush=True)
 
     epochs = 1 if config["runtime"]["smoke_test"] else settings["finetune_epochs"]
+    scheduler = None
+    if settings.get("lr_schedule", "constant") == "warmup_cosine":
+        updates = epochs * math.ceil(len(train_loader) / settings["accumulation_steps"])
+        warmup = int(settings.get("warmup_fraction", 0.1) * updates)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lambda step: warmup_cosine(step, updates, warmup))
+    print(f"optimizer: groups={len(groups)} weight_decay={settings.get('weight_decay', 1e-4)} "
+          f"layer_decay={settings.get('layer_decay', 1.0)} "
+          f"schedule={settings.get('lr_schedule', 'constant')} "
+          f"augment={model.encoder.augment or 'none'}", flush=True)
     history, stale = [], 0
     for epoch in range(1, epochs + 1):
         model.train()
@@ -117,6 +155,8 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
                 nn.utils.clip_grad_norm_(watched, settings["gradient_clip_norm"])
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
+                if scheduler is not None:
+                    scheduler.step()
             size = target.shape[0]
             for key, value in parts.items():
                 sums[key] = sums.get(key, 0.0) + float(value) * size

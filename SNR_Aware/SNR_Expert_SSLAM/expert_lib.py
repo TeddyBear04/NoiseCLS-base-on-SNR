@@ -1,6 +1,8 @@
 """Ham thuan dung chung giua notebook va unit test. Khong import BEATs, khong can GPU."""
 from __future__ import annotations
 
+import math
+
 import torch
 from torch import Tensor
 
@@ -150,3 +152,68 @@ class CRDLoss(torch.nn.Module):
         log_d1 = torch.log(p_pos / (p_pos + m * pn + self.eps))
         log_d0 = torch.log((m * pn) / (p_neg + m * pn + self.eps))
         return -(log_d1.sum() + log_d0.sum()) / batch
+
+
+# ---------------------------------------------------------------- finetune recipe
+#
+# The BEATs paper's own fine-tuning recipe (Chen et al., ICML 2023, appendix
+# Table 4, ESC-50 column - the closest to this task: few clips, one label each):
+# SpecAugment 0.3, roll augmentation, peak lr 1e-4 with warmup + cosine decay,
+# layer-wise lr decay 0.2, dropout 0.1, layer dropout 0.1, weight decay 0.01.
+# The code this project started from had none of it - constant lr, no
+# augmentation, dropout 0 - and every BEATs finetune memorised the training set
+# within an epoch (train loss 0.006, validation loss rising from epoch 1).
+
+
+def spec_augment(fbank: Tensor, ratio: float, generator: torch.Generator) -> Tensor:
+    """One time mask and one frequency mask per clip, each up to `ratio` of its axis.
+
+    fbank: [B, frames, bins], already normalised, so 0 is the dataset mean and a
+    masked band reads as "average energy" rather than silence. The paper gives
+    the SpecAugment strength as a single 0.3 without its exact parameterisation;
+    one mask per axis of width U[0, ratio*size) is the reading used here.
+    """
+    if ratio <= 0:
+        return fbank
+    out = fbank.clone()
+    batch, frames, bins = out.shape
+    for axis_size, axis in ((frames, 1), (bins, 2)):
+        widths = (torch.rand(batch, generator=generator) * ratio * axis_size).long()
+        starts = (torch.rand(batch, generator=generator)
+                  * (axis_size - widths).clamp(min=1)).long()
+        for i in range(batch):
+            if widths[i] == 0:
+                continue
+            if axis == 1:
+                out[i, starts[i]:starts[i] + widths[i], :] = 0
+            else:
+                out[i, :, starts[i]:starts[i] + widths[i]] = 0
+    return out
+
+
+def roll_waveform(waveform: Tensor, generator: torch.Generator) -> Tensor:
+    """Circular time shift by a random offset per clip (the paper's roll augmentation)."""
+    length = waveform.shape[-1]
+    shifts = (torch.rand(waveform.shape[0], generator=generator) * length).long()
+    return torch.stack([torch.roll(clip, int(s), dims=-1)
+                        for clip, s in zip(waveform, shifts)])
+
+
+def warmup_cosine(step: int, total: int, warmup: int) -> float:
+    """LR multiplier: linear warmup to 1, then cosine decay to 0 at `total`."""
+    if total <= 0:
+        return 1.0
+    if warmup > 0 and step < warmup:
+        return (step + 1) / warmup
+    progress = min(1.0, (step - warmup) / max(1, total - warmup))
+    return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+
+def layer_decay_scales(num_blocks: int, decay: float) -> list[float]:
+    """LR scale per transformer block, bottom (index 0) to top: decay^(depth from top).
+
+    Implemented as optimizer parameter groups because the BEATs checkpoint's own
+    `layer_wise_gradient_decay_ratio` multiplies gradients, and AdamW divides a
+    constant gradient scale straight back out - it has almost no effect there.
+    """
+    return [decay ** (num_blocks - 1 - index) for index in range(num_blocks)]
