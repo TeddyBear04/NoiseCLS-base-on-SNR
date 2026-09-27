@@ -49,8 +49,8 @@ if str(HERE) not in sys.path:
 
 from models.audio_io import load_float_audio, load_mix_manifest  # noqa: E402
 
-from mid_expert_lib import (  # noqa: E402
-    CRDLoss, FiLM, Projection, film_deviation, mid_slice_mask, sample_negatives,
+from expert_lib import (  # noqa: E402
+    CRDLoss, FiLM, Projection, film_deviation, band_slice_mask, sample_negatives,
 )
 from models.sslam import SSLAMEncoder, load_sslam, unfreeze_last_blocks  # noqa: E402
 
@@ -62,10 +62,10 @@ from models.sslam import SSLAMEncoder, load_sslam, unfreeze_last_blocks  # noqa:
 #                  a paired test and cannot separate method from run-to-run noise.
 RUNS = {
     "run1_baseline": {"a_kd": 0.0, "b_crd": 0.0, "film": False, "select_on": "full"},
-    "run2_ce_only": {"a_kd": 0.0, "b_crd": 0.0, "film": True, "select_on": "mid"},
-    "run3_kd_crd": {"a_kd": 1.0, "b_crd": 0.8, "film": True, "select_on": "mid"},
-    "run3b_crd_only": {"a_kd": 0.0, "b_crd": 0.8, "film": True, "select_on": "mid"},
-    "run3c_kd_only": {"a_kd": 1.0, "b_crd": 0.0, "film": True, "select_on": "mid"},
+    "run2_ce_only": {"a_kd": 0.0, "b_crd": 0.0, "film": True, "select_on": "band"},
+    "run3_kd_crd": {"a_kd": 1.0, "b_crd": 0.8, "film": True, "select_on": "band"},
+    "run3b_crd_only": {"a_kd": 0.0, "b_crd": 0.8, "film": True, "select_on": "band"},
+    "run3c_kd_only": {"a_kd": 1.0, "b_crd": 0.0, "film": True, "select_on": "band"},
 }
 RUN_REQUIRED = ("student36", "test36")
 STAGES = ("teacher36", "student36", "test36", "report36")
@@ -285,11 +285,11 @@ def collect(model: Classifier, loader, device, use_snr: bool) -> dict:
 
 def split_metrics(out: dict, labels, band) -> dict:
     full = metrics(out["logits"], out["target"], out["snr"].long(), labels)
-    mask = mid_slice_mask(out["snr"].float(), band[0], band[1])
-    mid = metrics(out["logits"][mask], out["target"][mask],
-                  out["snr"][mask].long(), labels)
-    mid["samples"] = int(mask.sum())
-    return {"full": full, "mid": mid}
+    mask = band_slice_mask(out["snr"].float(), band[0], band[1])
+    in_band = metrics(out["logits"][mask], out["target"][mask],
+                       out["snr"][mask].long(), labels)
+    in_band["samples"] = int(mask.sum())
+    return {"full": full, "band": in_band}
 
 
 def resolve_stage(name: str):

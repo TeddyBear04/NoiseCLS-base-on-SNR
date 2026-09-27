@@ -1,24 +1,24 @@
 import torch
 
-from mid_expert_lib import mid_slice_mask, normalize_snr
-from mid_expert_lib import FiLM
-from mid_expert_lib import sample_negatives
-from mid_expert_lib import Projection, CRDLoss
+from expert_lib import band_slice_mask, normalize_snr
+from expert_lib import FiLM
+from expert_lib import sample_negatives
+from expert_lib import Projection, CRDLoss
 
 
 def _unit(x):
     return torch.nn.functional.normalize(x, dim=-1)
 
 
-def test_mid_slice_mask_selects_only_5_and_10_db():
+def test_band_slice_mask_selects_only_5_and_10_db():
     snr = torch.tensor([-5.0, 0.0, 5.0, 10.0, 15.0, 20.0])
-    mask = mid_slice_mask(snr, low=5.0, high=10.0)
+    mask = band_slice_mask(snr, low=5.0, high=10.0)
     assert mask.tolist() == [False, False, True, True, False, False]
 
 
-def test_mid_slice_mask_includes_interior_values():
+def test_band_slice_mask_includes_interior_values():
     snr = torch.tensor([4.9, 5.0, 7.5, 10.0, 10.1])
-    assert mid_slice_mask(snr, low=5.0, high=10.0).tolist() == [
+    assert band_slice_mask(snr, low=5.0, high=10.0).tolist() == [
         False, True, True, True, False
     ]
 
@@ -58,7 +58,7 @@ def test_film_records_gamma_beta_for_collapse_monitoring():
 
 
 def test_film_deviation_is_zero_at_initialisation():
-    from mid_expert_lib import film_deviation
+    from expert_lib import film_deviation
     film = FiLM(dim=8)
     film(torch.randn(3, 8), torch.tensor([5.0, 10.0, 15.0]))
     assert film_deviation(film) < 1e-6

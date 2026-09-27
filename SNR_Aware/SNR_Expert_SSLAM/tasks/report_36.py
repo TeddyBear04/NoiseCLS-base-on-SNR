@@ -50,18 +50,22 @@ SHEET_COLUMNS = [
 # filled with a number that would not mean what the column says.
 METHOD_NAMES = {
     "beats_baseline": "BEATs baseline (published, metrics file only)",
-    "run1_baseline": "BEATs baseline (rebuilt, CE only, no FiLM)",
-    "run2_ce_only": "Mid expert - CE only (control)",
-    "run3_kd_crd": "Mid expert - KD + CRD",
-    "run3b_crd_only": "Mid expert - CRD only",
-    "run3c_kd_only": "Mid expert - KD only",
-    "run4_remix": "Mid expert - KD + CRD + remix",
+    "run1_baseline": "SSLAM expert - CE only, no FiLM (rebuilt baseline)",
+    "run2_ce_only": "SSLAM expert - CE only + FiLM (control)",
+    "run3_kd_crd": "SSLAM expert - KD + CRD",
+    "run3b_crd_only": "SSLAM expert - CRD only",
+    "run3c_kd_only": "SSLAM expert - KD only",
+    "run5_remix": "SSLAM expert - KD + CRD + remix augmentation",
+    "run6_grl": "SSLAM expert - KD + CRD + GRL speech-adversarial",
 }
-SLICE_NAMES = {"full": "all", "mid": "5-10"}
+# ("full", "band" = the SNR band this project is judged on) then one slice per
+# SNR level. The band's own label ("15-20" etc.) is filled in from config at
+# report time - see `slice_names()`.
+SLICE_NAMES_STATIC = {"full": "all"}
 
 # The "Theo tung SNR" sheet in Result.xlsx, column for column, so these rows paste
 # straight in beside the other branches. One row per method per SNR level only -
-# that sheet carries no "all" or "mid" aggregate rows.
+# that sheet carries no "all" or "band" aggregate rows.
 SNR_SHEET_COLUMNS = [
     "Phuong phap", "Phien ban", "SNR (dB)", "So mau (support)",
     "Top-1 Accuracy", "Top-3 Accuracy", "Balanced Acc",
@@ -78,24 +82,31 @@ PURITY_COLUMNS = {
     "Emb retrieval@1": "emb_retrieval_top1",
 }
 
-SHEET_METHOD = {
-    "run1_baseline": ("BEATs-MidExpert", "run1-baseline"),
-    "run2_ce_only": ("BEATs-MidExpert", "run2-ce-only"),
-    "run3b_crd_only": ("BEATs-MidExpert", "run3b-crd-only"),
-    "run3c_kd_only": ("BEATs-MidExpert", "run3c-kd-only"),
-    "run3_kd_crd": ("BEATs-MidExpert", "run3-kd-crd"),
+# Sheet method prefix ("BEATs-MidExpert", "SSLAM-HighExpert", ...) comes from
+# config["report"]["sheet_method"] so the same code serves any band/backbone.
+SHEET_VERSION = {
+    "run1_baseline": "run1-baseline",
+    "run2_ce_only": "run2-ce-only",
+    "run3b_crd_only": "run3b-crd-only",
+    "run3c_kd_only": "run3c-kd-only",
+    "run3_kd_crd": "run3-kd-crd",
+    "run5_remix": "run5-remix",
+    "run6_grl": "run6-grl",
 }
 SHEET_NOTE = {
     "run1_baseline": "Baseline dung lai: CE thuan, KHONG FiLM, chon checkpoint theo toan bo validation. Khong tach waveform nen khong co SI-SDR.",
-    "run2_ce_only": "CE thuan + FiLM theo SNR, chon checkpoint theo lat mid 5-10 dB. Control cho run3.",
+    "run2_ce_only": "CE thuan + FiLM theo SNR, chon checkpoint theo lat band. Control cho run3.",
     "run3b_crd_only": "CE + CRD (b=0.8), khong KD. Setting chinh cua paper CRD.",
     "run3c_kd_only": "CE + KD (a=1.0, rho=4), khong CRD.",
     "run3_kd_crd": "CE + KD + CRD. Phuong phap day du. Teacher nhin noise sach (privileged info), student chi nhin mixture.",
+    "run5_remix": "run3_kd_crd + remix augmentation (clean + gain*noise moi tren band).",
+    "run6_grl": "run3_kd_crd + head phu doan speech qua gradient reversal, ep embedding vut bo speech.",
 }
 
 
-def snr_sheet_row(row: dict, purity: dict | None = None) -> dict:
-    method, version = SHEET_METHOD.get(row["run"], (row["run"], "final"))
+def snr_sheet_row(row: dict, sheet_method: str, purity: dict | None = None) -> dict:
+    version = SHEET_VERSION.get(row["run"], row["run"])
+    method = sheet_method if row["run"] in SHEET_VERSION else row["run"]
     def value(key):
         v = row.get(key, "")
         return round(v, 4) if isinstance(v, float) else v
@@ -122,9 +133,10 @@ def snr_sheet_row(row: dict, purity: dict | None = None) -> dict:
     }
 
 
-def sheet_row(row: dict) -> dict:
+def sheet_row(row: dict, band_label: str) -> dict:
     slice_name = row["slice"]
-    snr = SLICE_NAMES.get(slice_name, slice_name.replace("snr_", ""))
+    slice_names = {**SLICE_NAMES_STATIC, "band": band_label}
+    snr = slice_names.get(slice_name, slice_name.replace("snr_", ""))
     def value(key):
         v = row.get(key, "")
         return round(v, 6) if isinstance(v, float) else v
@@ -227,9 +239,9 @@ def per_class_rows(target: np.ndarray, predicted: np.ndarray,
 
 
 def slices(snr: np.ndarray, band: list[float]) -> list[tuple[str, np.ndarray]]:
-    """full, the mid band we are judged on, then one slice per SNR level."""
+    """full, the SNR band we are judged on, then one slice per SNR level."""
     out = [("full", np.ones(snr.shape, dtype=bool)),
-           ("mid", (snr >= band[0]) & (snr <= band[1]))]
+           ("band", (snr >= band[0]) & (snr <= band[1]))]
     for level in sorted(set(snr.tolist())):
         out.append((f"snr_{int(level)}", snr == level))
     return out
@@ -268,9 +280,15 @@ def mcnemar(correct_a: np.ndarray, correct_b: np.ndarray) -> dict:
     return row
 
 
-def baseline_rows(labels: list[str]) -> list[dict]:
+def baseline_rows(labels: list[str], band: list[float]) -> list[dict]:
     """The BEATs baseline from its own metrics file. It has no per-clip predictions
-    here, so its slices carry only what that file recorded."""
+    here, so its slices carry only what that file recorded.
+
+    This is the on-disk checkpoint's baseline, not the published-in-Result.xlsx
+    one - same gap the mid-expert project hit: the checkpoint behind the
+    published numbers is gone (*.pt is gitignored). Keep both straight in any
+    report: gate against the published numbers in `config["gates"]`, use this
+    row only as an unpaired sanity check."""
     path = HERE.parent / "BEATs_Experts/checkpoint/test_metrics_36.json"
     if not path.exists():
         return []
@@ -285,14 +303,14 @@ def baseline_rows(labels: list[str]) -> list[dict]:
              "balanced_accuracy": saved.get("test_balanced_accuracy", ""),
              "macro_auc_ovr": saved.get("test_macro_auc", "")}]
     per_snr = saved.get("per_snr", {})
-    mid = [v for k, v in per_snr.items() if 5 <= float(k) <= 10]
-    if len(mid) == 2:
-        total = sum(v["samples"] for v in mid)
-        rows.append({"run": "beats_baseline", "slice": "mid", "samples": total,
-                     "accuracy": sum(v["accuracy"] * v["samples"] for v in mid) / total,
+    band_levels = [v for k, v in per_snr.items() if band[0] <= float(k) <= band[1]]
+    if band_levels:
+        total = sum(v["samples"] for v in band_levels)
+        rows.append({"run": "beats_baseline", "slice": "band", "samples": total,
+                     "accuracy": sum(v["accuracy"] * v["samples"] for v in band_levels) / total,
                      "macro_precision": "", "macro_recall": "",
-                     "macro_f1": sum(v["macro_f1"] * v["samples"] for v in mid) / total,
-                     "micro_f1": sum(v["micro_f1"] * v["samples"] for v in mid) / total,
+                     "macro_f1": sum(v["macro_f1"] * v["samples"] for v in band_levels) / total,
+                     "micro_f1": sum(v["micro_f1"] * v["samples"] for v in band_levels) / total,
                      "macro_map": "", "balanced_accuracy": "", "macro_auc_ovr": ""})
     for level, value in per_snr.items():
         rows.append({"run": "beats_baseline", "slice": f"snr_{int(float(level))}",
@@ -316,7 +334,10 @@ def write_csv(path: Path, rows: list[dict], columns: list[str]) -> None:
 def command_report36(config: dict) -> None:
     out_dir = HERE / config["outputs"]["dir"]
     results_dir = out_dir / "results"
-    band = config["mid_band_db"]
+    band = config["band_db"]
+    report_cfg = config.get("report", {})
+    sheet_method = report_cfg.get("sheet_method", "SSLAM-Expert")
+    band_label = report_cfg.get("band_label", f"{int(band[0])}-{int(band[1])}")
 
     found = sorted(out_dir.glob("student_*_predictions.npz"))
     if not found:
@@ -343,29 +364,29 @@ def command_report36(config: dict) -> None:
             row.update(compute_metrics(run["target"][mask], run["predicted"][mask],
                                        probabilities, len(labels)))
             summary.append(row)
-            if slice_name in ("full", "mid"):
+            if slice_name in ("full", "band"):
                 for entry in per_class_rows(run["target"][mask], run["predicted"][mask],
                                             probabilities, labels):
                     per_class.append({"run": name, "slice": slice_name, **entry})
 
-    summary.extend(baseline_rows(labels))
-    summary.sort(key=lambda r: (r["slice"] != "mid", r["slice"], r["run"]))
+    summary.extend(baseline_rows(labels, band))
+    summary.sort(key=lambda r: (r["slice"] != "band", r["slice"], r["run"]))
     write_csv(results_dir / "metrics_by_run.csv", summary,
               ["run", "slice", "samples", *METRIC_COLUMNS])
     write_csv(results_dir / "ket_qua_tong_hop.csv",
-              [sheet_row(r) for r in summary], SHEET_COLUMNS)
-    # Only 5 and 10 dB: that is the band this branch was assigned, and the other
-    # levels are not what the report claims anything about.
-    wanted = {"snr_5", "snr_10"}
-    snr_rows = [r for r in summary if r["slice"] in wanted and r["run"] in SHEET_METHOD]
-    snr_rows.sort(key=lambda r: (list(SHEET_METHOD).index(r["run"]),
+              [sheet_row(r, band_label) for r in summary], SHEET_COLUMNS)
+    # Only the SNR levels inside `band_db`: that is the band this branch was
+    # assigned, and the other levels are not what the report claims anything about.
+    wanted = {f"snr_{int(level)}" for level in band}
+    snr_rows = [r for r in summary if r["slice"] in wanted and r["run"] in SHEET_VERSION]
+    snr_rows.sort(key=lambda r: (list(SHEET_VERSION).index(r["run"]),
                                  int(r["slice"].replace("snr_", ""))))
     purity_by_run = {}
     for path in out_dir.glob("student_*_test.json"):
         name = path.name[len("student_"):-len("_test.json")]
         purity_by_run[name] = json.loads(path.read_text(encoding="utf-8")).get("purity", {})
     write_csv(results_dir / "theo_tung_snr.csv",
-              [snr_sheet_row(r, purity_by_run.get(r["run"], {}).get(r["slice"]))
+              [snr_sheet_row(r, sheet_method, purity_by_run.get(r["run"], {}).get(r["slice"]))
                for r in snr_rows], SNR_SHEET_COLUMNS)
     write_csv(results_dir / "metrics_per_class.csv", per_class,
               ["run", "slice", "label", "precision", "recall", "f1", "support",
@@ -390,7 +411,7 @@ def command_report36(config: dict) -> None:
                        "delta_accuracy": round(float(ok_b.mean() - ok_a.mean()), 6)}
                 row.update(mcnemar(ok_a, ok_b))
                 comparisons.append(row)
-    comparisons.sort(key=lambda r: (r["slice"] != "mid", r["slice"], r["run_a"], r["run_b"]))
+    comparisons.sort(key=lambda r: (r["slice"] != "band", r["slice"], r["run_a"], r["run_b"]))
     write_csv(results_dir / "comparison.csv", comparisons,
               ["run_a", "run_b", "slice", "samples", "accuracy_a", "accuracy_b",
                "delta_accuracy", "both_correct", "both_wrong", "only_a_correct",
@@ -400,7 +421,7 @@ def command_report36(config: dict) -> None:
     header = f"{'run':<18}{'acc':>9}{'macro_f1':>10}{'mAP':>9}{'AUC':>9}"
     print(header, flush=True)
     for row in summary:
-        if row["slice"] != "mid":
+        if row["slice"] != "band":
             continue
         def fmt(key):
             value = row.get(key, "")

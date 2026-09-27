@@ -17,8 +17,8 @@ import numpy as np
 import torch
 from torch import nn
 
-from mid_expert_lib import (
-    CRDLoss, Projection, film_deviation, mid_slice_mask, sample_negatives,
+from expert_lib import (
+    CRDLoss, Projection, film_deviation, band_slice_mask, sample_negatives,
 )
 from tasks.run_36 import (
     HERE, Classifier, Corpus, autocast, build_model, collect, metrics,
@@ -52,7 +52,7 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
                device, step_fn, select_on, extra_params=()):
     """Shared training loop. `step_fn(batch)` returns (loss, parts, logits, target)."""
     settings = config[section]
-    band = config["mid_band_db"]
+    band = config["band_db"]
     groups = optimizer_for(model, config, section)
     for params in extra_params:
         groups.append({"params": params, "lr": settings.get("film_lr", 1e-3)})
@@ -71,7 +71,7 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
                          corpus.labels, band)
     best_state = snapshot(model)
     print(f"selecting on the '{select_on}' slice", flush=True)
-    print(f"epoch=0 val_mid_acc={best['mid']['accuracy']:.4f} "
+    print(f"epoch=0 val_band_acc={best['band']['accuracy']:.4f} "
           f"val_full_acc={best['full']['accuracy']:.4f}", flush=True)
 
     epochs = 1 if config["runtime"]["smoke_test"] else settings["finetune_epochs"]
@@ -107,14 +107,14 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
         entry = {"epoch": epoch, "seconds": time.perf_counter() - started,
                  "train_accuracy": correct / seen,
                  **{k: v / seen for k, v in sums.items()},
-                 "val_mid_accuracy": current["mid"]["accuracy"],
-                 "val_mid_macro_f1": current["mid"]["macro_f1"],
+                 "val_band_accuracy": current["band"]["accuracy"],
+                 "val_band_macro_f1": current["band"]["macro_f1"],
                  "val_full_accuracy": current["full"]["accuracy"],
                  "film_deviation": film_deviation(model.film) if model.film else 0.0}
         history.append(entry)
         shown = " ".join(f"{k}={v/seen:.4f}" for k, v in sums.items())
-        print(f"epoch={epoch} {shown} val_mid_acc={entry['val_mid_accuracy']:.4f} "
-              f"val_mid_f1={entry['val_mid_macro_f1']:.4f} "
+        print(f"epoch={epoch} {shown} val_mid_acc={entry['val_band_accuracy']:.4f} "
+              f"val_mid_f1={entry['val_band_macro_f1']:.4f} "
               f"film_dev={entry['film_deviation']:.3f} "
               f"({entry['seconds']:.0f}s)", flush=True)
 
@@ -170,9 +170,9 @@ def command_teacher36(config: dict) -> None:
 
     accuracy = best["full"]["accuracy"]
     floor = config["gates"]["teacher_acc_floor"]
-    baseline = config["gates"]["baseline_mid_accuracy"]
+    baseline = config["gates"]["baseline_band_accuracy"]
     print(f"\nteacher val_accuracy = {accuracy:.4f}", flush=True)
-    print(f"baseline (mid slice) = {baseline:.4f}   headroom = "
+    print(f"baseline (band slice) = {baseline:.4f}   headroom = "
           f"{accuracy - baseline:+.4f}", flush=True)
     gate = "PASS" if accuracy >= floor else "STOP"
     if gate == "STOP":
@@ -304,7 +304,7 @@ def command_student36(config: dict) -> None:
 
     best, history = run_epochs(model, config, "student", corpus, train_rows,
                                validation_rows, device, step,
-                               select_on=settings.get("select_on", "mid"),
+                               select_on=settings.get("select_on", "band"),
                                extra_params=extra)
 
     torch.save({"state": snapshot(model), "labels": corpus.labels, "run": run_name,
@@ -314,8 +314,8 @@ def command_student36(config: dict) -> None:
                     "loss_config": loss_config, "student_config": settings},
                    indent=2), encoding="utf-8")
     print(f"\ncheckpoint -> {out_dir / f'student_{run_name}.pt'}", flush=True)
-    print(f"best val_mid_accuracy={best['mid']['accuracy']:.4f} "
-          f"val_mid_macro_f1={best['mid']['macro_f1']:.4f}", flush=True)
+    print(f"best val_band_accuracy={best['band']['accuracy']:.4f} "
+          f"val_band_macro_f1={best['band']['macro_f1']:.4f}", flush=True)
 
 
 # --------------------------------------------------------------------------- test
@@ -346,7 +346,7 @@ def noise_purity(student_embedding, teacher_embedding) -> dict:
 def command_test36(config: dict) -> None:
     device = seed_everything(config["experiment"]["seed"])
     out_dir = HERE / config["outputs"]["dir"]
-    band = config["mid_band_db"]
+    band = config["band_db"]
     run_name = config["run"]
     settings = config["student"]
 
@@ -367,14 +367,14 @@ def command_test36(config: dict) -> None:
     result = split_metrics(out, corpus.labels, band)
 
     gates = config["gates"]
-    mid = result["mid"]
-    print(f"\nrun={run_name} test mid slice ({mid['samples']} clips)", flush=True)
-    print(f"  accuracy = {mid['accuracy']:.4f}  (baseline "
-          f"{gates['baseline_mid_accuracy']:.4f}, delta "
-          f"{mid['accuracy'] - gates['baseline_mid_accuracy']:+.4f})", flush=True)
-    print(f"  macro_f1 = {mid['macro_f1']:.4f}  (baseline "
-          f"{gates['baseline_mid_macro_f1']:.4f}, delta "
-          f"{mid['macro_f1'] - gates['baseline_mid_macro_f1']:+.4f})", flush=True)
+    in_band = result["band"]
+    print(f"\nrun={run_name} test band slice ({in_band['samples']} clips)", flush=True)
+    print(f"  accuracy = {in_band['accuracy']:.4f}  (baseline "
+          f"{gates['baseline_band_accuracy']:.4f}, delta "
+          f"{in_band['accuracy'] - gates['baseline_band_accuracy']:+.4f})", flush=True)
+    print(f"  macro_f1 = {in_band['macro_f1']:.4f}  (baseline "
+          f"{gates['baseline_band_macro_f1']:.4f}, delta "
+          f"{in_band['macro_f1'] - gates['baseline_band_macro_f1']:+.4f})", flush=True)
     print("A delta under about 1.0 point is inside the standard error on 2,160 "
           "clips. Do not call it an improvement without the paired McNemar test.",
           flush=True)
@@ -383,8 +383,9 @@ def command_test36(config: dict) -> None:
     try:
         teacher = load_teacher(config, device)
         teacher_out = collect(teacher, loader, device, use_snr=False)
-        for name, mask in (("mid", mid_slice_mask(out["snr"].float(), *band)),
-                           ("snr_5", out["snr"] == 5), ("snr_10", out["snr"] == 10)):
+        for name, mask in (("band", band_slice_mask(out["snr"].float(), *band)),
+                           (f"snr_{int(band[0])}", out["snr"] == int(band[0])),
+                           (f"snr_{int(band[1])}", out["snr"] == int(band[1]))):
             if bool(mask.any()):
                 purity[name] = noise_purity(out["pooled"][mask],
                                             teacher_out["pooled"][mask])
@@ -399,8 +400,8 @@ def command_test36(config: dict) -> None:
 
     (out_dir / f"student_{run_name}_test.json").write_text(
         json.dumps({"run": run_name, "test": result, "purity": purity,
-                    "baseline": {"accuracy": gates["baseline_mid_accuracy"],
-                                 "macro_f1": gates["baseline_mid_macro_f1"]}},
+                    "baseline": {"accuracy": gates["baseline_band_accuracy"],
+                                 "macro_f1": gates["baseline_band_macro_f1"]}},
                    indent=2), encoding="utf-8")
     np.savez_compressed(
         out_dir / f"student_{run_name}_predictions.npz",

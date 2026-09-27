@@ -8,8 +8,8 @@ SNR_MIN_DB = -5.0
 SNR_MAX_DB = 20.0
 
 
-def mid_slice_mask(snr_db: Tensor, low: float = 5.0, high: float = 10.0) -> Tensor:
-    """True cho cac mau nam trong dai mid, hai ?au ?ong."""
+def band_slice_mask(snr_db: Tensor, low: float = 5.0, high: float = 10.0) -> Tensor:
+    """True cho cac mau nam trong dai [low, high], hai dau dong."""
     return (snr_db >= low) & (snr_db <= high)
 
 

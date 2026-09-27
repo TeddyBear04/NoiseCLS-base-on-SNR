@@ -1,6 +1,6 @@
 {
   "experiment": {
-    "name": "mid_expert_sslam_36",
+    "name": "snr_expert_sslam_high_36",
     "task": "single_label_noise_classification",
     "num_classes": 36,
     "seed": 2026
@@ -21,8 +21,8 @@
     "num_mel_bins": 128,
     "norm_divisor": 2.0
   },
-  "run": "run2_ce_only",
-  "mid_band_db": [5.0, 10.0],
+  "run": "run1_baseline",
+  "band_db": [15.0, 20.0],
   "teacher": {
     "source_column": "noise_path",
     "head_epochs": 20,
@@ -76,8 +76,14 @@
   },
   "gates": {
     "teacher_acc_floor": 0.75,
-    "baseline_mid_accuracy": 0.6681,
-    "baseline_mid_macro_f1": 0.6602
+    "_teacher_acc_floor_note": "Carried over from the mid project's floor (validated there for a BEATs teacher on 5-10 dB). Not yet re-validated for an SSLAM teacher on 15-20 dB; treat the first teacher36 run as the calibration point and revisit this number then.",
+    "baseline_band_accuracy": 0.5315,
+    "baseline_band_macro_f1": 0.52935,
+    "_baseline_band_note": "Published BEATs-Mixture, Result.xlsx 'Theo tung SNR': (0.5769@15dB + 0.4861@20dB)/2 and (0.5757+0.4830)/2, equal support (1080 each). This is the gate; it is NOT the same run as BEATs_Experts/checkpoint/test_metrics_36.json (that checkpoint's own 15/20 numbers are 0.6102/0.5315 - a different training run, no per-clip predictions, cannot enter a paired test)."
+  },
+  "report": {
+    "sheet_method": "SSLAM-HighExpert",
+    "band_label": "15-20"
   },
   "outputs": {
     "dir": "artifacts",
