@@ -79,8 +79,12 @@ def optimizer_for(model: Classifier, config: dict, section: str):
         blocks = list(model.encoder.blocks())
         scales = layer_decay_scales(len(blocks), decay)
         in_block = set()
-        for block, scale in zip(blocks, scales):
-            params = [p for p in block.parameters() if p.requires_grad]
+        # Top block first: BEATs shares its relative-position bias across layers, so
+        # a parameter can belong to several blocks. It goes to the highest one that
+        # uses it, and only once - AdamW rejects a parameter listed in two groups.
+        for block, scale in reversed(list(zip(blocks, scales))):
+            params = [p for p in block.parameters()
+                      if p.requires_grad and id(p) not in in_block]
             in_block.update(id(p) for p in params)
             if params:
                 groups.append({"params": params, "lr": encoder_lr * scale})
