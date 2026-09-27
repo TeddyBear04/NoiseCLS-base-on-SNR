@@ -20,7 +20,11 @@
     "_model_id_note": "AS2M-supervised-finetuned, matching the BEATs checkpoint the mid teacher used (BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2). ta012/SSLAM_pretrain (self-supervised only) gave a clean-noise teacher of 0.6576 on 2026-09-28 vs BEATs 0.7799 and stopped at the gate; the 0.502 AudioSet mAP that motivated SSLAM is the finetuned model's number.",
     "embedding_dim": 768,
     "num_mel_bins": 128,
-    "norm_divisor": 2.0
+    "norm_divisor": 2.0,
+    "_norm_divisor_note": "Verified 2026-09-28 by zero-shot AudioSet-head accuracy on 720 clean high-band noise clips: divisor 2.0 -> 0.7292, 1.0 -> 0.6333; padding to 1024 frames hurts (0.7069 / 0.5292).",
+    "pooling": "cls_fcnorm",
+    "head_init": "audioset",
+    "_pooling_note": "cls_fcnorm = fc_norm(CLS), the finetuned checkpoint's own classification path. head_init audioset = start the 36-way head from its AudioSet rows (LP-FT, Kumar et al. ICLR 2022). With mean_patches + random head the clean-noise teacher reached 0.6912, below the 0.7292 this head gets zero-shot."
   },
   "run": "run1_baseline",
   "band_db": [15.0, 20.0],

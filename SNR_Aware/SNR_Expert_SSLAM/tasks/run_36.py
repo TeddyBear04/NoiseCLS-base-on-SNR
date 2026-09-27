@@ -27,6 +27,7 @@ remote code. See `models/sslam.py`.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import random
 import sys
@@ -52,7 +53,9 @@ from models.audio_io import load_float_audio, load_mix_manifest  # noqa: E402
 from expert_lib import (  # noqa: E402
     CRDLoss, FiLM, Projection, film_deviation, band_slice_mask, sample_negatives,
 )
-from models.sslam import SSLAMEncoder, load_sslam, unfreeze_last_blocks  # noqa: E402
+from models.sslam import (  # noqa: E402
+    SSLAMEncoder, audioset_head_rows, load_sslam, unfreeze_last_blocks,
+)
 
 
 #   run1_baseline  the recipe without any privileged information: CE only, no
@@ -217,9 +220,9 @@ class Classifier(nn.Module):
     `forward` hands back the patch tokens too, because the patch-level CRD term
     is the whole reason this project exists separately from the BEATs one.
 
-    Unlike the BEATs pipeline, the head starts from scratch: SSLAM_pretrain ships
-    no classifier, so there are no AudioSet predictor rows to warm-start from.
-    Expect the head stage to need its epochs rather than peaking at epoch 1.
+    With `backbone.head_init = "audioset"` the head starts from the finetuned
+    checkpoint's AudioSet rows for our 36 labels, as the BEATs pipeline did;
+    `"random"` is what SSLAM_pretrain (no classifier) forces.
     """
 
     def __init__(self, encoder: SSLAMEncoder, dim: int, classes: int,
@@ -244,12 +247,36 @@ def build_model(config: dict, device: torch.device, film_enabled: bool,
     print(f"unfroze {trainable/1e6:.1f}M params in the last {trainable_blocks} blocks",
           flush=True)
     encoder = SSLAMEncoder(raw, backbone["num_mel_bins"], backbone["norm_divisor"],
-                           config["dataset"]["sample_rate"])
+                           config["dataset"]["sample_rate"],
+                           backbone.get("pooling", "mean_patches"))
     film = FiLM(backbone["embedding_dim"],
                 config["student"]["film"]["hidden"]) if film_enabled else None
     model = Classifier(encoder, backbone["embedding_dim"],
                        config["experiment"]["num_classes"], film)
+    if backbone.get("head_init", "random") == "audioset":
+        weight, bias = audioset_head_rows(raw, label_mids(config))
+        with torch.no_grad():
+            model.head.weight.copy_(weight)
+            model.head.bias.copy_(bias)
+        print("head warm-started from the AudioSet rows of our 36 labels", flush=True)
+    print(f"pooling={encoder.pooling}", flush=True)
     return model.to(device)
+
+
+def label_mids(config: dict) -> list[str]:
+    """AudioSet mid of every label, in labels.txt order (the model's class order)."""
+    dataset = config["dataset"]
+    root = Path(dataset["path"])
+    labels = [line.strip() for line in
+              (root / dataset["labels_file"]).read_text(encoding="utf-8").splitlines()
+              if line.strip()]
+    mid_of = {}
+    with (root / dataset["manifest_file"]).open(encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            mid_of.setdefault(row["label_names"], row["label_mids"])
+            if len(mid_of) == len(labels):
+                break
+    return [mid_of[label] for label in labels]
 
 
 def trainable_parameters(model: Classifier):

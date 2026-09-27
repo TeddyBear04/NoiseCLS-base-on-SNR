@@ -143,3 +143,35 @@ Không student nào được chạy — gate làm đúng việc: teacher yếu t
   15–20 dB, theo yêu cầu chỉ tập trung nhánh high. Train vẫn dùng đủ 6 mức SNR.
 - Quy tắc tinh chỉnh: mọi quyết định chỉnh tham số dựa trên **validation** lát high; test
   chỉ để báo cáo cấu hình đã chọn.
+
+### 2026-09-28 — lượt 2: teacher `SSLAM_AS2M_Finetuned` dừng ở gate ⛔
+
+Teacher val acc **0.6912** (lượt 1: 0.6576; BEATs: 0.7799). Vẫn dưới 0.75.
+
+**Chẩn đoán không cần train** — cho head AudioSet 527 lớp có sẵn của checkpoint đoán thẳng
+trên 720 clip noise sạch lát high (20 clip × 36 nhãn, validation), chỉ xét 36 cột của nhãn mình:
+
+| Đầu vào mel | Zero-shot acc36 |
+|---|---|
+| **không pad, chia 2·std** (code đang dùng) | **0.7292** |
+| không pad, chia std | 0.6333 |
+| pad 1024 frame, chia 2·std | 0.7069 |
+| pad 1024 frame, chia std | 0.5292 |
+
+Hai kết luận:
+
+1. **`norm_divisor = 2.0` đúng** — gỡ nghi vấn "chưa xác minh" trong README.
+2. **Zero-shot (0.7292) cao hơn teacher đã finetune (0.6912).** Finetune làm *mất* 4 điểm.
+   Nguyên nhân: checkpoint phân loại bằng `fc_norm(CLS)` → head (`eat_model.EAT.forward`),
+   còn pipeline lấy **trung bình patch, bỏ CLS**, đưa vào **head ngẫu nhiên**. Đúng hiện
+   tượng LP-FT mô tả (Kumar et al., *Fine-Tuning can Distort Pretrained Features*, ICLR
+   2022): head ngẫu nhiên kéo méo đặc trưng tốt trong lúc tự học lại.
+
+### Thay đổi sau lượt 2
+
+- `backbone.pooling = "cls_fcnorm"` — vector gộp là `fc_norm(CLS)`, đúng đường phân loại
+  của checkpoint. CRD mức patch vẫn dùng patch token như cũ.
+- `backbone.head_init = "audioset"` — head 36 lớp khởi tạo từ 36 hàng tương ứng của head
+  AudioSet (map qua `label_mids` → `models/audioset_class_labels_indices.csv`, đủ 36/36).
+  Epoch 0 vì thế phải tái tạo xấp xỉ con số zero-shot 0.7292 — đó là phép kiểm tra rằng
+  warm-start cài đúng.

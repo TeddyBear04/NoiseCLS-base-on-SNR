@@ -28,6 +28,9 @@ Pin `transformers<5`.
 
 from __future__ import annotations
 
+import csv
+from pathlib import Path
+
 import torch
 import torchaudio
 from torch import Tensor, nn
@@ -91,18 +94,30 @@ class SSLAMEncoder(nn.Module):
     """
 
     def __init__(self, model, num_mel_bins: int = 128, norm_divisor: float = 2.0,
-                 sample_rate: int = 16_000):
+                 sample_rate: int = 16_000, pooling: str = "mean_patches"):
         super().__init__()
+        if pooling not in ("mean_patches", "cls_fcnorm"):
+            raise ValueError(f"unknown pooling {pooling!r}")
         self.model = model
         self.num_mel_bins = num_mel_bins
         self.norm_divisor = norm_divisor
         self.sample_rate = sample_rate
+        self.pooling = pooling
+        if pooling == "cls_fcnorm":
+            # The AS2M-finetuned checkpoint classifies from fc_norm(CLS); train that
+            # LayerNorm with the head rather than leave it frozen at AudioSet's stats.
+            for parameter in self.model.model.fc_norm.parameters():
+                parameter.requires_grad = True
 
     def forward(self, waveform: Tensor) -> tuple[Tensor, Tensor]:
         mel = waveform_to_mel(waveform, self.sample_rate, self.num_mel_bins,
                               self.norm_divisor).to(waveform.device)
         tokens = self.model.extract_features(mel)
         patches = tokens[:, 1:, :]
+        if self.pooling == "cls_fcnorm":
+            # Exactly the finetuned model's own classification path
+            # (eat_model.EAT.forward: fc_norm(encode(x)[:, 0]) -> head).
+            return patches, self.model.model.fc_norm(tokens[:, 0])
         return patches, patches.mean(dim=1)
 
 
@@ -131,3 +146,25 @@ def unfreeze_last_blocks(model, blocks: int) -> int:
             parameter.requires_grad = True
             count += parameter.numel()
     return count
+
+
+AUDIOSET_INDEX_CSV = Path(__file__).with_name("audioset_class_labels_indices.csv")
+
+
+def audioset_head_rows(model, label_mids: list[str]) -> tuple[Tensor, Tensor]:
+    """The finetuned AudioSet head's rows for our labels, in our label order.
+
+    Warm-starting the 36-way head from these reproduces the checkpoint's own
+    zero-shot predictor at epoch 0 (0.7292 on clean high-band noise, measured
+    2026-09-28) instead of a random head that finetuning has to recover from -
+    a random head gave 0.6912 after 7 epochs, below that zero-shot number.
+    LP-FT (Kumar et al., ICLR 2022): a random head distorts pretrained features.
+    """
+    index_of = {row["mid"]: int(row["index"])
+                for row in csv.DictReader(AUDIOSET_INDEX_CSV.open(encoding="utf-8"))}
+    missing = [mid for mid in label_mids if mid not in index_of]
+    if missing:
+        raise KeyError(f"labels not in the AudioSet ontology: {missing}")
+    rows = torch.tensor([index_of[mid] for mid in label_mids])
+    head = model.model.head
+    return head.weight.detach()[rows].clone(), head.bias.detach()[rows].clone()
