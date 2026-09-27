@@ -225,3 +225,43 @@ trên mixture ở dải high; ngược lại thua 3.5 điểm.
 **0.5204**, sau đó tụt (0.5116, 0.5088) → early stop. Cùng dáng với teacher trước khi hạ lr
 encoder: thuộc lòng nhanh, finetune làm hại sau epoch đầu. Student vẫn dùng `encoder_lr`
 1e-5, trong khi sweep teacher cho thấy 3e-6 tốt hơn.
+
+### 2026-09-28 — lượt 5: đủ 5 run (cùng teacher C 0.7380, cùng config) ✅ chạy xong
+
+File gốc: `results/2026-09-28_5runs/` (CSV của report, JSON test/history từng run, log đã lọc).
+
+**Test, lát high, top-1 accuracy** (1.080 clip mỗi mức; band = trung bình hai mức):
+
+| Run | 15 dB | 20 dB | band | band macro-F1 | Δ band vs mốc |
+|---|---|---|---|---|---|
+| **Mốc — BEATs-Mixture công bố** | **0.5769** | **0.4861** | **0.5315** | **0.5294** | — |
+| `run1_baseline` | 0.5278 | 0.4648 | 0.4963 | 0.4969 | −3.52 |
+| `run2_ce_only` | 0.5287 | 0.4620 | 0.4954 | 0.4959 | −3.61 |
+| `run3b_crd_only` | 0.5417 | 0.4722 | 0.5069 | 0.5048 | −2.46 |
+| `run3c_kd_only` | **0.5648** | 0.4889 | 0.5269 | 0.5252 | −0.46 |
+| `run3_kd_crd` | 0.5611 | **0.4926** | 0.5269 | 0.5245 | −0.46 |
+
+**So với mốc công bố:** không run nào vượt ở mức band (tốt nhất −0.46 điểm). Ở 20 dB,
+`run3_kd_crd` (0.4926) và `run3c_kd_only` (0.4889) **cao hơn** mốc 0.4861 (+0.65 / +0.28), nhưng
+ở 15 dB vẫn thấp hơn (−1.58 / −1.21). Mốc công bố không có dự đoán từng clip nên không kiểm
+định cặp được với nó.
+
+**So với control dựng lại `run1_baseline` (McNemar theo cặp, cùng test set):**
+
+| vs `run1_baseline` | Δ band | p band | Δ 15 dB | p | Δ 20 dB | p |
+|---|---|---|---|---|---|---|
+| `run2_ce_only` (FiLM) | −0.09 | 0.89 | +0.09 | 1.00 | −0.28 | 0.73 |
+| `run3b_crd_only` | +1.06 | **0.035** | +1.39 | 0.068 | +0.74 | 0.32 |
+| `run3c_kd_only` | **+3.06** | **8.6e-05** | +3.70 | **0.0008** | +2.41 | **0.035** |
+| `run3_kd_crd` | **+3.06** | **1.2e-04** | +3.33 | **0.003** | +2.78 | **0.016** |
+
+### Đọc kết quả
+
+1. **Phương pháp có tác dụng thật và mạnh ở dải high**: KD cho +3.06 điểm, p < 0.001 —
+   mạnh hơn nhiều so với dải mid (+0.23, p = 0.757). Khớp đúng dự đoán rằng hiệu ứng nằm ở high.
+2. **KD là nguồn chính**, CRD đóng góp ít (+1.06 riêng lẻ, gần như không cộng thêm khi đã có
+   KD). Giống hệt quy trách nhiệm ở dự án mid. FiLM không giúp gì.
+3. **Vì sao vẫn chưa vượt mốc:** nền SSLAM thấp hơn nền BEATs công bố 3.52 điểm; +3.06 của KD
+   bù gần hết nhưng thiếu 0.46. Vấn đề nằm ở backbone chứ không phải ở phương pháp.
+4. Validation của mọi run đạt đỉnh sớm (epoch 1–3) rồi tụt; student vẫn dùng `encoder_lr` 1e-5,
+   trong khi sweep teacher cho thấy 3e-6 tốt hơn trên cùng backbone.

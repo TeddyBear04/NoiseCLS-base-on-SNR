@@ -1,0 +1,414 @@
+{
+  "history": [
+    {
+      "epoch": 1,
+      "seconds": 57.440983773999506,
+      "train_accuracy": 0.6830026455026456,
+      "ce": 1.1601456602256766,
+      "val_band_accuracy": 0.5189814814814815,
+      "val_band_macro_f1": 0.521526171823259,
+      "val_full_accuracy": 0.5189814814814815,
+      "film_deviation": 7.28125
+    },
+    {
+      "epoch": 2,
+      "seconds": 56.82175039100002,
+      "train_accuracy": 0.822255291005291,
+      "ce": 0.6288686948123747,
+      "val_band_accuracy": 0.5,
+      "val_band_macro_f1": 0.495065706552001,
+      "val_full_accuracy": 0.5,
+      "film_deviation": 9.9375
+    },
+    {
+      "epoch": 3,
+      "seconds": 57.30633235300047,
+      "train_accuracy": 0.8934854497354497,
+      "ce": 0.3730620966031753,
+      "val_band_accuracy": 0.5013888888888889,
+      "val_band_macro_f1": 0.505957311455712,
+      "val_full_accuracy": 0.5013888888888889,
+      "film_deviation": 14.3125
+    },
+    {
+      "epoch": 4,
+      "seconds": 57.965540129000146,
+      "train_accuracy": 0.9378968253968254,
+      "ce": 0.21532540421873805,
+      "val_band_accuracy": 0.4976851851851852,
+      "val_band_macro_f1": 0.49709047134430495,
+      "val_full_accuracy": 0.4976851851851852,
+      "film_deviation": 23.125
+    }
+  ],
+  "best_validation": {
+    "full": {
+      "accuracy": 0.5189814814814815,
+      "precision": 0.5472221380219838,
+      "recall": 0.5189814814814815,
+      "macro_f1": 0.521526171823259,
+      "micro_f1": 0.5189814814814815,
+      "per_class": {
+        "Acoustic guitar": {
+          "f1": 0.5954198473282443,
+          "support": 60
+        },
+        "Applause": {
+          "f1": 0.75,
+          "support": 60
+        },
+        "Bark": {
+          "f1": 0.7636363636363637,
+          "support": 60
+        },
+        "Burping, eructation": {
+          "f1": 0.6422018348623854,
+          "support": 60
+        },
+        "Bus": {
+          "f1": 0.6259541984732825,
+          "support": 60
+        },
+        "Chime": {
+          "f1": 0.7580645161290323,
+          "support": 60
+        },
+        "Clarinet": {
+          "f1": 0.5466666666666666,
+          "support": 60
+        },
+        "Computer keyboard": {
+          "f1": 0.45652173913043476,
+          "support": 60
+        },
+        "Cough": {
+          "f1": 0.5436893203883495,
+          "support": 60
+        },
+        "Cowbell": {
+          "f1": 0.5354330708661418,
+          "support": 60
+        },
+        "Drawer open or close": {
+          "f1": 0.35398230088495575,
+          "support": 60
+        },
+        "Electric piano": {
+          "f1": 0.391304347826087,
+          "support": 60
+        },
+        "Fart": {
+          "f1": 0.4329896907216495,
+          "support": 60
+        },
+        "Finger snapping": {
+          "f1": 0.5263157894736842,
+          "support": 60
+        },
+        "Fireworks": {
+          "f1": 0.6138613861386139,
+          "support": 60
+        },
+        "Flute": {
+          "f1": 0.47761194029850745,
+          "support": 60
+        },
+        "Glockenspiel": {
+          "f1": 0.46464646464646464,
+          "support": 60
+        },
+        "Gong": {
+          "f1": 0.7,
+          "support": 60
+        },
+        "Gunshot, gunfire": {
+          "f1": 0.47540983606557374,
+          "support": 60
+        },
+        "Harmonica": {
+          "f1": 0.8,
+          "support": 60
+        },
+        "Hi-hat": {
+          "f1": 0.5714285714285714,
+          "support": 60
+        },
+        "Keys jangling": {
+          "f1": 0.3968253968253968,
+          "support": 60
+        },
+        "Knock": {
+          "f1": 0.3089430894308943,
+          "support": 60
+        },
+        "Laughter": {
+          "f1": 0.4892086330935252,
+          "support": 60
+        },
+        "Meow": {
+          "f1": 0.5535714285714286,
+          "support": 60
+        },
+        "Microwave oven": {
+          "f1": 0.20202020202020202,
+          "support": 60
+        },
+        "Saxophone": {
+          "f1": 0.4528301886792453,
+          "support": 60
+        },
+        "Scissors": {
+          "f1": 0.45454545454545453,
+          "support": 60
+        },
+        "Shatter": {
+          "f1": 0.6078431372549019,
+          "support": 60
+        },
+        "Squeak": {
+          "f1": 0.4074074074074074,
+          "support": 60
+        },
+        "Tambourine": {
+          "f1": 0.828125,
+          "support": 60
+        },
+        "Tearing": {
+          "f1": 0.5384615384615384,
+          "support": 60
+        },
+        "Telephone": {
+          "f1": 0.34951456310679613,
+          "support": 60
+        },
+        "Trumpet": {
+          "f1": 0.3968253968253968,
+          "support": 60
+        },
+        "Violin, fiddle": {
+          "f1": 0.46956521739130436,
+          "support": 60
+        },
+        "Writing": {
+          "f1": 0.29411764705882354,
+          "support": 60
+        }
+      },
+      "per_snr": {
+        "15": {
+          "samples": 1080,
+          "accuracy": 0.5574074074074075,
+          "macro_f1": 0.5574535175800623,
+          "micro_f1": 0.5574074074074075
+        },
+        "20": {
+          "samples": 1080,
+          "accuracy": 0.48055555555555557,
+          "macro_f1": 0.48629922086844274,
+          "micro_f1": 0.48055555555555557
+        }
+      }
+    },
+    "band": {
+      "accuracy": 0.5189814814814815,
+      "precision": 0.5472221380219838,
+      "recall": 0.5189814814814815,
+      "macro_f1": 0.521526171823259,
+      "micro_f1": 0.5189814814814815,
+      "per_class": {
+        "Acoustic guitar": {
+          "f1": 0.5954198473282443,
+          "support": 60
+        },
+        "Applause": {
+          "f1": 0.75,
+          "support": 60
+        },
+        "Bark": {
+          "f1": 0.7636363636363637,
+          "support": 60
+        },
+        "Burping, eructation": {
+          "f1": 0.6422018348623854,
+          "support": 60
+        },
+        "Bus": {
+          "f1": 0.6259541984732825,
+          "support": 60
+        },
+        "Chime": {
+          "f1": 0.7580645161290323,
+          "support": 60
+        },
+        "Clarinet": {
+          "f1": 0.5466666666666666,
+          "support": 60
+        },
+        "Computer keyboard": {
+          "f1": 0.45652173913043476,
+          "support": 60
+        },
+        "Cough": {
+          "f1": 0.5436893203883495,
+          "support": 60
+        },
+        "Cowbell": {
+          "f1": 0.5354330708661418,
+          "support": 60
+        },
+        "Drawer open or close": {
+          "f1": 0.35398230088495575,
+          "support": 60
+        },
+        "Electric piano": {
+          "f1": 0.391304347826087,
+          "support": 60
+        },
+        "Fart": {
+          "f1": 0.4329896907216495,
+          "support": 60
+        },
+        "Finger snapping": {
+          "f1": 0.5263157894736842,
+          "support": 60
+        },
+        "Fireworks": {
+          "f1": 0.6138613861386139,
+          "support": 60
+        },
+        "Flute": {
+          "f1": 0.47761194029850745,
+          "support": 60
+        },
+        "Glockenspiel": {
+          "f1": 0.46464646464646464,
+          "support": 60
+        },
+        "Gong": {
+          "f1": 0.7,
+          "support": 60
+        },
+        "Gunshot, gunfire": {
+          "f1": 0.47540983606557374,
+          "support": 60
+        },
+        "Harmonica": {
+          "f1": 0.8,
+          "support": 60
+        },
+        "Hi-hat": {
+          "f1": 0.5714285714285714,
+          "support": 60
+        },
+        "Keys jangling": {
+          "f1": 0.3968253968253968,
+          "support": 60
+        },
+        "Knock": {
+          "f1": 0.3089430894308943,
+          "support": 60
+        },
+        "Laughter": {
+          "f1": 0.4892086330935252,
+          "support": 60
+        },
+        "Meow": {
+          "f1": 0.5535714285714286,
+          "support": 60
+        },
+        "Microwave oven": {
+          "f1": 0.20202020202020202,
+          "support": 60
+        },
+        "Saxophone": {
+          "f1": 0.4528301886792453,
+          "support": 60
+        },
+        "Scissors": {
+          "f1": 0.45454545454545453,
+          "support": 60
+        },
+        "Shatter": {
+          "f1": 0.6078431372549019,
+          "support": 60
+        },
+        "Squeak": {
+          "f1": 0.4074074074074074,
+          "support": 60
+        },
+        "Tambourine": {
+          "f1": 0.828125,
+          "support": 60
+        },
+        "Tearing": {
+          "f1": 0.5384615384615384,
+          "support": 60
+        },
+        "Telephone": {
+          "f1": 0.34951456310679613,
+          "support": 60
+        },
+        "Trumpet": {
+          "f1": 0.3968253968253968,
+          "support": 60
+        },
+        "Violin, fiddle": {
+          "f1": 0.46956521739130436,
+          "support": 60
+        },
+        "Writing": {
+          "f1": 0.29411764705882354,
+          "support": 60
+        }
+      },
+      "per_snr": {
+        "15": {
+          "samples": 1080,
+          "accuracy": 0.5574074074074075,
+          "macro_f1": 0.5574535175800623,
+          "micro_f1": 0.5574074074074075
+        },
+        "20": {
+          "samples": 1080,
+          "accuracy": 0.48055555555555557,
+          "macro_f1": 0.48629922086844274,
+          "micro_f1": 0.48055555555555557
+        }
+      },
+      "samples": 2160
+    }
+  },
+  "loss_config": {
+    "r_ce": 1.0,
+    "a_kd": 0.0,
+    "b_crd": 0.0,
+    "rho_kd": 4.0,
+    "tau_nce": 0.07,
+    "proj_dim": 128,
+    "n_negatives": 1024,
+    "negative_mode": "different_label",
+    "crd_level": "patch",
+    "_note": "crd_level 'patch' aligns every patch token against the teacher's; 'pooled' reproduces the BEATs project's single-vector CRD. patch is the reason for switching backbones - see VERSIONS.md. Weights r/a/b come from the CRD reference repo (-r 1 -a 1 -b 0.8); do not invent replacements."
+  },
+  "student_config": {
+    "source_column": "mixture_path",
+    "finetune_epochs": 6,
+    "trainable_blocks": 6,
+    "head_lr": 0.0001,
+    "encoder_lr": 1e-05,
+    "film_lr": 0.001,
+    "batch_size": 16,
+    "validation_batch_size": 32,
+    "accumulation_steps": 2,
+    "gradient_clip_norm": 5.0,
+    "patience": 3,
+    "workers": 4,
+    "film": {
+      "enabled": true,
+      "hidden": 128,
+      "snr_jitter_db": 2.0,
+      "placement": "pooled"
+    },
+    "select_on": "band"
+  }
+}

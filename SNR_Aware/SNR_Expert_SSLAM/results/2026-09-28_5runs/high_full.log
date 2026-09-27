@@ -1,0 +1,110 @@
+stage=teacher36 config=config/train_config_high.json
+{
+  "rows": 43200,
+  "per_split": {
+    "test": 6480,
+    "train": 30240,
+    "validation": 6480
+  },
+  "labels": 36,
+  "unique_noise": 30240,
+  "reuse_ratio": 1.0
+}
+unfroze 42.5M params in the last 6 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+selecting on the 'full' slice
+epoch=0 val_band_acc=0.7273 val_full_acc=0.7273
+epoch=1 ce=0.4863 val_band_acc=0.7380 val_band_f1=0.7367 film_dev=0.000 (57s)
+epoch=2 ce=0.0955 val_band_acc=0.7352 val_band_f1=0.7325 film_dev=0.000 (55s)
+epoch=3 ce=0.0229 val_band_acc=0.7301 val_band_f1=0.7277 film_dev=0.000 (56s)
+epoch=4 ce=0.0080 val_band_acc=0.7231 val_band_f1=0.7197 film_dev=0.000 (56s)
+early_stop=4
+
+teacher val_accuracy = 0.7380
+baseline (band slice) = 0.5315   headroom = +0.2065
+GATE=PASS
+{
+  "teacher_val_accuracy": 0.738,
+  "teacher_val_macro_f1": 0.7367,
+  "teacher_gate": "PASS",
+  "audit": {
+    "rows": 43200,
+    "per_split": {
+      "test": 6480,
+      "train": 30240,
+      "validation": 6480
+    },
+    "labels": 36,
+    "unique_noise": 30240,
+    "reuse_ratio": 1.0
+  }
+}
+stage=student36 config=config/train_config_high.json
+run=run1_baseline a_kd=0.0 b_crd=0.0 film=False select_on=full crd_level=patch
+unfroze 42.5M params in the last 6 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+run=run1_baseline train=30240 kd=False crd=False teacher=none
+selecting on the 'full' slice
+epoch=0 val_band_acc=0.3755 val_full_acc=0.3755
+epoch=1 ce=1.1589 val_band_acc=0.5204 val_band_f1=0.5228 film_dev=0.000 (58s)
+epoch=2 ce=0.6441 val_band_acc=0.5116 val_band_f1=0.5085 film_dev=0.000 (57s)
+epoch=3 ce=0.3830 val_band_acc=0.5088 val_band_f1=0.5114 film_dev=0.000 (57s)
+epoch=4 ce=0.2136 val_band_acc=0.4968 val_band_f1=0.4936 film_dev=0.000 (58s)
+early_stop=4
+
+checkpoint -> /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/student_run1_baseline.pt
+best val_band_accuracy=0.5204 val_band_macro_f1=0.5228
+stage=test36 config=config/train_config_high.json
+run=run1_baseline a_kd=0.0 b_crd=0.0 film=False select_on=full crd_level=patch
+unfroze 0.0M params in the last 0 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+
+run=run1_baseline test band slice (2160 clips)
+  accuracy = 0.4963  (baseline 0.5315, delta -0.0352)
+  macro_f1 = 0.4977  (baseline 0.5293, delta -0.0316)
+A delta under about 1.0 point is inside the standard error on 2,160 clips. Do not call it an improvement without the paired McNemar test.
+unfroze 0.0M params in the last 0 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+
+embedding purity (mechanism check, not accuracy):
+  band    cos_pos=0.7275 cos_neg=0.1137 gap=0.6138 retrieval@1=0.9630
+  snr_15  cos_pos=0.7361 cos_neg=0.1059 gap=0.6302 retrieval@1=0.9769
+  snr_20  cos_pos=0.7188 cos_neg=0.1220 gap=0.5968 retrieval@1=0.9769
+predictions -> /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/student_run1_baseline_predictions.npz
+stage=test36 config=config/train_config_high.json
+run=run1_baseline a_kd=0.0 b_crd=0.0 film=False select_on=full crd_level=patch
+unfroze 0.0M params in the last 0 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+
+run=run1_baseline test band slice (2160 clips)
+  accuracy = 0.4963  (baseline 0.5315, delta -0.0352)
+  macro_f1 = 0.4977  (baseline 0.5293, delta -0.0316)
+A delta under about 1.0 point is inside the standard error on 2,160 clips. Do not call it an improvement without the paired McNemar test.
+unfroze 0.0M params in the last 0 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+
+embedding purity (mechanism check, not accuracy):
+  band    cos_pos=0.7275 cos_neg=0.1137 gap=0.6138 retrieval@1=0.9630
+  snr_15  cos_pos=0.7361 cos_neg=0.1059 gap=0.6302 retrieval@1=0.9769
+  snr_20  cos_pos=0.7188 cos_neg=0.1220 gap=0.5968 retrieval@1=0.9769
+predictions -> /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/student_run1_baseline_predictions.npz
+stage=report36 config=config/train_config_high.json
+runs: run1_baseline
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/results/metrics_by_run.csv  (12 rows)
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/results/ket_qua_tong_hop.csv  (12 rows)
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/results/theo_tung_snr.csv  (2 rows)
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/results/metrics_per_class.csv  (72 rows)
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/results/comparison.csv  (0 rows)
+
+=== band slice (15-20 dB) ===
+run                     acc  macro_f1      mAP      AUC
+beats_baseline       0.5708   0.5669        -        -
+run1_baseline        0.4963   0.4977   0.5491   0.9275
+RUN1_SAVED_STOPPED
+FINISH_EXIT=0
