@@ -26,6 +26,20 @@ from tasks.run_36 import (
 )
 
 
+
+def smoke_subset(rows: list, n: int, seed: int) -> list:
+    """A seeded random sample, kept in manifest order.
+
+    Slicing the first n rows looked equivalent but is not: the manifest is grouped,
+    so the first 400 train rows were nearly one label. That made CRD's
+    different-label negative sampling fail outright and every accuracy in the smoke
+    log meaningless - the smoke test could not exercise the KD/CRD paths at all.
+    """
+    if n >= len(rows):
+        return rows
+    picked = np.sort(np.random.default_rng(seed).choice(len(rows), n, replace=False))
+    return [rows[i] for i in picked]
+
 def jitter_snr(snr_db, sigma_db, generator):
     """The gate's error, simulated. Training on true SNR and testing on an
     estimated one would leave the student brittle exactly where it has to work.
@@ -113,8 +127,8 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
                  "film_deviation": film_deviation(model.film) if model.film else 0.0}
         history.append(entry)
         shown = " ".join(f"{k}={v/seen:.4f}" for k, v in sums.items())
-        print(f"epoch={epoch} {shown} val_mid_acc={entry['val_band_accuracy']:.4f} "
-              f"val_mid_f1={entry['val_band_macro_f1']:.4f} "
+        print(f"epoch={epoch} {shown} val_band_acc={entry['val_band_accuracy']:.4f} "
+              f"val_band_f1={entry['val_band_macro_f1']:.4f} "
               f"film_dev={entry['film_deviation']:.3f} "
               f"({entry['seconds']:.0f}s)", flush=True)
 
@@ -144,8 +158,10 @@ def command_teacher36(config: dict) -> None:
     train_rows = corpus.by_split[config["dataset"]["train_split"]]
     validation_rows = corpus.by_split[config["dataset"]["validation_split"]]
     if runtime["smoke_test"]:
-        train_rows = train_rows[:runtime["smoke_train_rows"]]
-        validation_rows = validation_rows[:runtime["smoke_validation_rows"]]
+        train_rows = smoke_subset(train_rows, runtime["smoke_train_rows"],
+                                  config["experiment"]["seed"])
+        validation_rows = smoke_subset(validation_rows, runtime["smoke_validation_rows"],
+                                       config["experiment"]["seed"])
         print("SMOKE TEST - results are not reportable", flush=True)
 
     model = build_model(config, device, film_enabled=False,
@@ -225,8 +241,10 @@ def command_student36(config: dict) -> None:
     train_rows = corpus.by_split[config["dataset"]["train_split"]]
     validation_rows = corpus.by_split[config["dataset"]["validation_split"]]
     if runtime["smoke_test"]:
-        train_rows = train_rows[:runtime["smoke_train_rows"]]
-        validation_rows = validation_rows[:runtime["smoke_validation_rows"]]
+        train_rows = smoke_subset(train_rows, runtime["smoke_train_rows"],
+                                  config["experiment"]["seed"])
+        validation_rows = smoke_subset(validation_rows, runtime["smoke_validation_rows"],
+                                       config["experiment"]["seed"])
         print("SMOKE TEST - results are not reportable", flush=True)
 
     model = build_model(config, device, settings["film"]["enabled"],
