@@ -27,25 +27,28 @@
     "_pooling_note": "cls_fcnorm = fc_norm(CLS), the finetuned checkpoint's own classification path. head_init audioset = start the 36-way head from its AudioSet rows (LP-FT, Kumar et al. ICLR 2022). With mean_patches + random head the clean-noise teacher reached 0.6912, below the 0.7292 this head gets zero-shot."
   },
   "run": "run1_baseline",
-  "band_db": [15.0, 20.0],
+  "band_db": [
+    15.0,
+    20.0
+  ],
   "teacher": {
     "source_column": "noise_path",
     "head_epochs": 20,
-    "head_lr": 0.001,
+    "head_lr": 0.0001,
     "head_batch_size": 512,
     "head_patience": 3,
     "extract_batch_size": 32,
-    "finetune_epochs": 8,
+    "finetune_epochs": 10,
     "trainable_blocks": 6,
-    "head_ft_lr": 0.0001,
-    "encoder_lr": 1e-05,
+    "encoder_lr": 3e-06,
     "batch_size": 16,
     "validation_batch_size": 32,
     "accumulation_steps": 2,
     "gradient_clip_norm": 5.0,
     "patience": 3,
     "workers": 4,
-    "checkpoint": "teacher_noise_best.pt"
+    "checkpoint": "teacher_noise_best.pt",
+    "_lr_note": "Teacher sweep 2026-09-28 (val acc, 15-20 dB clean noise, AudioSet-warm head): head-only 0.7273, blocks6 enc1e-5 0.7292, blocks6 enc3e-6 0.7380. head_lr is the finetune head lr: at 1e-3 it knocked the warm-started head off in epoch 1."
   },
   "student": {
     "source_column": "mixture_path",
@@ -80,8 +83,8 @@
     "_note": "crd_level 'patch' aligns every patch token against the teacher's; 'pooled' reproduces the BEATs project's single-vector CRD. patch is the reason for switching backbones - see VERSIONS.md. Weights r/a/b come from the CRD reference repo (-r 1 -a 1 -b 0.8); do not invent replacements."
   },
   "gates": {
-    "teacher_acc_floor": 0.75,
-    "_teacher_acc_floor_note": "Carried over from the mid project's floor (validated there for a BEATs teacher on 5-10 dB). Not yet re-validated for an SSLAM teacher on 15-20 dB; treat the first teacher36 run as the calibration point and revisit this number then.",
+    "teacher_min_headroom": 0.1,
+    "_teacher_gate_note": "Gate = baseline_band_accuracy + 0.10 = 0.6315. The mid project's absolute 0.75 floor sat above a 0.67 mixture baseline; carried to this band (baseline 0.53) it stopped a clean-noise teacher of 0.738, which is 0.21 above the baseline - twice the mid project's teacher headroom (0.78 - 0.67 = 0.11). Flagged as uncalibrated for SSLAM/high from the first commit; recalibrated after the teacher sweep of 2026-09-28.",
     "baseline_band_accuracy": 0.5315,
     "baseline_band_macro_f1": 0.52935,
     "_baseline_band_note": "Published BEATs-Mixture, Result.xlsx 'Theo tung SNR': (0.5769@15dB + 0.4861@20dB)/2 and (0.5757+0.4830)/2, equal support (1080 each). This is the gate; it is NOT the same run as BEATs_Experts/checkpoint/test_metrics_36.json (that checkpoint's own 15/20 numbers are 0.6102/0.5315 - a different training run, no per-clip predictions, cannot enter a paired test)."

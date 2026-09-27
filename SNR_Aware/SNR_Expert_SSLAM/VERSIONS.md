@@ -175,3 +175,32 @@ Hai kết luận:
   AudioSet (map qua `label_mids` → `models/audioset_class_labels_indices.csv`, đủ 36/36).
   Epoch 0 vì thế phải tái tạo xấp xỉ con số zero-shot 0.7292 — đó là phép kiểm tra rằng
   warm-start cài đúng.
+
+### 2026-09-28 — lượt 3: pooling `fc_norm(CLS)` + head AudioSet
+
+Epoch 0 = **0.7273**, khớp zero-shot 0.7292 → warm-start cài đúng. Nhưng finetune làm tụt
+(0.6875 → 0.70) và checkpoint tốt nhất vẫn là epoch 0.
+
+**Lỗi cấu hình tìm ra:** `optimizer_for` ưu tiên `teacher.head_lr` (1e-3, vốn cho pha
+train riêng head — pha này không tồn tại trong bản SSLAM) thay vì `head_ft_lr` (1e-4). Head
+vừa được warm-start bị đánh văng khỏi điểm tốt ngay epoch đầu.
+
+### 2026-09-28 — sweep teacher (3 biến thể song song, cùng seed, chọn theo val lát high)
+
+| Biến thể | Block train | lr head | lr encoder | Val acc tốt nhất |
+|---|:-:|:-:|:-:|:-:|
+| A — chỉ train head | 0 | 1e-3 | — | 0.7273 (epoch 0) |
+| B — sửa lr head | 6 | 1e-4 | 1e-5 | 0.7292 |
+| **C — finetune nhẹ** | 6 | 1e-4 | **3e-6** | **0.7380** |
+
+Chọn **C**. Trần teacher SSLAM ở đây ≈ 0.74 (BEATs trên mid: 0.78).
+
+### Hiệu chỉnh lại gate teacher
+
+Ngưỡng tuyệt đối 0.75 mang từ dự án mid, nơi baseline mixture ≈ 0.67 (teacher 0.78 → hơn
+**+0.11**). Ở dải high baseline là 0.5315: teacher C 0.738 hơn **+0.21**, gấp đôi. Thông báo
+"teacher barely beats the baseline" sai với dải này. Ngưỡng đã được đánh dấu *chưa hiệu
+chỉnh cho SSLAM/high* ngay từ commit đầu tiên.
+
+Gate mới: `teacher ≥ baseline_band_accuracy + teacher_min_headroom` với headroom **0.10**
+(= 0.6315), giữ tinh thần của mid. Teacher C qua gate.

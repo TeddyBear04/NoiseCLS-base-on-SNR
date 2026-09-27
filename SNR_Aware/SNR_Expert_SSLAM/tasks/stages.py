@@ -198,8 +198,14 @@ def command_teacher36(config: dict) -> None:
         encoding="utf-8")
 
     accuracy = best["full"]["accuracy"]
-    floor = config["gates"]["teacher_acc_floor"]
     baseline = config["gates"]["baseline_band_accuracy"]
+    # Headroom over the band's own mixture baseline is what the privileged-information
+    # premise needs; an absolute floor only transfers between bands whose baselines
+    # sit at the same level. The mid project's 0.75 was 0.08 above its 0.67 baseline.
+    if "teacher_min_headroom" in config["gates"]:
+        floor = baseline + config["gates"]["teacher_min_headroom"]
+    else:
+        floor = config["gates"]["teacher_acc_floor"]
     print(f"\nteacher val_accuracy = {accuracy:.4f}", flush=True)
     print(f"baseline (band slice) = {baseline:.4f}   headroom = "
           f"{accuracy - baseline:+.4f}", flush=True)
