@@ -204,3 +204,24 @@ chỉnh cho SSLAM/high* ngay từ commit đầu tiên.
 
 Gate mới: `teacher ≥ baseline_band_accuracy + teacher_min_headroom` với headroom **0.10**
 (= 0.6315), giữ tinh thần của mid. Teacher C qua gate.
+
+### 2026-09-28 — lượt 4: teacher C (0.7380, GATE=PASS) + `run1_baseline` — **dừng lại để kiểm tra**
+
+Theo yêu cầu: chạy xong `run1_baseline` thì lưu kết quả và dừng, chưa chạy run2–run3.
+File gốc lưu ở `results/2026-09-28_run1_baseline/`.
+
+Test, lát high (1.080 clip mỗi mức):
+
+| | 15 dB acc | 15 dB F1 | 20 dB acc | 20 dB F1 | band acc | band F1 |
+|---|---|---|---|---|---|---|
+| **Mốc — BEATs-Mixture công bố** | 0.5769 | 0.5757 | 0.4861 | 0.4830 | 0.5315 | 0.5294 |
+| `run1_baseline` (SSLAM, CE, không FiLM) | 0.5278 | 0.5264 | 0.4648 | 0.4674 | **0.4963** | **0.4977** |
+| Δ | −4.91 | −4.93 | −2.13 | −1.56 | **−3.52** | **−3.16** |
+
+**`run1_baseline` KHÔNG vượt mốc.** Đổi backbone BEATs → SSLAM tự nó không đem lại lợi thế
+trên mixture ở dải high; ngược lại thua 3.5 điểm.
+
+Đường cong validation (lát high): epoch 0 = 0.3755 (zero-shot trên mixture), đỉnh epoch 1 =
+**0.5204**, sau đó tụt (0.5116, 0.5088) → early stop. Cùng dáng với teacher trước khi hạ lr
+encoder: thuộc lòng nhanh, finetune làm hại sau epoch đầu. Student vẫn dùng `encoder_lr`
+1e-5, trong khi sweep teacher cho thấy 3e-6 tốt hơn.
