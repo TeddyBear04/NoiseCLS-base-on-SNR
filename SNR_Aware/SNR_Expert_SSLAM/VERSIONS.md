@@ -114,3 +114,32 @@ chế với CRD/KD.
 6. GPU: RTX PRO 6000 Blackwell, **102 GB VRAM** — batch size hiện tại trong
    `config/train_config_high.json` (16, accumulation 2) đặt cho GPU nhỏ hơn nhiều; có thể
    nâng khi vào giai đoạn implementation, không đổi ở bước design này.
+
+## Nhật ký chạy
+
+### 2026-09-28 — lượt 1: teacher `SSLAM_pretrain` dừng ở gate ⛔
+
+| | val acc (noise sạch) |
+|---|---|
+| Teacher BEATs (`Mid_Expert`, AS2M-finetuned) | 0.7799 |
+| **Teacher SSLAM `ta012/SSLAM_pretrain`** | **0.6576** — dưới ngưỡng 0.75, GATE=STOP |
+
+Đường cong: val đạt đỉnh ngay epoch 1 (0.6537) rồi đi ngang tới epoch 7, trong khi train acc
+lên 1.0000 từ epoch 5. Finetune không thêm gì — trần nằm ở chất lượng đặc trưng.
+
+**Nguyên nhân: nhầm loại checkpoint.** Bản BEATs dùng
+`BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2` — **đã finetune có giám sát** trên AudioSet.
+`SSLAM_pretrain` chỉ self-supervised. Con số 0.502 mAP đưa SSLAM lên đầu bảng là của bản
+**`ta012/SSLAM_AS2M_Finetuned`** (có trên HF, đã verify trên molab: cùng
+`extract_features → (B, 193, 768)`, thêm head 527 lớp). So pretrain với finetuned là so
+khập khiễng; đổi sang bản finetuned cho công bằng với BEATs.
+
+Không student nào được chạy — gate làm đúng việc: teacher yếu thì KD/CRD dạy nhiễu.
+
+### Thay đổi sau lượt 1
+
+- `backbone.model_id` → `ta012/SSLAM_AS2M_Finetuned`.
+- `evaluation.band_only = true`: validation (chọn checkpoint) và test **chỉ** dùng hàng
+  15–20 dB, theo yêu cầu chỉ tập trung nhánh high. Train vẫn dùng đủ 6 mức SNR.
+- Quy tắc tinh chỉnh: mọi quyết định chỉnh tham số dựa trên **validation** lát high; test
+  chỉ để báo cáo cấu hình đã chọn.

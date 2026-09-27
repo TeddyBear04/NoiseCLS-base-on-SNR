@@ -40,6 +40,19 @@ def smoke_subset(rows: list, n: int, seed: int) -> list:
     picked = np.sort(np.random.default_rng(seed).choice(len(rows), n, replace=False))
     return [rows[i] for i in picked]
 
+def band_rows(rows: list, config: dict) -> list:
+    """Keep only rows inside `band_db` when `evaluation.band_only` is set.
+
+    This expert is only ever routed the band's mixtures, so validating or testing
+    on the other SNR levels measures something the pipeline never asks of it -
+    and on validation it also decides which checkpoint is kept.
+    """
+    if not config.get("evaluation", {}).get("band_only", False):
+        return rows
+    low, high = config["band_db"]
+    return [row for row in rows if low <= float(row["target_snr_db"]) <= high]
+
+
 def jitter_snr(snr_db, sigma_db, generator):
     """The gate's error, simulated. Training on true SNR and testing on an
     estimated one would leave the student brittle exactly where it has to work.
@@ -156,7 +169,7 @@ def command_teacher36(config: dict) -> None:
     corpus = Corpus(config, column=config["teacher"]["source_column"])
     audit = corpus.audit()
     train_rows = corpus.by_split[config["dataset"]["train_split"]]
-    validation_rows = corpus.by_split[config["dataset"]["validation_split"]]
+    validation_rows = band_rows(corpus.by_split[config["dataset"]["validation_split"]], config)
     if runtime["smoke_test"]:
         train_rows = smoke_subset(train_rows, runtime["smoke_train_rows"],
                                   config["experiment"]["seed"])
@@ -244,7 +257,7 @@ def command_student36(config: dict) -> None:
     paired = config["teacher"]["source_column"] if (use_kd or use_crd) else None
     corpus = Corpus(config, column=settings["source_column"], paired_column=paired)
     train_rows = corpus.by_split[config["dataset"]["train_split"]]
-    validation_rows = corpus.by_split[config["dataset"]["validation_split"]]
+    validation_rows = band_rows(corpus.by_split[config["dataset"]["validation_split"]], config)
     if runtime["smoke_test"]:
         train_rows = smoke_subset(train_rows, runtime["smoke_train_rows"],
                                   config["experiment"]["seed"])
@@ -383,7 +396,7 @@ def command_test36(config: dict) -> None:
     model = build_model(config, device, settings["film"]["enabled"], 0)
     model.load_state_dict(saved["state"], strict=False)
 
-    test_rows = corpus.by_split[config["dataset"]["test_split"]]
+    test_rows = band_rows(corpus.by_split[config["dataset"]["test_split"]], config)
     loader = corpus.loader(test_rows, settings["validation_batch_size"],
                            settings["workers"], False, device)
     out = collect(model, loader, device, use_snr=model.film is not None)
