@@ -1,6 +1,6 @@
 """Turn every finished run into CSV tables.
 
-    python -u main.py report36 --config config/train_config.json
+    python -u main.py report36 --config config/train_config_high.json
 
 Reads each `artifacts/student_<run>_predictions.npz` and writes three CSVs under
 `artifacts/results/`:

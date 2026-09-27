@@ -1,9 +1,9 @@
 """Mid-SNR expert on an SSLAM backbone.
 
-    python -u main.py teacher36 --config config/train_config.json
-    python -u main.py student36 --config config/train_config.json --run <run>
-    python -u main.py test36    --config config/train_config.json --run <run>
-    python -u main.py report36  --config config/train_config.json
+    python -u main.py teacher36 --config config/train_config_high.json
+    python -u main.py student36 --config config/train_config_high.json --run <run>
+    python -u main.py test36    --config config/train_config_high.json --run <run>
+    python -u main.py report36  --config config/train_config_high.json
 
 Same experiment as `../Mid_Expert`, two things changed:
 
@@ -317,7 +317,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stage", choices=STAGES)
     parser.add_argument("--config", type=Path,
-                        default=HERE / "config/train_config.json")
+                        default=HERE / "config/train_config_high.json")
     parser.add_argument("--run", choices=sorted(RUNS),
                         help="Required for student36 and test36.")
     arguments = parser.parse_args()
