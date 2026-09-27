@@ -1,0 +1,213 @@
+stage=teacher36 config=/marimo/smoke_high.json
+{
+  "rows": 43200,
+  "per_split": {
+    "test": 6480,
+    "train": 30240,
+    "validation": 6480
+  },
+  "labels": 36,
+  "unique_noise": 30240,
+  "reuse_ratio": 1.0
+}
+SMOKE TEST - results are not reportable
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790534941.876362   12514 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1790534941.921360   12514 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_FP16 AMX_TILE AMX_INT8 AMX_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790534944.151372   12514 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+/tmp/uv-venv/lib/python3.13/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+unfroze 42.5M params in the last 6 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+selecting on the 'full' slice
+epoch=0 val_band_acc=0.7550 val_full_acc=0.7550
+  epoch=1 batch=1/25 ce=1.1312 acc=0.8125 vram=1.3GB
+  epoch=1 batch=25/25 ce=1.1460 acc=0.7300 vram=1.7GB
+epoch=1 ce=1.1460 val_band_acc=0.7550 val_band_f1=0.7394 film_dev=0.000 (2s)
+
+teacher val_accuracy = 0.7550
+baseline (band slice) = 0.5315   headroom = +0.2235
+GATE=PASS
+{
+  "teacher_val_accuracy": 0.755,
+  "teacher_val_macro_f1": 0.7394,
+  "teacher_gate": "PASS",
+  "audit": {
+    "rows": 43200,
+    "per_split": {
+      "test": 6480,
+      "train": 30240,
+      "validation": 6480
+    },
+    "labels": 36,
+    "unique_noise": 30240,
+    "reuse_ratio": 1.0
+  }
+}
+stage=student36 config=/marimo/smoke_high.json
+run=run1_baseline a_kd=0.0 b_crd=0.0 film=False select_on=full crd_level=patch
+SMOKE TEST - results are not reportable
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790534958.919655   12652 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1790534958.971321   12652 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_FP16 AMX_TILE AMX_INT8 AMX_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790534961.326656   12652 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+/tmp/uv-venv/lib/python3.13/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+unfroze 42.5M params in the last 6 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+run=run1_baseline train=400 kd=False crd=False teacher=none
+selecting on the 'full' slice
+epoch=0 val_band_acc=0.3350 val_full_acc=0.3350
+  epoch=1 batch=1/25 ce=1.4597 acc=0.6875 vram=1.3GB
+  epoch=1 batch=25/25 ce=1.8509 acc=0.5350 vram=1.7GB
+epoch=1 ce=1.8509 val_band_acc=0.4750 val_band_f1=0.4132 film_dev=0.000 (2s)
+
+checkpoint -> /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts_smoke/student_run1_baseline.pt
+best val_band_accuracy=0.4750 val_band_macro_f1=0.4132
+stage=student36 config=/marimo/smoke_high.json
+run=run2_ce_only a_kd=0.0 b_crd=0.0 film=True select_on=band crd_level=patch
+SMOKE TEST - results are not reportable
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790534976.819927   12807 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1790534976.872777   12807 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_FP16 AMX_TILE AMX_INT8 AMX_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790534979.126280   12807 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+/tmp/uv-venv/lib/python3.13/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+unfroze 42.5M params in the last 6 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+run=run2_ce_only train=400 kd=False crd=False teacher=none
+selecting on the 'band' slice
+epoch=0 val_band_acc=0.3400 val_full_acc=0.3400
+  epoch=1 batch=1/25 ce=1.4829 acc=0.6875 vram=1.3GB
+  epoch=1 batch=25/25 ce=1.8275 acc=0.5125 vram=1.7GB
+epoch=1 ce=1.8275 val_band_acc=0.4850 val_band_f1=0.4182 film_dev=4.719 (2s)
+
+checkpoint -> /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts_smoke/student_run2_ce_only.pt
+best val_band_accuracy=0.4850 val_band_macro_f1=0.4182
+stage=student36 config=/marimo/smoke_high.json
+run=run3b_crd_only a_kd=0.0 b_crd=0.8 film=True select_on=band crd_level=patch
+SMOKE TEST - results are not reportable
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790534993.810207   12945 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1790534993.864165   12945 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_FP16 AMX_TILE AMX_INT8 AMX_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790534996.097722   12945 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+/tmp/uv-venv/lib/python3.13/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+unfroze 42.5M params in the last 6 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+unfroze 0.0M params in the last 0 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+run=run3b_crd_only train=400 kd=False crd=True teacher=online
+selecting on the 'band' slice
+epoch=0 val_band_acc=0.3400 val_full_acc=0.3400
+  epoch=1 batch=1/25 ce=1.4829 crd=8.7602 acc=0.6875 vram=3.9GB
+  epoch=1 batch=25/25 ce=1.8271 crd=6.7518 acc=0.5200 vram=4.4GB
+epoch=1 ce=1.8271 crd=6.7518 val_band_acc=0.4800 val_band_f1=0.4160 film_dev=4.781 (6s)
+
+checkpoint -> /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts_smoke/student_run3b_crd_only.pt
+best val_band_accuracy=0.4800 val_band_macro_f1=0.4160
+stage=student36 config=/marimo/smoke_high.json
+run=run3c_kd_only a_kd=1.0 b_crd=0.0 film=True select_on=band crd_level=patch
+SMOKE TEST - results are not reportable
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790535014.791493   13083 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1790535014.838685   13083 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_FP16 AMX_TILE AMX_INT8 AMX_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790535017.196841   13083 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+/tmp/uv-venv/lib/python3.13/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+unfroze 42.5M params in the last 6 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+unfroze 0.0M params in the last 0 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+run=run3c_kd_only train=400 kd=True crd=False teacher=online
+selecting on the 'band' slice
+epoch=0 val_band_acc=0.3400 val_full_acc=0.3400
+  epoch=1 batch=1/25 ce=1.4829 kd=3.0852 acc=0.6875 vram=1.6GB
+  epoch=1 batch=25/25 ce=1.7875 kd=1.5874 acc=0.5425 vram=2.2GB
+epoch=1 ce=1.7875 kd=1.5874 val_band_acc=0.4650 val_band_f1=0.4007 film_dev=5.094 (3s)
+
+checkpoint -> /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts_smoke/student_run3c_kd_only.pt
+best val_band_accuracy=0.4650 val_band_macro_f1=0.4007
+stage=student36 config=/marimo/smoke_high.json
+run=run3_kd_crd a_kd=1.0 b_crd=0.8 film=True select_on=band crd_level=patch
+SMOKE TEST - results are not reportable
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790535033.740578   13221 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1790535033.784248   13221 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_FP16 AMX_TILE AMX_INT8 AMX_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790535036.289491   13221 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+/tmp/uv-venv/lib/python3.13/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+unfroze 42.5M params in the last 6 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+unfroze 0.0M params in the last 0 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+run=run3_kd_crd train=400 kd=True crd=True teacher=online
+selecting on the 'band' slice
+epoch=0 val_band_acc=0.3400 val_full_acc=0.3400
+  epoch=1 batch=1/25 ce=1.4829 kd=3.0852 crd=8.7602 acc=0.6875 vram=3.9GB
+  epoch=1 batch=25/25 ce=1.7882 kd=1.5918 crd=6.7554 acc=0.5375 vram=4.4GB
+epoch=1 ce=1.7882 kd=1.5918 crd=6.7554 val_band_acc=0.4750 val_band_f1=0.4090 film_dev=5.125 (6s)
+
+checkpoint -> /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts_smoke/student_run3_kd_crd.pt
+best val_band_accuracy=0.4750 val_band_macro_f1=0.4090
+stage=test36 config=/marimo/smoke_high.json
+run=run3_kd_crd a_kd=1.0 b_crd=0.8 film=True select_on=band crd_level=patch
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790535055.078841   13592 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1790535055.119301   13592 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_FP16 AMX_TILE AMX_INT8 AMX_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790535057.388390   13592 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+/tmp/uv-venv/lib/python3.13/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+unfroze 0.0M params in the last 0 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+
+run=run3_kd_crd test band slice (2160 clips)
+  accuracy = 0.4222  (baseline 0.5315, delta -0.1093)
+  macro_f1 = 0.4322  (baseline 0.5293, delta -0.0971)
+A delta under about 1.0 point is inside the standard error on 2,160 clips. Do not call it an improvement without the paired McNemar test.
+unfroze 0.0M params in the last 0 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+
+embedding purity (mechanism check, not accuracy):
+  band    cos_pos=0.9439 cos_neg=0.2407 gap=0.7032 retrieval@1=1.0000
+  snr_15  cos_pos=0.9454 cos_neg=0.2287 gap=0.7167 retrieval@1=1.0000
+  snr_20  cos_pos=0.9424 cos_neg=0.2538 gap=0.6886 retrieval@1=1.0000
+predictions -> /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts_smoke/student_run3_kd_crd_predictions.npz
+stage=report36 config=/marimo/smoke_high.json
+runs: run3_kd_crd
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts_smoke/results/metrics_by_run.csv  (12 rows)
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts_smoke/results/ket_qua_tong_hop.csv  (12 rows)
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts_smoke/results/theo_tung_snr.csv  (2 rows)
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts_smoke/results/metrics_per_class.csv  (72 rows)
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts_smoke/results/comparison.csv  (0 rows)
+
+=== band slice (15-20 dB) ===
+run                     acc  macro_f1      mAP      AUC
+beats_baseline       0.5708   0.5669        -        -
+run3_kd_crd          0.4222   0.4322   0.4624   0.8884
+SMOKE_ALL_DONE

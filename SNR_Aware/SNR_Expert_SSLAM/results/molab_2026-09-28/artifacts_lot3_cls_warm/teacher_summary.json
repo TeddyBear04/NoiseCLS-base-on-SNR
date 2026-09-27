@@ -1,0 +1,16 @@
+{
+  "teacher_val_accuracy": 0.7273,
+  "teacher_val_macro_f1": 0.724,
+  "teacher_gate": "STOP",
+  "audit": {
+    "rows": 43200,
+    "per_split": {
+      "test": 6480,
+      "train": 30240,
+      "validation": 6480
+    },
+    "labels": 36,
+    "unique_noise": 30240,
+    "reuse_ratio": 1.0
+  }
+}

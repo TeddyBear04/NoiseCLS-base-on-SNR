@@ -1,0 +1,230 @@
+stage=teacher36 config=config/train_config_high.json
+{
+  "rows": 43200,
+  "per_split": {
+    "test": 6480,
+    "train": 30240,
+    "validation": 6480
+  },
+  "labels": 36,
+  "unique_noise": 30240,
+  "reuse_ratio": 1.0
+}
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790536422.787846   18327 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1790536422.834153   18327 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_FP16 AMX_TILE AMX_INT8 AMX_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790536425.069285   18327 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+/tmp/uv-venv/lib/python3.13/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+unfroze 42.5M params in the last 6 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+selecting on the 'full' slice
+epoch=0 val_band_acc=0.7273 val_full_acc=0.7273
+  epoch=1 batch=1/1890 ce=1.6624 acc=0.5625 vram=1.3GB
+  epoch=1 batch=200/1890 ce=0.8994 acc=0.7656 vram=1.7GB
+  epoch=1 batch=400/1890 ce=0.7996 acc=0.7887 vram=1.7GB
+  epoch=1 batch=600/1890 ce=0.7382 acc=0.8033 vram=1.7GB
+  epoch=1 batch=800/1890 ce=0.6914 acc=0.8144 vram=1.7GB
+  epoch=1 batch=1000/1890 ce=0.6418 acc=0.8273 vram=1.7GB
+  epoch=1 batch=1200/1890 ce=0.6006 acc=0.8394 vram=1.7GB
+  epoch=1 batch=1400/1890 ce=0.5654 acc=0.8490 vram=1.7GB
+  epoch=1 batch=1600/1890 ce=0.5318 acc=0.8592 vram=1.7GB
+  epoch=1 batch=1800/1890 ce=0.5001 acc=0.8687 vram=1.7GB
+  epoch=1 batch=1890/1890 ce=0.4863 acc=0.8727 vram=1.7GB
+epoch=1 ce=0.4863 val_band_acc=0.7380 val_band_f1=0.7367 film_dev=0.000 (57s)
+  epoch=2 batch=1/1890 ce=0.1168 acc=1.0000 vram=1.7GB
+  epoch=2 batch=200/1890 ce=0.1616 acc=0.9688 vram=1.7GB
+  epoch=2 batch=400/1890 ce=0.1558 acc=0.9700 vram=1.7GB
+  epoch=2 batch=600/1890 ce=0.1459 acc=0.9715 vram=1.7GB
+  epoch=2 batch=800/1890 ce=0.1352 acc=0.9742 vram=1.7GB
+  epoch=2 batch=1000/1890 ce=0.1281 acc=0.9758 vram=1.7GB
+  epoch=2 batch=1200/1890 ce=0.1186 acc=0.9782 vram=1.7GB
+  epoch=2 batch=1400/1890 ce=0.1105 acc=0.9800 vram=1.7GB
+  epoch=2 batch=1600/1890 ce=0.1041 acc=0.9816 vram=1.7GB
+  epoch=2 batch=1800/1890 ce=0.0977 acc=0.9832 vram=1.7GB
+  epoch=2 batch=1890/1890 ce=0.0955 acc=0.9837 vram=1.7GB
+epoch=2 ce=0.0955 val_band_acc=0.7352 val_band_f1=0.7325 film_dev=0.000 (55s)
+  epoch=3 batch=1/1890 ce=0.0202 acc=1.0000 vram=1.7GB
+  epoch=3 batch=200/1890 ce=0.0359 acc=0.9962 vram=1.7GB
+  epoch=3 batch=400/1890 ce=0.0323 acc=0.9973 vram=1.7GB
+  epoch=3 batch=600/1890 ce=0.0303 acc=0.9979 vram=1.7GB
+  epoch=3 batch=800/1890 ce=0.0293 acc=0.9980 vram=1.7GB
+  epoch=3 batch=1000/1890 ce=0.0281 acc=0.9979 vram=1.7GB
+  epoch=3 batch=1200/1890 ce=0.0269 acc=0.9980 vram=1.7GB
+  epoch=3 batch=1400/1890 ce=0.0258 acc=0.9980 vram=1.7GB
+  epoch=3 batch=1600/1890 ce=0.0244 acc=0.9982 vram=1.7GB
+  epoch=3 batch=1800/1890 ce=0.0232 acc=0.9983 vram=1.7GB
+  epoch=3 batch=1890/1890 ce=0.0229 acc=0.9984 vram=1.7GB
+epoch=3 ce=0.0229 val_band_acc=0.7301 val_band_f1=0.7277 film_dev=0.000 (56s)
+  epoch=4 batch=1/1890 ce=0.0147 acc=1.0000 vram=1.7GB
+  epoch=4 batch=200/1890 ce=0.0110 acc=0.9991 vram=1.7GB
+  epoch=4 batch=400/1890 ce=0.0110 acc=0.9992 vram=1.7GB
+  epoch=4 batch=600/1890 ce=0.0105 acc=0.9994 vram=1.7GB
+  epoch=4 batch=800/1890 ce=0.0097 acc=0.9995 vram=1.7GB
+  epoch=4 batch=1000/1890 ce=0.0093 acc=0.9996 vram=1.7GB
+  epoch=4 batch=1200/1890 ce=0.0090 acc=0.9996 vram=1.7GB
+  epoch=4 batch=1400/1890 ce=0.0087 acc=0.9996 vram=1.7GB
+  epoch=4 batch=1600/1890 ce=0.0084 acc=0.9997 vram=1.7GB
+  epoch=4 batch=1800/1890 ce=0.0081 acc=0.9997 vram=1.7GB
+  epoch=4 batch=1890/1890 ce=0.0080 acc=0.9997 vram=1.7GB
+epoch=4 ce=0.0080 val_band_acc=0.7231 val_band_f1=0.7197 film_dev=0.000 (56s)
+early_stop=4
+
+teacher val_accuracy = 0.7380
+baseline (band slice) = 0.5315   headroom = +0.2065
+GATE=PASS
+{
+  "teacher_val_accuracy": 0.738,
+  "teacher_val_macro_f1": 0.7367,
+  "teacher_gate": "PASS",
+  "audit": {
+    "rows": 43200,
+    "per_split": {
+      "test": 6480,
+      "train": 30240,
+      "validation": 6480
+    },
+    "labels": 36,
+    "unique_noise": 30240,
+    "reuse_ratio": 1.0
+  }
+}
+stage=student36 config=config/train_config_high.json
+run=run1_baseline a_kd=0.0 b_crd=0.0 film=False select_on=full crd_level=patch
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790536663.985121   19434 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1790536664.034108   19434 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_FP16 AMX_TILE AMX_INT8 AMX_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790536666.352993   19434 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+/tmp/uv-venv/lib/python3.13/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+unfroze 42.5M params in the last 6 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+run=run1_baseline train=30240 kd=False crd=False teacher=none
+selecting on the 'full' slice
+epoch=0 val_band_acc=0.3755 val_full_acc=0.3755
+  epoch=1 batch=1/1890 ce=2.2025 acc=0.3750 vram=1.3GB
+  epoch=1 batch=200/1890 ce=1.5207 acc=0.6050 vram=1.7GB
+  epoch=1 batch=400/1890 ce=1.4274 acc=0.6242 vram=1.7GB
+  epoch=1 batch=600/1890 ce=1.3656 acc=0.6355 vram=1.7GB
+  epoch=1 batch=800/1890 ce=1.3369 acc=0.6398 vram=1.7GB
+  epoch=1 batch=1000/1890 ce=1.2943 acc=0.6486 vram=1.7GB
+  epoch=1 batch=1200/1890 ce=1.2604 acc=0.6555 vram=1.7GB
+  epoch=1 batch=1400/1890 ce=1.2294 acc=0.6635 vram=1.7GB
+  epoch=1 batch=1600/1890 ce=1.1992 acc=0.6709 vram=1.7GB
+  epoch=1 batch=1800/1890 ce=1.1739 acc=0.6787 vram=1.7GB
+  epoch=1 batch=1890/1890 ce=1.1589 acc=0.6826 vram=1.7GB
+epoch=1 ce=1.1589 val_band_acc=0.5204 val_band_f1=0.5228 film_dev=0.000 (58s)
+  epoch=2 batch=1/1890 ce=0.6916 acc=0.8750 vram=1.7GB
+  epoch=2 batch=200/1890 ce=0.7069 acc=0.8066 vram=1.7GB
+  epoch=2 batch=400/1890 ce=0.6983 acc=0.8064 vram=1.7GB
+  epoch=2 batch=600/1890 ce=0.6896 acc=0.8083 vram=1.7GB
+  epoch=2 batch=800/1890 ce=0.6827 acc=0.8116 vram=1.7GB
+  epoch=2 batch=1000/1890 ce=0.6769 acc=0.8149 vram=1.7GB
+  epoch=2 batch=1200/1890 ce=0.6683 acc=0.8167 vram=1.7GB
+  epoch=2 batch=1400/1890 ce=0.6630 acc=0.8179 vram=1.7GB
+  epoch=2 batch=1600/1890 ce=0.6560 acc=0.8196 vram=1.7GB
+  epoch=2 batch=1800/1890 ce=0.6481 acc=0.8216 vram=1.7GB
+  epoch=2 batch=1890/1890 ce=0.6441 acc=0.8227 vram=1.7GB
+epoch=2 ce=0.6441 val_band_acc=0.5116 val_band_f1=0.5085 film_dev=0.000 (57s)
+  epoch=3 batch=1/1890 ce=0.0719 acc=1.0000 vram=1.7GB
+  epoch=3 batch=200/1890 ce=0.4141 acc=0.8944 vram=1.7GB
+  epoch=3 batch=400/1890 ce=0.3931 acc=0.8959 vram=1.7GB
+  epoch=3 batch=600/1890 ce=0.3922 acc=0.8964 vram=1.7GB
+  epoch=3 batch=800/1890 ce=0.3940 acc=0.8957 vram=1.7GB
+  epoch=3 batch=1000/1890 ce=0.3946 acc=0.8946 vram=1.7GB
+  epoch=3 batch=1200/1890 ce=0.3876 acc=0.8963 vram=1.7GB
+  epoch=3 batch=1400/1890 ce=0.3866 acc=0.8960 vram=1.7GB
+  epoch=3 batch=1600/1890 ce=0.3858 acc=0.8959 vram=1.7GB
+  epoch=3 batch=1800/1890 ce=0.3830 acc=0.8970 vram=1.7GB
+  epoch=3 batch=1890/1890 ce=0.3830 acc=0.8970 vram=1.7GB
+epoch=3 ce=0.3830 val_band_acc=0.5088 val_band_f1=0.5114 film_dev=0.000 (57s)
+  epoch=4 batch=1/1890 ce=0.0819 acc=1.0000 vram=1.7GB
+  epoch=4 batch=200/1890 ce=0.2164 acc=0.9497 vram=1.7GB
+  epoch=4 batch=400/1890 ce=0.2127 acc=0.9477 vram=1.7GB
+  epoch=4 batch=600/1890 ce=0.2144 acc=0.9467 vram=1.7GB
+  epoch=4 batch=800/1890 ce=0.2124 acc=0.9475 vram=1.7GB
+  epoch=4 batch=1000/1890 ce=0.2164 acc=0.9445 vram=1.7GB
+  epoch=4 batch=1200/1890 ce=0.2178 acc=0.9430 vram=1.7GB
+  epoch=4 batch=1400/1890 ce=0.2169 acc=0.9431 vram=1.7GB
+  epoch=4 batch=1600/1890 ce=0.2163 acc=0.9430 vram=1.7GB
+  epoch=4 batch=1800/1890 ce=0.2150 acc=0.9434 vram=1.7GB
+  epoch=4 batch=1890/1890 ce=0.2136 acc=0.9439 vram=1.7GB
+epoch=4 ce=0.2136 val_band_acc=0.4968 val_band_f1=0.4936 film_dev=0.000 (58s)
+early_stop=4
+
+checkpoint -> /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/student_run1_baseline.pt
+best val_band_accuracy=0.5204 val_band_macro_f1=0.5228
+stage=test36 config=config/train_config_high.json
+run=run1_baseline a_kd=0.0 b_crd=0.0 film=False select_on=full crd_level=patch
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790536910.992765   20288 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1790536911.041723   20288 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_FP16 AMX_TILE AMX_INT8 AMX_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790536913.346038   20288 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+/tmp/uv-venv/lib/python3.13/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+unfroze 0.0M params in the last 0 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+
+run=run1_baseline test band slice (2160 clips)
+  accuracy = 0.4963  (baseline 0.5315, delta -0.0352)
+  macro_f1 = 0.4977  (baseline 0.5293, delta -0.0316)
+A delta under about 1.0 point is inside the standard error on 2,160 clips. Do not call it an improvement without the paired McNemar test.
+unfroze 0.0M params in the last 0 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+
+embedding purity (mechanism check, not accuracy):
+  band    cos_pos=0.7275 cos_neg=0.1137 gap=0.6138 retrieval@1=0.9630
+  snr_15  cos_pos=0.7361 cos_neg=0.1059 gap=0.6302 retrieval@1=0.9769
+  snr_20  cos_pos=0.7188 cos_neg=0.1220 gap=0.5968 retrieval@1=0.9769
+predictions -> /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/student_run1_baseline_predictions.npz
+stage=test36 config=config/train_config_high.json
+run=run1_baseline a_kd=0.0 b_crd=0.0 film=False select_on=full crd_level=patch
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790536927.246208   20396 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1790536927.287613   20396 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_FP16 AMX_TILE AMX_INT8 AMX_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790536929.526949   20396 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+/tmp/uv-venv/lib/python3.13/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+unfroze 0.0M params in the last 0 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+
+run=run1_baseline test band slice (2160 clips)
+  accuracy = 0.4963  (baseline 0.5315, delta -0.0352)
+  macro_f1 = 0.4977  (baseline 0.5293, delta -0.0316)
+A delta under about 1.0 point is inside the standard error on 2,160 clips. Do not call it an improvement without the paired McNemar test.
+unfroze 0.0M params in the last 0 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+
+embedding purity (mechanism check, not accuracy):
+  band    cos_pos=0.7275 cos_neg=0.1137 gap=0.6138 retrieval@1=0.9630
+  snr_15  cos_pos=0.7361 cos_neg=0.1059 gap=0.6302 retrieval@1=0.9769
+  snr_20  cos_pos=0.7188 cos_neg=0.1220 gap=0.5968 retrieval@1=0.9769
+predictions -> /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/student_run1_baseline_predictions.npz
+stage=report36 config=config/train_config_high.json
+runs: run1_baseline
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/results/metrics_by_run.csv  (12 rows)
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/results/ket_qua_tong_hop.csv  (12 rows)
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/results/theo_tung_snr.csv  (2 rows)
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/results/metrics_per_class.csv  (72 rows)
+wrote /marimo/repo/SNR_Aware/SNR_Expert_SSLAM/artifacts/results/comparison.csv  (0 rows)
+
+=== band slice (15-20 dB) ===
+run                     acc  macro_f1      mAP      AUC
+beats_baseline       0.5708   0.5669        -        -
+run1_baseline        0.4963   0.4977   0.5491   0.9275
+RUN1_SAVED_STOPPED
+FINISH_EXIT=0

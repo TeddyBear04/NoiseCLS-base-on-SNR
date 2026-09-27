@@ -265,3 +265,34 @@ File gốc: `results/2026-09-28_5runs/` (CSV của report, JSON test/history t�
    bù gần hết nhưng thiếu 0.46. Vấn đề nằm ở backbone chứ không phải ở phương pháp.
 4. Validation của mọi run đạt đỉnh sớm (epoch 1–3) rồi tụt; student vẫn dùng `encoder_lr` 1e-5,
    trong khi sweep teacher cho thấy 3e-6 tốt hơn trên cùng backbone.
+
+### 2026-09-28 — tạm dừng
+
+Theo yêu cầu, đã dừng mọi tiến trình trên molab và lưu kết quả về máy:
+`results/molab_2026-09-28/` — dự đoán từng clip (`.npz`), test/history (`.json`), report CSV
+của 5 run SSLAM; summary/history của lượt teacher 1–3 và sweep A/B/C; toàn bộ log molab.
+Checkpoint `.pt` (6 × ~360 MB) **không** tải về, vẫn nằm trong `artifacts/` trên sandbox.
+
+### Việc cần chạy lần sau: BEATs + công thức finetune của paper
+
+Config: `config/train_config_high_beats.json` (output `artifacts_beats/`). Đã kiểm tra trên
+molab trước khi dừng: lớp chuyển đổi BEATs khớp `extract_features` gốc (chênh 0.0), zero-shot
+head AudioSet trên noise sạch lát high = 0.7375, augmentation/dropout chỉ bật khi train.
+
+Smoke test lần đầu dừng ở `teacher36` vì
+`ValueError: some parameters appear in more than one parameter group` — BEATs dùng chung
+bias vị trí tương đối giữa các tầng. Đã sửa (`cbc0269`), **chưa chạy lại**.
+
+Lệnh (từ `SNR_Aware/SNR_Expert_SSLAM`, sau `git pull`), chạy smoke trước:
+
+```bash
+python -u main.py teacher36 --config config/train_config_high_beats.json
+for R in run1_baseline run2_ce_only run3b_crd_only run3c_kd_only run3_kd_crd; do
+  python -u main.py student36 --config config/train_config_high_beats.json --run $R
+  python -u main.py test36    --config config/train_config_high_beats.json --run $R
+done
+python -u main.py report36 --config config/train_config_high_beats.json
+```
+
+Sandbox mới thì phải cài lại môi trường (xem README: `transformers<5`, `timm`, torchvision
+cu130) và tải checkpoint BEATs vào `../BEATs_Experts/checkpoint/pretrained/`.

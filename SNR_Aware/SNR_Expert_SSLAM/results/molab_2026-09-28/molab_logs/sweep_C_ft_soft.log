@@ -1,0 +1,95 @@
+stage=teacher36 config=/marimo/sweep/teacher_C_ft_soft.json
+{
+  "rows": 43200,
+  "per_split": {
+    "test": 6480,
+    "train": 30240,
+    "validation": 6480
+  },
+  "labels": 36,
+  "unique_noise": 30240,
+  "reuse_ratio": 1.0
+}
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790535363.118581   14534 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1790535363.157142   14534 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_FP16 AMX_TILE AMX_INT8 AMX_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1790535366.148442   14534 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+/tmp/uv-venv/lib/python3.13/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+unfroze 42.5M params in the last 6 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=cls_fcnorm
+selecting on the 'full' slice
+epoch=0 val_band_acc=0.7273 val_full_acc=0.7273
+  epoch=1 batch=1/1890 ce=1.6624 acc=0.5625 vram=1.3GB
+  epoch=1 batch=200/1890 ce=0.8994 acc=0.7656 vram=1.7GB
+  epoch=1 batch=400/1890 ce=0.7996 acc=0.7887 vram=1.7GB
+  epoch=1 batch=600/1890 ce=0.7382 acc=0.8033 vram=1.7GB
+  epoch=1 batch=800/1890 ce=0.6914 acc=0.8144 vram=1.7GB
+  epoch=1 batch=1000/1890 ce=0.6418 acc=0.8273 vram=1.7GB
+  epoch=1 batch=1200/1890 ce=0.6006 acc=0.8394 vram=1.7GB
+  epoch=1 batch=1400/1890 ce=0.5654 acc=0.8490 vram=1.7GB
+  epoch=1 batch=1600/1890 ce=0.5318 acc=0.8592 vram=1.7GB
+  epoch=1 batch=1800/1890 ce=0.5001 acc=0.8687 vram=1.7GB
+  epoch=1 batch=1890/1890 ce=0.4863 acc=0.8727 vram=1.7GB
+epoch=1 ce=0.4863 val_band_acc=0.7380 val_band_f1=0.7367 film_dev=0.000 (244s)
+  epoch=2 batch=1/1890 ce=0.1168 acc=1.0000 vram=1.7GB
+  epoch=2 batch=200/1890 ce=0.1616 acc=0.9688 vram=1.7GB
+  epoch=2 batch=400/1890 ce=0.1558 acc=0.9700 vram=1.7GB
+  epoch=2 batch=600/1890 ce=0.1459 acc=0.9715 vram=1.7GB
+  epoch=2 batch=800/1890 ce=0.1352 acc=0.9742 vram=1.7GB
+  epoch=2 batch=1000/1890 ce=0.1281 acc=0.9758 vram=1.7GB
+  epoch=2 batch=1200/1890 ce=0.1186 acc=0.9782 vram=1.7GB
+  epoch=2 batch=1400/1890 ce=0.1105 acc=0.9800 vram=1.7GB
+  epoch=2 batch=1600/1890 ce=0.1041 acc=0.9816 vram=1.7GB
+  epoch=2 batch=1800/1890 ce=0.0977 acc=0.9832 vram=1.7GB
+  epoch=2 batch=1890/1890 ce=0.0955 acc=0.9837 vram=1.7GB
+epoch=2 ce=0.0955 val_band_acc=0.7352 val_band_f1=0.7325 film_dev=0.000 (244s)
+  epoch=3 batch=1/1890 ce=0.0202 acc=1.0000 vram=1.7GB
+  epoch=3 batch=200/1890 ce=0.0359 acc=0.9962 vram=1.7GB
+  epoch=3 batch=400/1890 ce=0.0323 acc=0.9973 vram=1.7GB
+  epoch=3 batch=600/1890 ce=0.0303 acc=0.9979 vram=1.7GB
+  epoch=3 batch=800/1890 ce=0.0293 acc=0.9980 vram=1.7GB
+  epoch=3 batch=1000/1890 ce=0.0281 acc=0.9979 vram=1.7GB
+  epoch=3 batch=1200/1890 ce=0.0269 acc=0.9980 vram=1.7GB
+  epoch=3 batch=1400/1890 ce=0.0258 acc=0.9980 vram=1.7GB
+  epoch=3 batch=1600/1890 ce=0.0244 acc=0.9982 vram=1.7GB
+  epoch=3 batch=1800/1890 ce=0.0232 acc=0.9983 vram=1.7GB
+  epoch=3 batch=1890/1890 ce=0.0229 acc=0.9984 vram=1.7GB
+epoch=3 ce=0.0229 val_band_acc=0.7301 val_band_f1=0.7277 film_dev=0.000 (227s)
+  epoch=4 batch=1/1890 ce=0.0147 acc=1.0000 vram=1.7GB
+  epoch=4 batch=200/1890 ce=0.0110 acc=0.9991 vram=1.7GB
+  epoch=4 batch=400/1890 ce=0.0110 acc=0.9992 vram=1.7GB
+  epoch=4 batch=600/1890 ce=0.0105 acc=0.9994 vram=1.7GB
+  epoch=4 batch=800/1890 ce=0.0097 acc=0.9995 vram=1.7GB
+  epoch=4 batch=1000/1890 ce=0.0093 acc=0.9996 vram=1.7GB
+  epoch=4 batch=1200/1890 ce=0.0090 acc=0.9996 vram=1.7GB
+  epoch=4 batch=1400/1890 ce=0.0087 acc=0.9996 vram=1.7GB
+  epoch=4 batch=1600/1890 ce=0.0084 acc=0.9997 vram=1.7GB
+  epoch=4 batch=1800/1890 ce=0.0081 acc=0.9997 vram=1.7GB
+  epoch=4 batch=1890/1890 ce=0.0080 acc=0.9997 vram=1.7GB
+epoch=4 ce=0.0080 val_band_acc=0.7231 val_band_f1=0.7197 film_dev=0.000 (148s)
+early_stop=4
+
+teacher val_accuracy = 0.7380
+baseline (band slice) = 0.5315   headroom = +0.2065
+GATE=STOP  below 0.75. The teacher sees CLEAN noise and still barely beats a baseline that sees the mixture, so the privileged-information premise has failed.
+{
+  "teacher_val_accuracy": 0.738,
+  "teacher_val_macro_f1": 0.7367,
+  "teacher_gate": "STOP",
+  "audit": {
+    "rows": 43200,
+    "per_split": {
+      "test": 6480,
+      "train": 30240,
+      "validation": 6480
+    },
+    "labels": 36,
+    "unique_noise": 30240,
+    "reuse_ratio": 1.0
+  }
+}
+SWEEP_DONE

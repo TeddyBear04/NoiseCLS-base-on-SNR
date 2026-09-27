@@ -1,0 +1,56 @@
+stage=teacher36 config=/marimo/smoke_beats.json
+{
+  "rows": 43200,
+  "per_split": {
+    "test": 6480,
+    "train": 30240,
+    "validation": 6480
+  },
+  "labels": 36,
+  "unique_noise": 30240,
+  "reuse_ratio": 1.0
+}
+SMOKE TEST - results are not reportable
+/tmp/uv-venv/lib/python3.13/site-packages/torch/nn/utils/weight_norm.py:145: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+backbone=beats unfroze 85.1M params in the last 12 of 12 blocks
+head warm-started from the AudioSet rows of our 36 labels
+pooling=mean_patches
+Traceback (most recent call last):
+  File "/marimo/repo/SNR_Aware/SNR_Expert_SSLAM/main.py", line 15, in <module>
+    main()
+    ~~~~^^
+  File "/marimo/repo/SNR_Aware/SNR_Expert_SSLAM/tasks/run_36.py", line 387, in main
+    resolve_stage(arguments.stage)(config)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "/marimo/repo/SNR_Aware/SNR_Expert_SSLAM/tasks/stages.py", line 232, in command_teacher36
+    best, history = run_epochs(model, config, "teacher", corpus, train_rows,
+                    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                               validation_rows, device, step, select_on="full")
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/marimo/repo/SNR_Aware/SNR_Expert_SSLAM/tasks/stages.py", line 109, in run_epochs
+    optimizer = torch.optim.AdamW(groups, weight_decay=settings.get("weight_decay", 1e-4))
+  File "/tmp/uv-venv/lib/python3.13/site-packages/torch/optim/adamw.py", line 35, in __init__
+    super().__init__(
+    ~~~~~~~~~~~~~~~~^
+        params,
+        ^^^^^^^
+    ...<10 lines>...
+        decoupled_weight_decay=True,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/tmp/uv-venv/lib/python3.13/site-packages/torch/optim/adam.py", line 102, in __init__
+    super().__init__(params, defaults)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/tmp/uv-venv/lib/python3.13/site-packages/torch/optim/optimizer.py", line 424, in __init__
+    self.add_param_group(cast(dict[str, Any], param_group))
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/uv-venv/lib/python3.13/site-packages/torch/_compile.py", line 54, in inner
+    return disable_fn(*args, **kwargs)
+  File "/tmp/uv-venv/lib/python3.13/site-packages/torch/_dynamo/eval_frame.py", line 1548, in _fn
+    return fn(*args, **kwargs)
+  File "/tmp/uv-venv/lib/python3.13/site-packages/torch/optim/optimizer.py", line 1211, in add_param_group
+    raise ValueError("some parameters appear in more than one parameter group")
+ValueError: some parameters appear in more than one parameter group
+SMOKE_FAILED

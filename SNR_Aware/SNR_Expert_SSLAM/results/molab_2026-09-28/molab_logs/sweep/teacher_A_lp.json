@@ -1,0 +1,113 @@
+{
+  "experiment": {
+    "name": "snr_expert_sslam_high_36",
+    "task": "single_label_noise_classification",
+    "num_classes": 36,
+    "seed": 2026
+  },
+  "dataset": {
+    "path": "/marimo/dataset/mix-dataset",
+    "manifest_file": "manifest.csv",
+    "labels_file": "labels.txt",
+    "clip_seconds": 4.0,
+    "sample_rate": 16000,
+    "train_split": "train",
+    "validation_split": "validation",
+    "test_split": "test"
+  },
+  "backbone": {
+    "model_id": "ta012/SSLAM_AS2M_Finetuned",
+    "_model_id_note": "AS2M-supervised-finetuned, matching the BEATs checkpoint the mid teacher used (BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2). ta012/SSLAM_pretrain (self-supervised only) gave a clean-noise teacher of 0.6576 on 2026-09-28 vs BEATs 0.7799 and stopped at the gate; the 0.502 AudioSet mAP that motivated SSLAM is the finetuned model's number.",
+    "embedding_dim": 768,
+    "num_mel_bins": 128,
+    "norm_divisor": 2.0,
+    "_norm_divisor_note": "Verified 2026-09-28 by zero-shot AudioSet-head accuracy on 720 clean high-band noise clips: divisor 2.0 -> 0.7292, 1.0 -> 0.6333; padding to 1024 frames hurts (0.7069 / 0.5292).",
+    "pooling": "cls_fcnorm",
+    "head_init": "audioset",
+    "_pooling_note": "cls_fcnorm = fc_norm(CLS), the finetuned checkpoint's own classification path. head_init audioset = start the 36-way head from its AudioSet rows (LP-FT, Kumar et al. ICLR 2022). With mean_patches + random head the clean-noise teacher reached 0.6912, below the 0.7292 this head gets zero-shot."
+  },
+  "run": "run1_baseline",
+  "band_db": [
+    15.0,
+    20.0
+  ],
+  "teacher": {
+    "source_column": "noise_path",
+    "head_epochs": 20,
+    "head_lr": 0.001,
+    "head_batch_size": 512,
+    "head_patience": 3,
+    "extract_batch_size": 32,
+    "finetune_epochs": 10,
+    "trainable_blocks": 0,
+    "head_ft_lr": 0.0001,
+    "encoder_lr": 1e-05,
+    "batch_size": 16,
+    "validation_batch_size": 32,
+    "accumulation_steps": 2,
+    "gradient_clip_norm": 5.0,
+    "patience": 3,
+    "workers": 4,
+    "checkpoint": "teacher_noise_best.pt"
+  },
+  "student": {
+    "source_column": "mixture_path",
+    "finetune_epochs": 6,
+    "trainable_blocks": 6,
+    "head_lr": 0.0001,
+    "encoder_lr": 1e-05,
+    "film_lr": 0.001,
+    "batch_size": 16,
+    "validation_batch_size": 32,
+    "accumulation_steps": 2,
+    "gradient_clip_norm": 5.0,
+    "patience": 3,
+    "workers": 4,
+    "film": {
+      "enabled": true,
+      "hidden": 128,
+      "snr_jitter_db": 2.0,
+      "placement": "pooled"
+    }
+  },
+  "loss": {
+    "r_ce": 1.0,
+    "a_kd": 0.0,
+    "b_crd": 0.0,
+    "rho_kd": 4.0,
+    "tau_nce": 0.07,
+    "proj_dim": 128,
+    "n_negatives": 1024,
+    "negative_mode": "different_label",
+    "crd_level": "patch",
+    "_note": "crd_level 'patch' aligns every patch token against the teacher's; 'pooled' reproduces the BEATs project's single-vector CRD. patch is the reason for switching backbones - see VERSIONS.md. Weights r/a/b come from the CRD reference repo (-r 1 -a 1 -b 0.8); do not invent replacements."
+  },
+  "gates": {
+    "teacher_acc_floor": 0.75,
+    "_teacher_acc_floor_note": "Carried over from the mid project's floor (validated there for a BEATs teacher on 5-10 dB). Not yet re-validated for an SSLAM teacher on 15-20 dB; treat the first teacher36 run as the calibration point and revisit this number then.",
+    "baseline_band_accuracy": 0.5315,
+    "baseline_band_macro_f1": 0.52935,
+    "_baseline_band_note": "Published BEATs-Mixture, Result.xlsx 'Theo tung SNR': (0.5769@15dB + 0.4861@20dB)/2 and (0.5757+0.4830)/2, equal support (1080 each). This is the gate; it is NOT the same run as BEATs_Experts/checkpoint/test_metrics_36.json (that checkpoint's own 15/20 numbers are 0.6102/0.5315 - a different training run, no per-clip predictions, cannot enter a paired test)."
+  },
+  "evaluation": {
+    "band_only": true,
+    "_note": "Validation (checkpoint selection) and test use only the 15-20 dB rows. Training still uses all six SNR levels - more data, FiLM tells the model where it is."
+  },
+  "report": {
+    "sheet_method": "SSLAM-HighExpert",
+    "band_label": "15-20"
+  },
+  "outputs": {
+    "dir": "artifacts_sweep_A_lp",
+    "embedding_cache": "teacher_emb.pt",
+    "history": "teacher_history.json",
+    "summary": "teacher_summary.json"
+  },
+  "runtime": {
+    "device": "cuda",
+    "pin_memory": true,
+    "smoke_test": false,
+    "smoke_train_rows": 400,
+    "smoke_validation_rows": 200
+  }
+}
