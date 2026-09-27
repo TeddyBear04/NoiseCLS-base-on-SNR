@@ -1,3 +1,0 @@
-Phuong phap,Phien ban,SNR (dB),So mau (support),Top-1 Accuracy,Top-3 Accuracy,Balanced Acc,Precision Macro,Recall Macro,Macro-F1,Micro-F1,mAP,Macro-AUC,SI-SDR (dB),SI-SDR improvement,"Emb cos(mixture, noise sach)",Emb cos(khac clip),Emb gap,Emb retrieval@1,Ghi chu
-SSLAM-HighExpert,run1-baseline,15,1080,0.5278,0.713,0.5278,0.5442,0.5278,0.5264,0.5278,0.5948,0.9393,,,0.7361,0.1059,0.6302,0.9769,"Baseline dung lai: CE thuan, KHONG FiLM, chon checkpoint theo toan bo validation. Khong tach waveform nen khong co SI-SDR."
-SSLAM-HighExpert,run1-baseline,20,1080,0.4648,0.6509,0.4648,0.4953,0.4648,0.4674,0.4648,0.5091,0.9146,,,0.7188,0.122,0.5968,0.9769,"Baseline dung lai: CE thuan, KHONG FiLM, chon checkpoint theo toan bo validation. Khong tach waveform nen khong co SI-SDR."

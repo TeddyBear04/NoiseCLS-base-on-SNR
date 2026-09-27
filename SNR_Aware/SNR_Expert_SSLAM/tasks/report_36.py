@@ -28,7 +28,9 @@ from pathlib import Path
 
 import numpy as np
 
-from tasks.run_36 import HERE
+# Not imported from tasks.run_36: that pulls in torch/torchaudio, and the report
+# has to run anywhere the .npz predictions are - including a laptop.
+HERE = Path(__file__).resolve().parents[1]
 
 METRIC_COLUMNS = [
     "accuracy", "macro_precision", "macro_recall", "macro_f1", "micro_f1",
@@ -49,7 +51,8 @@ SHEET_COLUMNS = [
 # DPCRN branch to 0.144. So those two columns stay empty here rather than being
 # filled with a number that would not mean what the column says.
 METHOD_NAMES = {
-    "beats_baseline": "BEATs baseline (published, metrics file only)",
+    "published_baseline": "BEATs-Mixture (Result.xlsx, published)",
+    "beats_baseline": "BEATs baseline (on-disk checkpoint metrics file)",
     "run1_baseline": "SSLAM expert - CE only, no FiLM (rebuilt baseline)",
     "run2_ce_only": "SSLAM expert - CE only + FiLM (control)",
     "run3_kd_crd": "SSLAM expert - KD + CRD",
@@ -238,11 +241,20 @@ def per_class_rows(target: np.ndarray, predicted: np.ndarray,
     return rows
 
 
-def slices(snr: np.ndarray, band: list[float]) -> list[tuple[str, np.ndarray]]:
-    """full, the SNR band we are judged on, then one slice per SNR level."""
-    out = [("full", np.ones(snr.shape, dtype=bool)),
-           ("band", (snr >= band[0]) & (snr <= band[1]))]
+def slices(snr: np.ndarray, band: list[float],
+           band_only: bool = False) -> list[tuple[str, np.ndarray]]:
+    """full, the SNR band we are judged on, then one slice per SNR level.
+
+    With `band_only` the predictions hold nothing but the band, so "full" would be
+    a duplicate of "band" and levels outside the band cannot occur: keep the band
+    and its own levels only.
+    """
+    in_band = (snr >= band[0]) & (snr <= band[1])
+    out = [] if band_only else [("full", np.ones(snr.shape, dtype=bool))]
+    out.append(("band", in_band))
     for level in sorted(set(snr.tolist())):
+        if band_only and not band[0] <= level <= band[1]:
+            continue
         out.append((f"snr_{int(level)}", snr == level))
     return out
 
@@ -278,6 +290,34 @@ def mcnemar(correct_a: np.ndarray, correct_b: np.ndarray) -> dict:
         row["p_value"] = round(p, 6)
         row["significant_at_0.05"] = "yes" if p < 0.05 else "no"
     return row
+
+
+def published_rows(config: dict, band: list[float]) -> list[dict]:
+    """The baseline the branch is judged against, as published in Result.xlsx.
+
+    Only the band's own SNR levels plus their support-weighted band aggregate.
+    Result.xlsx carries accuracy and F1 only, so every other column stays empty.
+    """
+    published = config.get("gates", {}).get("published_baseline")
+    if not published:
+        return []
+    levels = {int(float(k)): v for k, v in published["per_snr"].items()
+              if band[0] <= float(k) <= band[1]}
+    if not levels:
+        return []
+    def row(slice_name, samples, accuracy, macro_f1, micro_f1):
+        return {"run": "published_baseline", "slice": slice_name, "samples": samples,
+                "accuracy": accuracy, "macro_precision": "", "macro_recall": "",
+                "macro_f1": macro_f1, "micro_f1": micro_f1, "macro_map": "",
+                "balanced_accuracy": "", "macro_auc_ovr": "", "top3_accuracy": ""}
+    total = sum(v["samples"] for v in levels.values())
+    rows = [row("band", total,
+                *(sum(v[key] * v["samples"] for v in levels.values()) / total
+                  for key in ("accuracy", "macro_f1", "micro_f1")))]
+    for level, v in sorted(levels.items()):
+        rows.append(row(f"snr_{level}", v["samples"], v["accuracy"], v["macro_f1"],
+                        v["micro_f1"]))
+    return rows
 
 
 def baseline_rows(labels: list[str], band: list[float]) -> list[dict]:
@@ -335,6 +375,7 @@ def command_report36(config: dict) -> None:
     out_dir = HERE / config["outputs"]["dir"]
     results_dir = out_dir / "results"
     band = config["band_db"]
+    band_only = config.get("evaluation", {}).get("band_only", False)
     report_cfg = config.get("report", {})
     sheet_method = report_cfg.get("sheet_method", "SSLAM-Expert")
     band_label = report_cfg.get("band_label", f"{int(band[0])}-{int(band[1])}")
@@ -355,7 +396,7 @@ def command_report36(config: dict) -> None:
 
     summary, per_class = [], []
     for name, run in runs.items():
-        for slice_name, mask in slices(run["snr"], band):
+        for slice_name, mask in slices(run["snr"], band, band_only):
             if not mask.any():
                 continue
             probabilities = (run["probabilities"][mask]
@@ -369,7 +410,9 @@ def command_report36(config: dict) -> None:
                                             probabilities, labels):
                     per_class.append({"run": name, "slice": slice_name, **entry})
 
-    summary.extend(baseline_rows(labels, band))
+    # The published Result.xlsx numbers when the config has them; the on-disk
+    # checkpoint's metrics file is a different training run and only a fallback.
+    summary.extend(published_rows(config, band) or baseline_rows(labels, band))
     summary.sort(key=lambda r: (r["slice"] != "band", r["slice"], r["run"]))
     write_csv(results_dir / "metrics_by_run.csv", summary,
               ["run", "slice", "samples", *METRIC_COLUMNS])
@@ -399,7 +442,7 @@ def command_report36(config: dict) -> None:
             if not np.array_equal(runs[a]["target"], runs[b]["target"]):
                 print(f"skip {a} vs {b}: different test order", flush=True)
                 continue
-            for slice_name, mask in slices(runs[a]["snr"], band):
+            for slice_name, mask in slices(runs[a]["snr"], band, band_only):
                 if not mask.any():
                     continue
                 ok_a = (runs[a]["predicted"] == runs[a]["target"])[mask]
