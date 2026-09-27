@@ -262,7 +262,7 @@ def load_run(path: Path) -> dict:
 
 
 def mcnemar(correct_a: np.ndarray, correct_b: np.ndarray) -> dict:
-    """Paired test. The mid slice is 2,160 clips, where the standard error on
+    """Paired test. The band slice is 2,160 clips, where the standard error on
     accuracy is about 1.0 point - comparing two independent proportions cannot
     resolve the effect sizes at stake here, but this can."""
     b = int((correct_a & ~correct_b).sum())
@@ -417,7 +417,7 @@ def command_report36(config: dict) -> None:
                "delta_accuracy", "both_correct", "both_wrong", "only_a_correct",
                "only_b_correct", "chi2", "p_value", "significant_at_0.05"])
 
-    print("\n=== mid slice ===", flush=True)
+    print(f"\n=== band slice ({band_label} dB) ===", flush=True)
     header = f"{'run':<18}{'acc':>9}{'macro_f1':>10}{'mAP':>9}{'AUC':>9}"
     print(header, flush=True)
     for row in summary:
