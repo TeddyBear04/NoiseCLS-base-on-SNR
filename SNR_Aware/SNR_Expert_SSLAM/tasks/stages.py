@@ -204,7 +204,12 @@ def command_teacher36(config: dict) -> None:
         json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2), flush=True)
     if gate == "STOP":
-        raise SystemExit(2)
+        if config["runtime"]["smoke_test"]:
+            # One epoch on a few hundred clips cannot reach any real floor; the gate
+            # only means something on a full run. Report it, keep the smoke going.
+            print("smoke test: gate not enforced", flush=True)
+        else:
+            raise SystemExit(2)
 
 
 # ------------------------------------------------------------------------ student
