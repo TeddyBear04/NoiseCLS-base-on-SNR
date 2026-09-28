@@ -248,7 +248,7 @@ def build_model(config: dict, device: torch.device, film_enabled: bool,
         encoder = BEATsEncoder(raw)
         head_rows = lambda: beats_head_rows(checkpoint, label_mids(config))  # noqa: E731
     elif kind == "sslam":
-        raw = load_sslam(device, backbone["model_id"])
+        raw = load_sslam(device, backbone["model_id"], backbone.get("config_overrides"))
         encoder = SSLAMEncoder(raw, backbone["num_mel_bins"], backbone["norm_divisor"],
                                config["dataset"]["sample_rate"],
                                backbone.get("pooling", "mean_patches"))

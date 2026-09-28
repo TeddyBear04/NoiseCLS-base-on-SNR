@@ -270,6 +270,8 @@ def load_run(path: Path) -> dict:
         data["probabilities"] = softmax(payload["logits"].astype(np.float32))
     if "labels" in payload.files:
         data["labels"] = [str(x) for x in payload["labels"]]
+    data["sample_id"] = ([str(x) for x in payload["sample_id"]]
+                         if "sample_id" in payload.files else None)
     return data
 
 
@@ -471,3 +473,113 @@ def command_report36(config: dict) -> None:
             return f"{value:>9.4f}" if isinstance(value, float) else f"{'-':>9}"
         print(f"{row['run']:<18}{fmt('accuracy')}{fmt('macro_f1')}"
               f"{fmt('macro_map')}{fmt('macro_auc_ovr')}", flush=True)
+
+
+# ------------------------------------------------------------ backbone comparison
+
+COMPARE_COLUMNS = ["Backbone", "Phien ban", "SNR (dB)", "So mau (support)",
+                   "Top-1 Accuracy", "Top-3 Accuracy", "Macro-F1", "Micro-F1",
+                   "mAP", "Macro-AUC", "Delta Top-1 vs Result.xlsx"]
+MCNEMAR_COLUMNS = ["Phien ban", "SNR (dB)", "So mau (support)", "Backbone A",
+                   "Backbone B", "Top-1 A", "Top-1 B", "Delta (B - A)",
+                   "Chi A dung", "Chi B dung", "p_value", "Co y nghia (p<0.05)"]
+
+
+def command_compare36(config_paths: list[Path], out_dir: Path) -> None:
+    """Two or more backbones side by side, same runs, same test clips.
+
+    Each config's runs are read from its own `outputs.dir`. Rows are matched by
+    `sample_id`, never by file order, before the paired McNemar test between the
+    same run on different backbones. Writes two CSVs and nothing else.
+    """
+    configs = [json.loads(Path(p).read_text(encoding="utf-8")) for p in config_paths]
+    band = configs[0]["band_db"]
+    band_label = configs[0].get("report", {}).get("band_label",
+                                                  f"{int(band[0])}-{int(band[1])}")
+    published = {r["slice"]: r["accuracy"] for r in published_rows(configs[0], band)}
+
+    def slice_label(name):
+        return band_label if name == "band" else name.replace("snr_", "")
+
+    backbones = {}
+    for config in configs:
+        label = config.get("report", {}).get("sheet_method", config["experiment"]["name"])
+        folder = HERE / config["outputs"]["dir"]
+        runs = {path.name[len("student_"):-len("_predictions.npz")]: load_run(path)
+                for path in sorted(folder.glob("student_*_predictions.npz"))}
+        if not runs:
+            raise FileNotFoundError(f"no predictions under {folder}")
+        backbones[label] = runs
+        print(f"{label}: {', '.join(runs)}", flush=True)
+
+    rows = []
+    for row in published_rows(configs[0], band):
+        rows.append({"Backbone": "Result.xlsx", "Phien ban": "published_baseline",
+                     "SNR (dB)": slice_label(row["slice"]), "So mau (support)": row["samples"],
+                     "Top-1 Accuracy": round(row["accuracy"], 4),
+                     "Macro-F1": round(row["macro_f1"], 4), "Micro-F1": round(row["micro_f1"], 4)})
+    for label, runs in backbones.items():
+        for run_name, run in runs.items():
+            labels_count = len(run["labels"]) if run["labels"] else 36
+            for slice_name, mask in slices(run["snr"], band, band_only=True):
+                if not mask.any():
+                    continue
+                probs = run["probabilities"][mask] if run["probabilities"] is not None else None
+                m = compute_metrics(run["target"][mask], run["predicted"][mask], probs,
+                                    labels_count)
+                def r4(v):
+                    return round(v, 4) if isinstance(v, float) else v
+                rows.append({"Backbone": label, "Phien ban": run_name,
+                             "SNR (dB)": slice_label(slice_name),
+                             "So mau (support)": int(mask.sum()),
+                             "Top-1 Accuracy": r4(m["accuracy"]),
+                             "Top-3 Accuracy": r4(m["top3_accuracy"]),
+                             "Macro-F1": r4(m["macro_f1"]), "Micro-F1": r4(m["micro_f1"]),
+                             "mAP": r4(m["macro_map"]), "Macro-AUC": r4(m["macro_auc_ovr"]),
+                             "Delta Top-1 vs Result.xlsx":
+                                 r4(m["accuracy"] - published[slice_name])
+                                 if slice_name in published else ""})
+    order = {band_label: 0}
+    rows.sort(key=lambda r: (order.get(r["SNR (dB)"], 1), str(r["SNR (dB)"]),
+                             r["Phien ban"] != "published_baseline", r["Phien ban"],
+                             r["Backbone"]))
+    write_csv(out_dir / "so_sanh_backbone.csv", rows, COMPARE_COLUMNS)
+
+    tests = []
+    labels = list(backbones)
+    for i, a in enumerate(labels):
+        for b in labels[i + 1:]:
+            for run_name in sorted(set(backbones[a]) & set(backbones[b])):
+                ra, rb = backbones[a][run_name], backbones[b][run_name]
+                if ra["sample_id"] is None or rb["sample_id"] is None:
+                    print(f"skip {run_name}: no sample_id to pair on", flush=True)
+                    continue
+                index_b = {sid: k for k, sid in enumerate(rb["sample_id"])}
+                common = [(k, index_b[sid]) for k, sid in enumerate(ra["sample_id"])
+                          if sid in index_b]
+                ia = np.array([c[0] for c in common]); ib = np.array([c[1] for c in common])
+                ok_a = ra["predicted"][ia] == ra["target"][ia]
+                ok_b = rb["predicted"][ib] == rb["target"][ib]
+                snr = ra["snr"][ia]
+                for slice_name, mask in slices(snr, band, band_only=True):
+                    if not mask.any():
+                        continue
+                    t = mcnemar(ok_a[mask], ok_b[mask])
+                    tests.append({"Phien ban": run_name, "SNR (dB)": slice_label(slice_name),
+                                  "So mau (support)": int(mask.sum()),
+                                  "Backbone A": a, "Backbone B": b,
+                                  "Top-1 A": round(float(ok_a[mask].mean()), 4),
+                                  "Top-1 B": round(float(ok_b[mask].mean()), 4),
+                                  "Delta (B - A)": round(float(ok_b[mask].mean() - ok_a[mask].mean()), 4),
+                                  "Chi A dung": t["only_a_correct"], "Chi B dung": t["only_b_correct"],
+                                  "p_value": t["p_value"], "Co y nghia (p<0.05)": t["significant_at_0.05"]})
+    write_csv(out_dir / "so_sanh_mcnemar.csv", tests, MCNEMAR_COLUMNS)
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Compare backbones run by run.")
+    parser.add_argument("configs", nargs="+", type=Path)
+    parser.add_argument("--out", type=Path, default=HERE / "results_compare")
+    arguments = parser.parse_args()
+    command_compare36(arguments.configs, arguments.out)

@@ -47,11 +47,19 @@ FBANK_MEAN = -4.268
 FBANK_STD = 4.569
 
 
-def load_sslam(device: torch.device, model_id: str = SSLAM_PRETRAIN):
-    """Frozen-by-default SSLAM encoder. Caller unfreezes what it wants to train."""
+def load_sslam(device: torch.device, model_id: str = SSLAM_PRETRAIN,
+               config_overrides: dict | None = None):
+    """Frozen-by-default SSLAM encoder. Caller unfreezes what it wants to train.
+
+    `config_overrides` go straight into the hub config (e.g. drop_rate,
+    end_drop_path_rate): the AS2M-finetuned checkpoint ships every dropout at 0.0,
+    the same as the BEATs checkpoint, and a fair comparison needs both regularised
+    the same way.
+    """
     from transformers import AutoModel
 
-    model = AutoModel.from_pretrained(model_id, trust_remote_code=True)
+    model = AutoModel.from_pretrained(model_id, trust_remote_code=True,
+                                      **(config_overrides or {}))
     model.to(device).eval()
     for parameter in model.parameters():
         parameter.requires_grad = False
