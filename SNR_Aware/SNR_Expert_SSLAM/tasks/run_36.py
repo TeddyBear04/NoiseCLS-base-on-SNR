@@ -432,7 +432,8 @@ def write_params(config: dict, out_dir: Path, name: str) -> Path:
     payload = {
         "config": config,
         "commit": git("rev-parse", "HEAD") or "unknown",
-        "dirty": bool(git("status", "--porcelain", "--", ".")),
+        # Tracked files only: untracked artifact folders are not a change to the code.
+        "dirty": bool(git("status", "--porcelain", "--untracked-files=no", "--", ".")),
         "torch": torch.__version__,
         "device": (torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"),
         "started": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),

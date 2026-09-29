@@ -597,7 +597,11 @@ def command_report36(config: dict) -> None:
                "delta_accuracy", "both_correct", "both_wrong", "only_a_correct",
                "only_b_correct", "chi2", "p_value", "significant_at_0.05"])
 
-    params = [run_params(out_dir, name, config) for name in runs]
+    # Every seed folder's runs too: their rows differ only in `seed` and the
+    # epochs they trained, which is exactly what a fair comparison has to see.
+    params = [run_params(folder, path.name[len("student_"):-len("_predictions.npz")], config)
+              for _, folder in seed_folders(config)
+              for path in sorted(folder.glob("student_*_predictions.npz"))]
     teacher_folder = HERE / config["outputs"].get("teacher_dir", config["outputs"]["dir"])
     teacher_params = teacher_folder / "teacher_params.json"
     if teacher_params.exists():
