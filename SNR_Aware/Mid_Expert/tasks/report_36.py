@@ -56,6 +56,7 @@ METHOD_NAMES = {
     "run3b_crd_only": "Mid expert - CRD only",
     "run3c_kd_only": "Mid expert - KD only",
     "run4_remix": "Mid expert - KD + CRD + remix",
+    "run5_attn": "Mid expert - soft attention mask (CE only, no FiLM)",
 }
 SLICE_NAMES = {"full": "all", "mid": "5-10"}
 
@@ -84,6 +85,7 @@ SHEET_METHOD = {
     "run3b_crd_only": ("BEATs-MidExpert", "run3b-crd-only"),
     "run3c_kd_only": ("BEATs-MidExpert", "run3c-kd-only"),
     "run3_kd_crd": ("BEATs-MidExpert", "run3-kd-crd"),
+    "run5_attn": ("BEATs-MidExpert", "run5-attn"),
 }
 SHEET_NOTE = {
     "run1_baseline": "Baseline dung lai: CE thuan, KHONG FiLM, chon checkpoint theo toan bo validation. Khong tach waveform nen khong co SI-SDR.",
@@ -91,6 +93,7 @@ SHEET_NOTE = {
     "run3b_crd_only": "CE + CRD (b=0.8), khong KD. Setting chinh cua paper CRD.",
     "run3c_kd_only": "CE + KD (a=1.0, rho=4), khong CRD.",
     "run3_kd_crd": "CE + KD + CRD. Phuong phap day du. Teacher nhin noise sach (privileged info), student chi nhin mixture.",
+    "run5_attn": "Huong 2: run1_baseline + soft attention mask A(t,f) thay mean-pool (gated attention, Ilse et al. ICML 2018). CE thuan, khong KD/CRD/FiLM.",
 }
 
 

@@ -23,7 +23,10 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch import nn
-from mid_expert_lib import CRDLoss, FiLM, Projection, film_deviation, mid_slice_mask, sample_negatives
+from mid_expert_lib import (
+    AttentionMaskPool, CRDLoss, FiLM, Projection, film_deviation, mask_deviation,
+    mid_slice_mask, sample_negatives,
+)
 from tasks.run_36 import (
     HERE, Corpus, autocast, load_beats, metrics, resolve_pretrained, seed_everything,
 )
@@ -36,17 +39,26 @@ class StudentModel(nn.Module):
     term needs it. FiLM sits on the pooled embedding rather than inside the encoder
     blocks  -  see the deviation list in STATUS.md; the paper conditions at several
     layers, and doing that here would mean patching the vendored BEATs.
+
+    ``pool`` replaces the token mean with the soft attention mask of direction 2
+    (run5_attn). It sits before FiLM, so both can be on at once, and the pooled
+    vector it returns is what CRD sees when KD/CRD are added back later.
     """
 
-    def __init__(self, beats, head: nn.Linear, film: FiLM | None):
+    def __init__(self, beats, head: nn.Linear, film: FiLM | None,
+                 pool: AttentionMaskPool | None = None):
         super().__init__()
         self.beats = beats
         self.head = head
         self.film = film
+        self.pool = pool
 
     def forward(self, waveform: torch.Tensor, snr_db: torch.Tensor):
         sequence, _ = self.beats.extract_features(waveform)
-        pooled = sequence.mean(dim=1)
+        if self.pool is not None:
+            pooled, _ = self.pool(sequence)
+        else:
+            pooled = sequence.mean(dim=1)
         if self.film is not None:
             pooled = self.film(pooled, snr_db)
         return self.head(pooled), pooled
@@ -79,18 +91,24 @@ def collect_predictions(model, loader, device) -> dict:
     """One inference pass. Metrics and per-clip predictions both come out of it."""
     model.eval()
     all_logits, all_targets, all_snrs, all_rows, all_emb = [], [], [], [], []
+    all_masks = []
     for batch in loader:
         snr = batch["snr"].float().to(device, non_blocking=True)
         with autocast(device):
             logits, pooled = model(batch["audio"].to(device, non_blocking=True), snr)
+        if model.pool is not None:
+            all_masks.append(model.pool.last_mask.half().cpu())
         all_logits.append(logits.float().cpu())
         all_emb.append(pooled.float().cpu())
         all_targets.append(batch["target"])
         all_snrs.append(batch["snr"])
         all_rows.append(batch["row_index"])
-    return {"logits": torch.cat(all_logits), "target": torch.cat(all_targets),
-            "snr": torch.cat(all_snrs), "row_index": torch.cat(all_rows),
-            "embedding": torch.cat(all_emb)}
+    out = {"logits": torch.cat(all_logits), "target": torch.cat(all_targets),
+           "snr": torch.cat(all_snrs), "row_index": torch.cat(all_rows),
+           "embedding": torch.cat(all_emb)}
+    if all_masks:
+        out["mask"] = torch.cat(all_masks)
+    return out
 
 
 def noise_purity(student_embedding: torch.Tensor, teacher_embedding: torch.Tensor) -> dict:
@@ -186,7 +204,10 @@ def build_student(config, corpus, device):
     film = None
     if student_config["film"]["enabled"]:
         film = FiLM(768, student_config["film"]["hidden"]).to(device)
-    return StudentModel(beats, head, film).to(device), blocks
+    pool = None
+    if student_config["attention"]["enabled"]:
+        pool = AttentionMaskPool(768, student_config["attention"]["hidden"]).to(device)
+    return StudentModel(beats, head, film, pool).to(device), blocks
 
 
 def command_student36(config: dict) -> None:
@@ -211,6 +232,7 @@ def command_student36(config: dict) -> None:
     use_crd = loss_config["b_crd"] > 0
     print(f"run={run_name} device={device} train={len(train_rows)} "
           f"validation={len(validation_rows)} film={student_config['film']['enabled']} "
+          f"attention={student_config['attention']['enabled']} "
           f"kd={use_kd} crd={use_crd}", flush=True)
 
     model, blocks = build_student(config, corpus, device)
@@ -230,6 +252,9 @@ def command_student36(config: dict) -> None:
     ]
     if model.film is not None:
         groups.append({"params": model.film.parameters(), "lr": student_config["film_lr"]})
+    if model.pool is not None:
+        groups.append({"params": model.pool.parameters(),
+                       "lr": student_config["attention"]["lr"]})
     if g_s is not None:
         groups.append({"params": g_s.parameters(), "lr": student_config["film_lr"]})
     optimizer = torch.optim.AdamW(groups, weight_decay=1e-4)
@@ -261,9 +286,11 @@ def command_student36(config: dict) -> None:
         model.head.train()
         if model.film is not None:
             model.film.train()
+        if model.pool is not None:
+            model.pool.train()
         optimizer.zero_grad(set_to_none=True)
 
-        sums = {"ce": 0.0, "kd": 0.0, "crd": 0.0}
+        sums = {"ce": 0.0, "kd": 0.0, "crd": 0.0, "mask_dev": 0.0}
         correct = seen = 0
         started = time.perf_counter()
         for step, batch in enumerate(train_loader, start=1):
@@ -312,6 +339,8 @@ def command_student36(config: dict) -> None:
             sums["ce"] += float(ce.detach()) * batch_size
             sums["kd"] += float(kd.detach()) * batch_size
             sums["crd"] += float(crd.detach()) * batch_size
+            if model.pool is not None:
+                sums["mask_dev"] += mask_deviation(model.pool.last_mask) * batch_size
             correct += int((logits.argmax(1) == targets).sum())
             seen += batch_size
             if step == 1 or step % 200 == 0 or step == len(train_loader):
@@ -328,6 +357,7 @@ def command_student36(config: dict) -> None:
                  "train_accuracy": correct / seen,
                  "ce": sums["ce"] / seen, "kd": sums["kd"] / seen, "crd": sums["crd"] / seen,
                  "film_deviation": deviation,
+                 "mask_deviation": sums["mask_dev"] / seen,
                  "val_mid_accuracy": current["mid"]["accuracy"],
                  "val_mid_macro_f1": current["mid"]["macro_f1"],
                  "val_full_accuracy": current["full"]["accuracy"]}
@@ -335,7 +365,7 @@ def command_student36(config: dict) -> None:
         print(f"epoch={epoch} ce={entry['ce']:.4f} kd={entry['kd']:.4f} "
               f"crd={entry['crd']:.4f} val_mid_acc={entry['val_mid_accuracy']:.4f} "
               f"val_mid_f1={entry['val_mid_macro_f1']:.4f} "
-              f"film_dev={deviation:.3f}", flush=True)
+              f"film_dev={deviation:.3f} mask_dev={entry['mask_deviation']:.4f}", flush=True)
 
         # Which slice selects the checkpoint. "mid" is the only place specialisation
         # enters the main path, and it costs nothing. run1_baseline uses "full"
@@ -367,6 +397,11 @@ def command_student36(config: dict) -> None:
               "run is effectively 'baseline retrained'. Still a valid control; say so "
               "in the report rather than claiming SNR conditioning did anything.",
               flush=True)
+    if model.pool is not None and history and history[-1]["mask_deviation"] < 1e-3:
+        print("NOTE mask_deviation stayed at zero  -  the attention mask is uniform, so "
+              "pooling collapsed to the mean and this run is effectively run1_baseline "
+              "retrained. Say so in the report rather than crediting the mask.",
+              flush=True)
 
 
 def snapshot(model, blocks: int) -> dict:
@@ -377,6 +412,8 @@ def snapshot(model, blocks: int) -> dict:
              "head": {k: v.detach().cpu().clone() for k, v in model.head.state_dict().items()}}
     if model.film is not None:
         state["film"] = {k: v.detach().cpu().clone() for k, v in model.film.state_dict().items()}
+    if model.pool is not None:
+        state["pool"] = {k: v.detach().cpu().clone() for k, v in model.pool.state_dict().items()}
     return state
 
 
@@ -385,6 +422,8 @@ def restore(model, state: dict) -> None:
     model.head.load_state_dict(state["head"])
     if model.film is not None and "film" in state:
         model.film.load_state_dict(state["film"])
+    if model.pool is not None:
+        model.pool.load_state_dict(state["pool"])
 
 
 def command_test36(config: dict) -> None:
@@ -450,7 +489,25 @@ def command_test36(config: dict) -> None:
     else:
         print(f"{bank_path} missing - skipping the embedding purity check.", flush=True)
 
-    payload = {"run": run_name, "test": result, "purity": purity,
+    # Where the mask looks. Tokens are ordered t*8 + f over 8 mel bands of 16 bins
+    # each (low to high frequency), so the per-band mean says whether the mask
+    # learned to lean away from the speech band. Mechanism check, not accuracy.
+    attention = {}
+    if "mask" in collected:
+        masks = collected["mask"].float()
+        bands = masks.reshape(masks.shape[0], -1, 8).mean(dim=1)
+        print(chr(10) + "attention mask (mean A per mel band, low -> high frequency):",
+              flush=True)
+        for level in sorted(set(collected["snr"].tolist())):
+            chosen = collected["snr"] == level
+            attention[str(level)] = {
+                "mask_deviation": mask_deviation(masks[chosen]),
+                "band_mean": [round(float(v), 4) for v in bands[chosen].mean(dim=0)],
+            }
+            print(f"  snr={level:>3} mask_dev={attention[str(level)]['mask_deviation']:.4f} "
+                  f"bands={attention[str(level)]['band_mean']}", flush=True)
+
+    payload = {"run": run_name, "test": result, "purity": purity, "attention": attention,
                "baseline": {"accuracy": baseline["baseline_mid_accuracy"],
                             "macro_f1": baseline["baseline_mid_macro_f1"]}}
     (out_dir / f"student_{run_name}_test.json").write_text(
@@ -469,5 +526,6 @@ def command_test36(config: dict) -> None:
         target=collected["target"].numpy().astype(np.int16),
         snr=collected["snr"].numpy().astype(np.int16),
         logits=collected["logits"].numpy().astype(np.float16),
-        labels=np.array(corpus.labels))
+        labels=np.array(corpus.labels),
+        **({"attention_mask": collected["mask"].numpy()} if "mask" in collected else {}))
     print(f"predictions -> {out_dir / f'student_{run_name}_predictions.npz'}", flush=True)

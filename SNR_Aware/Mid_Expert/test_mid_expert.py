@@ -159,6 +159,52 @@ def test_crd_loss_magnitude_is_comparable_to_cross_entropy():
     assert float(value) < 100.0
 
 
+def test_attention_mask_pool_is_mean_pool_at_initialisation():
+    """w khởi tạo 0 => mask = 0.5 ở mọi token => trọng số đều => đúng mean-pool,
+    tức run5 bắt đầu ĐÚNG từ điểm của run1_baseline."""
+    from mid_expert_lib import AttentionMaskPool
+    torch.manual_seed(0)
+    pool = AttentionMaskPool(dim=8)
+    tokens = torch.randn(3, 12, 8)
+    pooled, mask = pool(tokens)
+    assert torch.allclose(pooled, tokens.mean(dim=1), atol=1e-6)
+    assert torch.allclose(mask, torch.full((3, 12), 0.5))
+
+
+def test_attention_mask_pool_mask_in_unit_interval_and_weights_sum_to_one():
+    from mid_expert_lib import AttentionMaskPool
+    torch.manual_seed(0)
+    pool = AttentionMaskPool(dim=8)
+    with torch.no_grad():
+        pool.w.weight.normal_(0, 3.0)
+    tokens = torch.randn(4, 12, 8)
+    pooled, mask = pool(tokens)
+    assert mask.shape == (4, 12)
+    assert bool((mask > 0).all()) and bool((mask < 1).all())
+    weights = mask / mask.sum(dim=1, keepdim=True)
+    assert torch.allclose(pooled, (weights.unsqueeze(-1) * tokens).sum(dim=1), atol=1e-5)
+    assert not torch.allclose(pooled, tokens.mean(dim=1), atol=1e-3)
+
+
+def test_attention_mask_pool_learns_from_classification_gradient():
+    """Từ khởi tạo 0, gradient phải tới được w; nếu không, mask kẹt ở 0.5 mãi."""
+    from mid_expert_lib import AttentionMaskPool
+    torch.manual_seed(0)
+    pool = AttentionMaskPool(dim=8)
+    pooled, _ = pool(torch.randn(4, 12, 8))
+    pooled.pow(2).sum().backward()
+    assert pool.w.weight.grad is not None
+    assert float(pool.w.weight.grad.abs().sum()) > 0
+
+
+def test_mask_deviation_is_zero_for_uniform_mask_and_positive_otherwise():
+    from mid_expert_lib import mask_deviation
+    assert mask_deviation(torch.full((3, 12), 0.5)) < 1e-6
+    peaked = torch.full((1, 12), 0.1)
+    peaked[0, 0] = 0.9
+    assert mask_deviation(peaked) > 0.1
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(n, f) for n, f in sorted(globals().items())

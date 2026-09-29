@@ -33,6 +33,7 @@ Năm phiên bản khác nhau **đúng ở bốn công tắc**: `a_kd`, `b_crd`, 
 | `run3c_kd_only` | **1.0** | 0 | bật | lát mid |
 | `run3_kd_crd` | **1.0** | **0.8** | bật | lát mid |
 | `run4_remix` *(chưa chạy)* | 1.0 | 0.8 | bật | lát mid, + remix augmentation |
+| `run5_attn` *(Hướng 2)* | 0 | 0 | tắt | toàn bộ validation, + **attention mask** thay mean-pool |
 
 ## Bốn công tắc là gì
 
@@ -47,6 +48,15 @@ thiết kế ban đầu xây quanh.
 
 **FiLM** — MLP sinh `(γ, β)` từ SNR rồi điều biến embedding đã pool. Cho model biết nó
 đang ở mức nhiễu nào.
+
+**`attention`** (chỉ `run5_attn`) — Hướng 2: thay trung bình 192 token BEATs (lưới 24
+thời gian × 8 dải mel, mỗi token một ô 16×16 trên log-mel) bằng mask mềm `A(t,f) ∈ [0,1]`
+rồi pool có trọng số `z = Σ A·h / Σ A`. Điểm mask theo gated attention của Ilse, Tomczak,
+Welling (ICML 2018); **lệch paper**: họ chuẩn hoá bằng softmax, ở đây dùng sigmoid để A
+đúng là mask [0,1] như sơ đồ và sau này giám sát được bằng IRM thật. Khởi tạo `w = 0` ⇒
+A = 0.5 khắp nơi ⇒ bắt đầu đúng bằng mean-pool. `run5_attn` là `run1_baseline` đổi đúng
+một thứ này, nên McNemar với `run1_baseline` cô lập được tác dụng của mask. Log in
+`mask_dev` mỗi epoch — đứng ở 0 nghĩa là mask sụp về đều, run chỉ là baseline train lại.
 
 **`select_on`** — `full` chọn epoch tốt nhất trên toàn bộ validation (đúng công thức
 baseline gốc); `mid` chỉ nhìn lát 5–10 dB (chuyên biệt hoá cho nhánh mid được giao).

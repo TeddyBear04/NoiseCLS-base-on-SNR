@@ -629,19 +629,25 @@ def resolve_stage(name: str):
 #                  cannot enter a paired test. This run fixes both: the same eight
 #                  metrics on the same test clips, and McNemar against it becomes
 #                  possible.
+#   run5_attn      direction 2 on its own: run1_baseline with the token mean
+#                  replaced by a soft attention mask (gated attention, Ilse et al.
+#                  ICML 2018). No KD, no CRD, no FiLM, same selection, so the paired
+#                  test against run1_baseline isolates the mask and nothing else.
 RUNS = {
     "run1_baseline": {"a_kd": 0.0, "b_crd": 0.0, "remix": False,
-                      "film": False, "select_on": "full"},
+                      "film": False, "select_on": "full", "attention": False},
     "run2_ce_only": {"a_kd": 0.0, "b_crd": 0.0, "remix": False,
-                     "film": True, "select_on": "mid"},
+                     "film": True, "select_on": "mid", "attention": False},
     "run3_kd_crd": {"a_kd": 1.0, "b_crd": 0.8, "remix": False,
-                    "film": True, "select_on": "mid"},
+                    "film": True, "select_on": "mid", "attention": False},
     "run3b_crd_only": {"a_kd": 0.0, "b_crd": 0.8, "remix": False,
-                       "film": True, "select_on": "mid"},
+                       "film": True, "select_on": "mid", "attention": False},
     "run3c_kd_only": {"a_kd": 1.0, "b_crd": 0.0, "remix": False,
-                      "film": True, "select_on": "mid"},
+                      "film": True, "select_on": "mid", "attention": False},
     "run4_remix": {"a_kd": 1.0, "b_crd": 0.8, "remix": True,
-                   "film": True, "select_on": "mid"},
+                   "film": True, "select_on": "mid", "attention": False},
+    "run5_attn": {"a_kd": 0.0, "b_crd": 0.0, "remix": False,
+                  "film": False, "select_on": "full", "attention": True},
 }
 RUN_REQUIRED = ("student36", "test36")
 
@@ -654,9 +660,11 @@ def apply_run(config: dict, name: str) -> dict:
     config.setdefault("remix", {})["enabled"] = switches["remix"]
     config["student"]["film"]["enabled"] = switches["film"]
     config["student"]["select_on"] = switches["select_on"]
+    config["student"]["attention"]["enabled"] = switches["attention"]
     print(f"run={name} a_kd={switches['a_kd']} b_crd={switches['b_crd']} "
           f"remix={switches['remix']} film={switches['film']} "
-          f"select_on={switches['select_on']}", flush=True)
+          f"select_on={switches['select_on']} attention={switches['attention']}",
+          flush=True)
     return config
 
 
