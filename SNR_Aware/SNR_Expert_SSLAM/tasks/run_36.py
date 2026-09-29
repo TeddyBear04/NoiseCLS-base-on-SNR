@@ -393,6 +393,58 @@ def apply_run(config: dict, name: str) -> dict:
     return config
 
 
+def apply_seed(config: dict, seed: int) -> dict:
+    """Another seed of the same recipe, written to `<outputs.dir>_s<seed>`.
+
+    Its own folder so no seed overwrites another's checkpoint or predictions, and
+    `report36` can find every seed of a run by that suffix. The teacher is still
+    read from the base folder: a KD/CRD run at another seed distils from the same
+    teacher, which is what makes the seeds comparable.
+    """
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs.setdefault("seed_base_dir", outputs["dir"])
+    outputs.setdefault("seed_base_seed", config["experiment"]["seed"])
+    outputs["dir"] = f"{outputs['seed_base_dir']}_s{seed}"
+    config["experiment"]["seed"] = seed
+    print(f"seed={seed} outputs={outputs['dir']} teacher_from={outputs['teacher_dir']}",
+          flush=True)
+    return config
+
+
+def write_params(config: dict, out_dir: Path, name: str) -> Path:
+    """The run's effective parameters, written before training starts.
+
+    Everything another method needs to be run under the same conditions: the
+    config after `--run`/`--seed` were applied, the commit it ran from, and the
+    software/hardware. `report36` turns these into `thong_so.csv`.
+    """
+    import datetime
+    import subprocess
+
+    def git(*args):
+        try:
+            return subprocess.run(["git", *args], cwd=HERE, capture_output=True,
+                                  text=True, timeout=30).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    payload = {
+        "config": config,
+        "commit": git("rev-parse", "HEAD") or "unknown",
+        "dirty": bool(git("status", "--porcelain", "--", ".")),
+        "torch": torch.__version__,
+        "device": (torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"),
+        "started": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{name}_params.json"
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"params -> {path} (commit {payload['commit'][:7]}"
+          f"{', dirty' if payload['dirty'] else ''})", flush=True)
+    return path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stage", choices=STAGES)
@@ -400,6 +452,8 @@ def main() -> None:
                         default=HERE / "config/train_config_high.json")
     parser.add_argument("--run", choices=sorted(RUNS),
                         help="Required for student36 and test36.")
+    parser.add_argument("--seed", type=int,
+                        help="Another seed of the same recipe, into <outputs.dir>_s<seed>.")
     arguments = parser.parse_args()
 
     if arguments.stage in RUN_REQUIRED and arguments.run is None:
@@ -411,6 +465,8 @@ def main() -> None:
     print(f"stage={arguments.stage} config={arguments.config}", flush=True)
     if arguments.run is not None:
         config = apply_run(config, arguments.run)
+    if arguments.seed is not None:
+        config = apply_seed(config, arguments.seed)
     resolve_stage(arguments.stage)(config)
 
 

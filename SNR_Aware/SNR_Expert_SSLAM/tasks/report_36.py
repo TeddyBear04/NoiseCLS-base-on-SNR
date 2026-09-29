@@ -8,6 +8,9 @@ Reads each `artifacts/student_<run>_predictions.npz` and writes three CSVs under
     metrics_by_run.csv    one row per run x slice, all eight repo metrics
     metrics_per_class.csv one row per run x slice x label
     comparison.csv        run-vs-run deltas plus the paired McNemar test
+    thong_so.csv          one row per run: every effective parameter it ran with
+    theo_seed.csv         every seed of every run, then mean/std and the paired
+                          per-seed delta against run1_baseline (only if >1 seed)
 
 The eight metrics match `pipeline_config_4_branches.json` so these tables sit
 beside the other branches' numbers without translation: accuracy,
@@ -379,6 +382,132 @@ def write_csv(path: Path, rows: list[dict], columns: list[str]) -> None:
     print(f"wrote {path}  ({len(rows)} rows)", flush=True)
 
 
+def flatten_params(tree: dict, prefix: str = "", skip: tuple = ()) -> dict:
+    """Lam phang config long nhau thanh {"a.b.c": gia_tri} cho mot hang CSV.
+
+    Bo khoa ghi chu (bat dau bang "_") va moi nhanh nam trong `skip`. List ghi
+    thanh chuoi JSON de mot o CSV van doc lai duoc.
+    """
+    flat = {}
+    for key, value in tree.items():
+        if key.startswith("_"):
+            continue
+        path = f"{prefix}{key}"
+        if path in skip:
+            continue
+        if isinstance(value, dict):
+            flat.update(flatten_params(value, f"{path}.", skip))
+        elif isinstance(value, list):
+            flat[path] = json.dumps(value)
+        else:
+            flat[path] = value
+    return flat
+
+
+PARAM_LEAD = ["run", "seed", "source", "commit", "dirty", "epochs_run", "best_epoch",
+              "started", "torch", "device"]
+# Branches that are results or bookkeeping, not conditions a run was trained under.
+PARAM_SKIP = ("gates.published_baseline", "report", "run")
+
+
+def run_params(folder: Path, name: str, config: dict) -> dict:
+    """One `thong_so.csv` row: the run's effective parameters plus how long it trained.
+
+    Prefers `student_<run>_params.json`, written when training started. Runs from
+    before that file existed are rebuilt from their history (which recorded the
+    effective student and loss sections) and the config, and say so in `source`.
+    """
+    history_path = folder / f"student_{name}_history.json"
+    history = (json.loads(history_path.read_text(encoding="utf-8"))
+               if history_path.exists() else {})
+    params_path = folder / f"student_{name}_params.json"
+    if params_path.exists():
+        saved = json.loads(params_path.read_text(encoding="utf-8"))
+        effective = saved["config"]
+        row = {"source": "params.json", **{k: saved.get(k, "") for k in
+                                           ("commit", "dirty", "started", "torch", "device")}}
+    else:
+        effective = json.loads(json.dumps(config))
+        if "student_config" in history:
+            effective["student"] = history["student_config"]
+        if "loss_config" in history:
+            effective["loss"] = history["loss_config"]
+        row = {"source": "reconstructed (history + config)", "commit": "unknown"}
+    epochs = history.get("history", [])
+    best = history.get("best_validation", {})
+    best_epoch = best.get("epoch", "")
+    if best_epoch == "" and epochs:
+        # Older histories did not record it: the kept checkpoint is the epoch whose
+        # validation score equals the best one, or epoch 0 if none improved on it.
+        target = best.get("band", {}).get("macro_f1")
+        best_epoch = next((e["epoch"] for e in epochs
+                           if target is not None
+                           and abs(e.get("val_band_macro_f1", -1) - target) < 1e-9), 0)
+    row.update({"run": name, "seed": effective["experiment"]["seed"],
+                "epochs_run": len(epochs), "best_epoch": best_epoch})
+    row.update(flatten_params(effective, skip=PARAM_SKIP))
+    return row
+
+
+def seed_folders(config: dict) -> list[tuple[int, Path]]:
+    """The base outputs folder and every `<base>_s<seed>` beside it."""
+    outputs = config["outputs"]
+    base = outputs.get("seed_base_dir", outputs["dir"])
+    base_folder = HERE / base
+    found = [(outputs.get("seed_base_seed", config["experiment"]["seed"]), base_folder)]
+    for folder in sorted(base_folder.parent.glob(f"{base_folder.name}_s*")):
+        suffix = folder.name[len(base_folder.name) + 2:]
+        if suffix.isdigit():
+            found.append((int(suffix), folder))
+    return [(seed, folder) for seed, folder in found if folder.is_dir()]
+
+
+def seed_rows(config: dict, band: list[float]) -> list[dict]:
+    """Every seed of every run, then per-run mean/std, then the per-seed paired
+    delta against run1_baseline. One seed says nothing about run-to-run spread;
+    this table is what a claim of "better than the baseline" has to survive."""
+    per_run: dict[str, dict[int, dict]] = {}
+    for seed, folder in seed_folders(config):
+        for path in sorted(folder.glob("student_*_predictions.npz")):
+            name = path.name[len("student_"):-len("_predictions.npz")]
+            run = load_run(path)
+            ok = run["predicted"] == run["target"]
+            entry = {}
+            for slice_name, mask in slices(run["snr"], band, band_only=True):
+                if mask.any():
+                    entry[slice_name] = float(ok[mask].mean())
+            per_run.setdefault(name, {})[seed] = entry
+    if not any(len(seeds) > 1 for seeds in per_run.values()):
+        return []
+    rows = []
+    keys = sorted({k for seeds in per_run.values() for e in seeds.values() for k in e},
+                  key=lambda k: (k != "band", k))
+    for name, seeds in sorted(per_run.items()):
+        for seed, entry in sorted(seeds.items()):
+            rows.append({"run": name, "seed": seed, "kind": "seed",
+                         **{f"acc_{k}": round(v, 6) for k, v in entry.items()}})
+        if len(seeds) > 1:
+            stats = {"run": name, "seed": f"n={len(seeds)}", "kind": "mean+-std"}
+            for k in keys:
+                values = np.array([e[k] for e in seeds.values() if k in e])
+                stats[f"acc_{k}"] = (f"{values.mean():.4f} +- {values.std(ddof=1):.4f}"
+                                     if len(values) > 1 else "")
+            rows.append(stats)
+        base = per_run.get("run1_baseline", {})
+        common = sorted(set(seeds) & set(base))
+        if name != "run1_baseline" and len(common) > 1:
+            delta = {"run": name, "seed": f"paired n={len(common)}",
+                     "kind": "delta vs run1_baseline (mean+-std, wins)"}
+            for k in keys:
+                d = np.array([seeds[s][k] - base[s][k] for s in common
+                              if k in seeds[s] and k in base[s]])
+                if len(d) > 1:
+                    delta[f"acc_{k}"] = (f"{100 * d.mean():+.2f}pt +- {100 * d.std(ddof=1):.2f}"
+                                         f" ({int((d > 0).sum())}/{len(d)} wins)")
+            rows.append(delta)
+    return rows
+
+
 def command_report36(config: dict) -> None:
     out_dir = HERE / config["outputs"]["dir"]
     results_dir = out_dir / "results"
@@ -467,6 +596,26 @@ def command_report36(config: dict) -> None:
               ["run_a", "run_b", "slice", "samples", "accuracy_a", "accuracy_b",
                "delta_accuracy", "both_correct", "both_wrong", "only_a_correct",
                "only_b_correct", "chi2", "p_value", "significant_at_0.05"])
+
+    params = [run_params(out_dir, name, config) for name in runs]
+    teacher_folder = HERE / config["outputs"].get("teacher_dir", config["outputs"]["dir"])
+    teacher_params = teacher_folder / "teacher_params.json"
+    if teacher_params.exists():
+        saved = json.loads(teacher_params.read_text(encoding="utf-8"))
+        params.append({"run": "teacher", "source": "params.json",
+                       "seed": saved["config"]["experiment"]["seed"],
+                       **{k: saved.get(k, "") for k in
+                          ("commit", "dirty", "started", "torch", "device")},
+                       **flatten_params(saved["config"], skip=PARAM_SKIP)})
+    extra = sorted({k for row in params for k in row} - set(PARAM_LEAD))
+    write_csv(results_dir / "thong_so.csv", params, PARAM_LEAD + extra)
+
+    by_seed = seed_rows(config, band)
+    if by_seed:
+        columns = ["run", "seed", "kind"] + sorted(
+            {k for row in by_seed for k in row if k.startswith("acc_")},
+            key=lambda k: (k != "acc_band", k))
+        write_csv(results_dir / "theo_seed.csv", by_seed, columns)
 
     print(f"\n=== band slice ({band_label} dB) ===", flush=True)
     header = f"{'run':<18}{'acc':>9}{'macro_f1':>10}{'mAP':>9}{'AUC':>9}"

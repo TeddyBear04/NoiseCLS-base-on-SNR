@@ -24,7 +24,7 @@ from expert_lib import (
 )
 from tasks.run_36 import (
     HERE, Classifier, Corpus, autocast, build_model, collect, metrics,
-    seed_everything, snapshot, split_metrics, trainable_parameters,
+    seed_everything, snapshot, split_metrics, trainable_parameters, write_params,
 )
 
 
@@ -132,6 +132,7 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
     best = split_metrics(collect(model, validation_loader, device, use_snr),
                          corpus.labels, band)
     best_state = snapshot(model)
+    best_epoch = 0
     print(f"selecting on the '{select_on}' slice", flush=True)
     print(f"epoch=0 val_band_acc={best['band']['accuracy']:.4f} "
           f"val_full_acc={best['full']['accuracy']:.4f}", flush=True)
@@ -193,7 +194,7 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
               f"({entry['seconds']:.0f}s)", flush=True)
 
         if current[select_on]["macro_f1"] > best[select_on]["macro_f1"] + 1e-4:
-            best, stale = current, 0
+            best, stale, best_epoch = current, 0, epoch
             best_state = snapshot(model)
         else:
             stale += 1
@@ -201,6 +202,7 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
                 print(f"early_stop={epoch}", flush=True)
                 break
     model.load_state_dict(best_state, strict=False)
+    best["epoch"] = best_epoch
     return best, history
 
 
@@ -213,6 +215,7 @@ def command_teacher36(config: dict) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     runtime = config["runtime"]
 
+    write_params(config, out_dir, "teacher")
     corpus = Corpus(config, column=config["teacher"]["source_column"])
     audit = corpus.audit()
     train_rows = corpus.by_split[config["dataset"]["train_split"]]
@@ -282,7 +285,8 @@ def command_teacher36(config: dict) -> None:
 
 
 def load_teacher(config: dict, device: torch.device) -> Classifier | None:
-    path = HERE / config["outputs"]["dir"] / config["teacher"]["checkpoint"]
+    outputs = config["outputs"]
+    path = HERE / outputs.get("teacher_dir", outputs["dir"]) / config["teacher"]["checkpoint"]
     if not path.exists():
         raise FileNotFoundError(
             f"{path} is missing, and KD or CRD needs it.\n"
@@ -303,6 +307,7 @@ def command_student36(config: dict) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     run_name = config["run"]
     runtime = config["runtime"]
+    write_params(config, out_dir, f"student_{run_name}")
 
     use_kd = loss_config["a_kd"] > 0
     use_crd = loss_config["b_crd"] > 0

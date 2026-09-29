@@ -247,6 +247,22 @@ def test_mask_deviation_is_zero_for_uniform_mask_and_positive_otherwise():
     assert mask_deviation(peaked) > 0.1
 
 
+def test_flatten_params_joins_nested_keys_and_drops_notes():
+    from tasks.report_36 import flatten_params
+    tree = {"student": {"encoder_lr": 1e-4, "_recipe_note": "x",
+                        "augment": {"spec_ratio": 0.2, "_note": "y"}},
+            "band_db": [15.0, 20.0], "_top_note": "z"}
+    flat = flatten_params(tree)
+    assert flat == {"student.encoder_lr": 1e-4, "student.augment.spec_ratio": 0.2,
+                    "band_db": "[15.0, 20.0]"}
+
+
+def test_flatten_params_skips_requested_prefixes():
+    from tasks.report_36 import flatten_params
+    tree = {"gates": {"baseline": 0.5, "published_baseline": {"per_snr": {"15": 1}}}}
+    assert flatten_params(tree, skip=("gates.published_baseline",)) == {"gates.baseline": 0.5}
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(n, f) for n, f in sorted(globals().items())
