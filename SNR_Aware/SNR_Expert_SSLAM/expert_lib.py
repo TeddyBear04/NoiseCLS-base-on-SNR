@@ -91,6 +91,48 @@ def film_deviation(film: FiLM) -> float:
     return float(torch.cat([gamma - 1.0, beta], dim=-1).norm(dim=-1).mean())
 
 
+class AttentionMaskPool(torch.nn.Module):
+    """Soft attention mask A(t, f) tren patch token roi pool co trong so (Huong 2).
+
+    Diem cua mask theo gated attention cua Ilse, Tomczak, Welling (ICML 2018):
+        s_k = w' ( tanh(V h_k) * sigmoid(U h_k) )
+    Lech paper: Ilse chuan hoa bang softmax_k(s_k). O day A_k = sigmoid(s_k) nam
+    trong [0, 1] dung nhu so do ve, roi moi chuan hoa:
+        z = sum_k A_k h_k / sum_k A_k
+    Giu A o dang mask [0, 1] de sau nay giam sat duoc bang IRM that tu
+    clean_path / noise_path; softmax khong cho lam vay.
+
+    Voi BEATs moi token la mot o 16x16 tren log-mel (16 frame x 16 mel bin), nen
+    clip 4 s cho luoi 24 thoi gian x 8 dai tan = 192 token, thu tu t*8 + f.
+
+    w khoi tao bang 0 => A = 0.5 o moi token => z dung bang mean-pool. Run nay
+    bat dau dung tu diem cua run1_baseline, giong cach FiLM bat dau o identity.
+    """
+
+    def __init__(self, dim: int, hidden: int = 128) -> None:
+        super().__init__()
+        self.V = torch.nn.Linear(dim, hidden)
+        self.U = torch.nn.Linear(dim, hidden)
+        self.w = torch.nn.Linear(hidden, 1)
+        torch.nn.init.zeros_(self.w.weight)
+        torch.nn.init.zeros_(self.w.bias)
+        self.last_mask: Tensor | None = None
+
+    def forward(self, tokens: Tensor) -> tuple[Tensor, Tensor]:
+        # tokens [B, N, D] -> pooled [B, D], mask [B, N]
+        score = self.w(torch.tanh(self.V(tokens)) * torch.sigmoid(self.U(tokens)))
+        mask = torch.sigmoid(score.squeeze(-1))
+        weights = mask / mask.sum(dim=1, keepdim=True)
+        self.last_mask = mask.detach()
+        return (weights.unsqueeze(-1) * tokens).sum(dim=1), mask
+
+
+def mask_deviation(mask: Tensor) -> float:
+    """Do lech chuan cua A theo token, trung binh tren batch. Gan 0 => mask deu
+    khap noi, tuc attention da sup ve mean-pool va run nay chi la baseline train lai."""
+    return float(mask.float().std(dim=1).mean())
+
+
 class Projection(torch.nn.Module):
     """Chieu tuyen tinh roi chuan hoa L2, ?ung nhu g_S / g_T trong CRD."""
 

@@ -74,6 +74,12 @@
       "snr_jitter_db": 2.0,
       "placement": "pooled"
     },
+    "attention": {
+      "enabled": false,
+      "hidden": 128,
+      "lr": 0.001,
+      "_note": "Soft attention mask A(t,f) over the patch tokens (direction 2, run7_attn). hidden=128 matches FiLM and the CRD projection; lr matches film_lr, the rate every other new module here uses. Neither value comes from a paper for this task."
+    },
     "layer_decay": 0.3,
     "weight_decay": 0.01,
     "lr_schedule": "warmup_cosine",

@@ -20,7 +20,7 @@ from torch import nn
 
 from expert_lib import (
     layer_decay_scales, warmup_cosine,
-    CRDLoss, Projection, film_deviation, band_slice_mask, sample_negatives,
+    CRDLoss, Projection, film_deviation, band_slice_mask, mask_deviation, sample_negatives,
 )
 from tasks.run_36 import (
     HERE, Classifier, Corpus, autocast, build_model, collect, metrics,
@@ -98,6 +98,9 @@ def optimizer_for(model: Classifier, config: dict, section: str):
     if model.film is not None:
         groups.append({"params": model.film.parameters(),
                        "lr": settings.get("film_lr", 1e-3)})
+    if model.pool is not None:
+        groups.append({"params": list(model.pool.parameters()),
+                       "lr": settings["attention"]["lr"]})
     return groups
 
 
@@ -316,7 +319,7 @@ def command_student36(config: dict) -> None:
         print("SMOKE TEST - results are not reportable", flush=True)
 
     model = build_model(config, device, settings["film"]["enabled"],
-                        settings["trainable_blocks"])
+                        settings["trainable_blocks"], settings["attention"]["enabled"])
     teacher = load_teacher(config, device) if (use_kd or use_crd) else None
     print(f"run={run_name} train={len(train_rows)} kd={use_kd} crd={use_crd} "
           f"teacher={'online' if teacher else 'none'}", flush=True)
@@ -350,6 +353,10 @@ def command_student36(config: dict) -> None:
             ce = nn.functional.cross_entropy(logits, target)
             loss = loss_config["r_ce"] * ce
             parts = {"ce": ce.detach()}
+            if model.pool is not None:
+                # Spread of the mask across tokens. Stuck at 0 means it never left
+                # uniform and the run is run1_baseline retrained.
+                parts["mask_dev"] = mask_deviation(model.pool.last_mask)
 
             if teacher is not None:
                 with torch.no_grad():
@@ -402,6 +409,11 @@ def command_student36(config: dict) -> None:
     print(f"\ncheckpoint -> {out_dir / f'student_{run_name}.pt'}", flush=True)
     print(f"best val_band_accuracy={best['band']['accuracy']:.4f} "
           f"val_band_macro_f1={best['band']['macro_f1']:.4f}", flush=True)
+    if model.pool is not None and history and history[-1].get("mask_dev", 0.0) < 1e-3:
+        print("NOTE mask_dev stayed at zero - the attention mask is uniform, so pooling "
+              "collapsed to the mean and this run is effectively run1_baseline "
+              "retrained. Say so in the report rather than crediting the mask.",
+              flush=True)
 
 
 # --------------------------------------------------------------------------- test
@@ -443,7 +455,8 @@ def command_test36(config: dict) -> None:
 
     corpus = Corpus(config, column=settings["source_column"],
                     paired_column=config["teacher"]["source_column"])
-    model = build_model(config, device, settings["film"]["enabled"], 0)
+    model = build_model(config, device, settings["film"]["enabled"], 0,
+                        settings["attention"]["enabled"])
     model.load_state_dict(saved["state"], strict=False)
 
     test_rows = band_rows(corpus.by_split[config["dataset"]["test_split"]], config)
@@ -484,8 +497,28 @@ def command_test36(config: dict) -> None:
         print("\nno teacher checkpoint - skipping the embedding purity check.",
               flush=True)
 
+    # Where the mask looks. BEATs tokens are ordered t*8 + f over 8 mel bands of
+    # 16 bins (low to high frequency), so the per-band mean says whether the mask
+    # learned to lean away from the speech band. Mechanism check, not accuracy.
+    attention = {}
+    if "mask" in out:
+        masks = out["mask"].float()
+        grid = masks.shape[1] % 8 == 0
+        print("\nattention mask" + (" (mean A per mel band, low -> high):" if grid else ":"),
+              flush=True)
+        for level in sorted(set(out["snr"].tolist())):
+            chosen = out["snr"] == level
+            entry = {"mask_deviation": mask_deviation(masks[chosen])}
+            if grid:
+                bands = masks[chosen].reshape(int(chosen.sum()), -1, 8).mean(dim=(0, 1))
+                entry["band_mean"] = [round(float(v), 4) for v in bands]
+            attention[str(level)] = entry
+            print(f"  snr={level:>3} mask_dev={entry['mask_deviation']:.4f} "
+                  f"bands={entry.get('band_mean', '-')}", flush=True)
+
     (out_dir / f"student_{run_name}_test.json").write_text(
         json.dumps({"run": run_name, "test": result, "purity": purity,
+                    "attention": attention,
                     "baseline": {"accuracy": gates["baseline_band_accuracy"],
                                  "macro_f1": gates["baseline_band_macro_f1"]}},
                    indent=2), encoding="utf-8")
@@ -496,6 +529,7 @@ def command_test36(config: dict) -> None:
         target=out["target"].numpy().astype(np.int16),
         snr=out["snr"].numpy().astype(np.int16),
         logits=out["logits"].numpy().astype(np.float16),
-        labels=np.array(corpus.labels))
+        labels=np.array(corpus.labels),
+        **({"attention_mask": out["mask"].numpy()} if "mask" in out else {}))
     print(f"predictions -> {out_dir / f'student_{run_name}_predictions.npz'}",
           flush=True)

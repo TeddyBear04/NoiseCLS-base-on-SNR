@@ -51,7 +51,8 @@ if str(HERE) not in sys.path:
 from models.audio_io import load_float_audio, load_mix_manifest  # noqa: E402
 
 from expert_lib import (  # noqa: E402
-    CRDLoss, FiLM, Projection, film_deviation, band_slice_mask, sample_negatives,
+    AttentionMaskPool, CRDLoss, FiLM, Projection, film_deviation, band_slice_mask,
+    sample_negatives,
 )
 from models.beats_backbone import BEATsEncoder, beats_head_rows, load_beats  # noqa: E402
 from models.sslam import SSLAMEncoder, audioset_head_rows, load_sslam  # noqa: E402
@@ -62,12 +63,19 @@ from models.sslam import SSLAMEncoder, audioset_head_rows, load_sslam  # noqa: E
 #                  control every other run is measured against, because a
 #                  published baseline from a different training run cannot enter
 #                  a paired test and cannot separate method from run-to-run noise.
+#   run7_attn      direction 2 on its own: run1_baseline with the token mean
+#                  replaced by a soft attention mask (gated attention, Ilse et al.
+#                  ICML 2018). No KD, no CRD, no FiLM, same selection, so the paired
+#                  test against run1_baseline isolates the mask and nothing else.
+#                  5 and 6 stay reserved for remix and GRL (VERSIONS.md).
 RUNS = {
     "run1_baseline": {"a_kd": 0.0, "b_crd": 0.0, "film": False, "select_on": "full"},
     "run2_ce_only": {"a_kd": 0.0, "b_crd": 0.0, "film": True, "select_on": "band"},
     "run3_kd_crd": {"a_kd": 1.0, "b_crd": 0.8, "film": True, "select_on": "band"},
     "run3b_crd_only": {"a_kd": 0.0, "b_crd": 0.8, "film": True, "select_on": "band"},
     "run3c_kd_only": {"a_kd": 1.0, "b_crd": 0.0, "film": True, "select_on": "band"},
+    "run7_attn": {"a_kd": 0.0, "b_crd": 0.0, "film": False, "select_on": "full",
+                  "attention": True},
 }
 RUN_REQUIRED = ("student36", "test36")
 STAGES = ("teacher36", "student36", "test36", "report36")
@@ -225,21 +233,26 @@ class Classifier(nn.Module):
     """
 
     def __init__(self, encoder: SSLAMEncoder, dim: int, classes: int,
-                 film: FiLM | None):
+                 film: FiLM | None, pool: AttentionMaskPool | None = None):
         super().__init__()
         self.encoder = encoder
         self.head = nn.Linear(dim, classes)
         self.film = film
+        self.pool = pool
 
     def forward(self, waveform, snr_db=None):
         patches, pooled = self.encoder(waveform)
+        if self.pool is not None:
+            # Direction 2: the soft mask replaces the encoder's own pooling. Patch
+            # tokens pass through untouched, so patch-level CRD is unaffected.
+            pooled, _ = self.pool(patches)
         if self.film is not None and snr_db is not None:
             pooled = self.film(pooled, snr_db)
         return self.head(pooled), pooled, patches
 
 
 def build_model(config: dict, device: torch.device, film_enabled: bool,
-                trainable_blocks: int) -> Classifier:
+                trainable_blocks: int, attention: bool = False) -> Classifier:
     backbone = config["backbone"]
     kind = backbone.get("type", "sslam")
     if kind == "beats":
@@ -267,15 +280,17 @@ def build_model(config: dict, device: torch.device, film_enabled: bool,
 
     film = FiLM(backbone["embedding_dim"],
                 config["student"]["film"]["hidden"]) if film_enabled else None
+    pool = AttentionMaskPool(backbone["embedding_dim"],
+                             config["student"]["attention"]["hidden"]) if attention else None
     model = Classifier(encoder, backbone["embedding_dim"],
-                       config["experiment"]["num_classes"], film)
+                       config["experiment"]["num_classes"], film, pool)
     if backbone.get("head_init", "random") == "audioset":
         weight, bias = head_rows()
         with torch.no_grad():
             model.head.weight.copy_(weight)
             model.head.bias.copy_(bias)
         print("head warm-started from the AudioSet rows of our 36 labels", flush=True)
-    print(f"pooling={encoder.pooling}", flush=True)
+    print(f"pooling={'attention_mask' if attention else encoder.pooling}", flush=True)
     return model.to(device)
 
 
@@ -321,19 +336,24 @@ def snapshot(model: Classifier) -> dict:
 @torch.inference_mode()
 def collect(model: Classifier, loader, device, use_snr: bool) -> dict:
     model.eval()
-    logits, targets, snrs, rows, pooled = [], [], [], [], []
+    logits, targets, snrs, rows, pooled, masks = [], [], [], [], [], []
     for batch in loader:
         snr = batch["snr"].float().to(device, non_blocking=True) if use_snr else None
         with autocast(device):
             out, vec, _ = model(batch["audio"].to(device, non_blocking=True), snr)
+        if getattr(model, "pool", None) is not None:
+            masks.append(model.pool.last_mask.half().cpu())
         logits.append(out.float().cpu())
         pooled.append(vec.float().cpu())
         targets.append(batch["target"])
         snrs.append(batch["snr"])
         rows.append(batch["row_index"])
-    return {"logits": torch.cat(logits), "target": torch.cat(targets),
-            "snr": torch.cat(snrs), "row_index": torch.cat(rows),
-            "pooled": torch.cat(pooled)}
+    result = {"logits": torch.cat(logits), "target": torch.cat(targets),
+              "snr": torch.cat(snrs), "row_index": torch.cat(rows),
+              "pooled": torch.cat(pooled)}
+    if masks:
+        result["mask"] = torch.cat(masks)
+    return result
 
 
 def split_metrics(out: dict, labels, band) -> dict:
@@ -360,8 +380,10 @@ def apply_run(config: dict, name: str) -> dict:
     config["loss"]["b_crd"] = switches["b_crd"]
     config["student"]["film"]["enabled"] = switches["film"]
     config["student"]["select_on"] = switches["select_on"]
+    config["student"]["attention"]["enabled"] = switches.get("attention", False)
     print(f"run={name} a_kd={switches['a_kd']} b_crd={switches['b_crd']} "
           f"film={switches['film']} select_on={switches['select_on']} "
+          f"attention={config['student']['attention']['enabled']} "
           f"crd_level={config['loss']['crd_level']}", flush=True)
     return config
 

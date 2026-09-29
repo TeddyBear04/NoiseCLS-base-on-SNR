@@ -62,6 +62,7 @@ nhắm thẳng vào nguyên nhân high-SNR khó: speech át noise trong mixture.
 | `run3_kd_crd` | 1.0 | 0.8 | bật | lát band | KD + CRD | ✅ code sẵn |
 | `run5_remix` | 1.0 | 0.8 | bật | lát band | + remix augmentation | ⬜ chờ duyệt §3 |
 | `run6_grl` | 1.0 | 0.8 | bật | lát band | + head phụ đoán speech, gradient reversal | ⬜ chờ duyệt §4 |
+| `run7_attn` | 0 | 0 | **tắt** | toàn bộ validation | soft attention mask A(t,f) thay mean-pool (Ilse et al., ICML 2018) | ✅ code sẵn |
 
 `run4_remix` là tên cũ trong `Mid_Expert`, ở đây đổi số vì band đã cắm vào giữa thang.
 
@@ -86,6 +87,15 @@ Setting chính của paper CRD gốc (`-a 0 -b 0.8`).
 **`run3_kd_crd`** — cả hai kênh cùng lúc. Phương pháp đầy đủ đã dùng ở nhánh mid, retarget
 sang band 15–20 dB. Đây là phiên bản có bằng chứng thống kê mạnh nhất ủng hộ nó hoạt động
 ở SNR cao (xem phần "Vì sao đổi" ở trên).
+
+**`run7_attn`** — Hướng 2, chạy riêng: `run1_baseline` đổi đúng một thứ — trung bình
+patch token được thay bằng mask mềm `A(t,f) ∈ [0,1]` rồi pool có trọng số
+`z = Σ A·h / Σ A`. Điểm mask theo gated attention (Ilse, Tomczak, Welling, ICML 2018);
+**lệch paper**: họ chuẩn hoá bằng softmax, ở đây dùng sigmoid để A đúng là mask [0,1]
+như sơ đồ và sau này giám sát được bằng IRM thật. `w = 0` lúc khởi tạo ⇒ bắt đầu đúng
+bằng mean-pool. Không KD/CRD/FiLM ⇒ McNemar với `run1_baseline` cô lập tác dụng của
+mask. Log in `mask_dev`; test36 lưu mask từng clip (`attention_mask` trong `.npz`) và
+trung bình A theo 8 dải mel. Kết hợp KD/CRD sau khi có kết quả run này.
 
 **`run5_remix`** *(chưa code)* — `run3_kd_crd` + tăng dữ liệu bằng remix: sinh cặp
 `(clean + gain·noise)` mới trên band 15–20 dB, `gain` tính từ RMS thực đo (đã verify
