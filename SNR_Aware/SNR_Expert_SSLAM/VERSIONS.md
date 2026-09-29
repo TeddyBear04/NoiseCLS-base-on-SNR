@@ -63,6 +63,7 @@ nhắm thẳng vào nguyên nhân high-SNR khó: speech át noise trong mixture.
 | `run5_remix` | 1.0 | 0.8 | bật | lát band | + remix augmentation | ⬜ chờ duyệt §3 |
 | `run6_grl` | 1.0 | 0.8 | bật | lát band | + head phụ đoán speech, gradient reversal | ⬜ chờ duyệt §4 |
 | `run7_attn` | 0 | 0 | **tắt** | toàn bộ validation | soft attention mask A(t,f) thay mean-pool (Ilse et al., ICML 2018) | ✅ code sẵn |
+| `run8_attn_kd_crd` | 1.0 | 0.8 | bật | lát band | `run3_kd_crd` + attention mask | ✅ code sẵn |
 
 `run4_remix` là tên cũ trong `Mid_Expert`, ở đây đổi số vì band đã cắm vào giữa thang.
 

@@ -61,6 +61,7 @@ METHOD_NAMES = {
     "run5_remix": "SSLAM expert - KD + CRD + remix augmentation",
     "run6_grl": "SSLAM expert - KD + CRD + GRL speech-adversarial",
     "run7_attn": "expert - soft attention mask (CE only, no FiLM)",
+    "run8_attn_kd_crd": "expert - KD + CRD + soft attention mask",
 }
 # ("full", "band" = the SNR band this project is judged on) then one slice per
 # SNR level. The band's own label ("15-20" etc.) is filled in from config at
@@ -97,6 +98,7 @@ SHEET_VERSION = {
     "run5_remix": "run5-remix",
     "run6_grl": "run6-grl",
     "run7_attn": "run7-attn",
+    "run8_attn_kd_crd": "run8-attn-kd-crd",
 }
 SHEET_NOTE = {
     "run1_baseline": "Baseline dung lai: CE thuan, KHONG FiLM, chon checkpoint theo toan bo validation. Khong tach waveform nen khong co SI-SDR.",
@@ -107,6 +109,7 @@ SHEET_NOTE = {
     "run5_remix": "run3_kd_crd + remix augmentation (clean + gain*noise moi tren band).",
     "run6_grl": "run3_kd_crd + head phu doan speech qua gradient reversal, ep embedding vut bo speech.",
     "run7_attn": "Huong 2: run1_baseline + soft attention mask A(t,f) thay mean-pool (gated attention, Ilse et al. ICML 2018). CE thuan, khong KD/CRD/FiLM.",
+    "run8_attn_kd_crd": "run3_kd_crd + soft attention mask A(t,f). So cap voi run3_kd_crd de tach phan dong gop cua mask khi da co KD+CRD.",
 }
 
 

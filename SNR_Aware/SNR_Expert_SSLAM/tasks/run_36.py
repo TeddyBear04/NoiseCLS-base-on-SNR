@@ -68,6 +68,9 @@ from models.sslam import SSLAMEncoder, audioset_head_rows, load_sslam  # noqa: E
 #                  ICML 2018). No KD, no CRD, no FiLM, same selection, so the paired
 #                  test against run1_baseline isolates the mask and nothing else.
 #                  5 and 6 stay reserved for remix and GRL (VERSIONS.md).
+#   run8_attn_kd_crd  run3_kd_crd with the same mask switched on, and nothing else
+#                  changed, so the paired test against run3_kd_crd says what the
+#                  mask adds once KD and CRD are already in.
 RUNS = {
     "run1_baseline": {"a_kd": 0.0, "b_crd": 0.0, "film": False, "select_on": "full"},
     "run2_ce_only": {"a_kd": 0.0, "b_crd": 0.0, "film": True, "select_on": "band"},
@@ -76,6 +79,8 @@ RUNS = {
     "run3c_kd_only": {"a_kd": 1.0, "b_crd": 0.0, "film": True, "select_on": "band"},
     "run7_attn": {"a_kd": 0.0, "b_crd": 0.0, "film": False, "select_on": "full",
                   "attention": True},
+    "run8_attn_kd_crd": {"a_kd": 1.0, "b_crd": 0.8, "film": True, "select_on": "band",
+                         "attention": True},
 }
 RUN_REQUIRED = ("student36", "test36")
 STAGES = ("teacher36", "student36", "test36", "report36")
