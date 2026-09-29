@@ -112,6 +112,30 @@
     "published_baseline": {
       "name": "BEATs-Mixture (Result.xlsx)",
       "per_snr": {
+        "-5": {
+          "samples": 1080,
+          "accuracy": 0.7065,
+          "macro_f1": 0.7034,
+          "micro_f1": 0.7065
+        },
+        "0": {
+          "samples": 1080,
+          "accuracy": 0.6981,
+          "macro_f1": 0.6943,
+          "micro_f1": 0.6981
+        },
+        "5": {
+          "samples": 1080,
+          "accuracy": 0.6583,
+          "macro_f1": 0.6541,
+          "micro_f1": 0.6583
+        },
+        "10": {
+          "samples": 1080,
+          "accuracy": 0.6269,
+          "macro_f1": 0.6224,
+          "micro_f1": 0.6269
+        },
         "15": {
           "samples": 1080,
           "accuracy": 0.5769,
@@ -125,7 +149,7 @@
           "micro_f1": 0.4861
         }
       },
-      "_note": "Copied from Result.xlsx, sheet 'Theo tung SNR', rows BEATs-Mixture / final. Only accuracy and F1 exist there, and no per-clip predictions, so it cannot enter the McNemar comparison."
+      "_note": "Copied from Result.xlsx, sheet 'Theo tung SNR', rows BEATs-Mixture / final, all six levels (the band-only report keeps 15 and 20; --full-test uses all). Only accuracy and F1 exist there, and no per-clip predictions, so it cannot enter the McNemar comparison."
     }
   },
   "evaluation": {

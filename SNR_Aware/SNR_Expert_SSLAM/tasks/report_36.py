@@ -56,16 +56,25 @@ SHEET_COLUMNS = [
 METHOD_NAMES = {
     "published_baseline": "BEATs-Mixture (Result.xlsx, published)",
     "beats_baseline": "BEATs baseline (on-disk checkpoint metrics file)",
-    "run1_baseline": "SSLAM expert - CE only, no FiLM (rebuilt baseline)",
-    "run2_ce_only": "SSLAM expert - CE only + FiLM (control)",
-    "run3_kd_crd": "SSLAM expert - KD + CRD",
-    "run3b_crd_only": "SSLAM expert - CRD only",
-    "run3c_kd_only": "SSLAM expert - KD only",
-    "run5_remix": "SSLAM expert - KD + CRD + remix augmentation",
-    "run6_grl": "SSLAM expert - KD + CRD + GRL speech-adversarial",
-    "run7_attn": "expert - soft attention mask (CE only, no FiLM)",
-    "run8_attn_kd_crd": "expert - KD + CRD + soft attention mask",
+    "run1_baseline": "CE only, no FiLM (rebuilt baseline)",
+    "run2_ce_only": "CE only + FiLM (control)",
+    "run3_kd_crd": "KD + CRD",
+    "run3b_crd_only": "CRD only",
+    "run3c_kd_only": "KD only",
+    "run5_remix": "KD + CRD + remix augmentation",
+    "run6_grl": "KD + CRD + GRL speech-adversarial",
+    "run7_attn": "soft attention mask (CE only, no FiLM)",
+    "run8_attn_kd_crd": "KD + CRD + soft attention mask",
 }
+# Rows that are not this project's own runs keep their name as is; every run of
+# ours is prefixed with `report.sheet_method` (e.g. "BEATs-HighExpert"), so the
+# backbone in the name is the one the run actually used.
+EXTERNAL_ROWS = ("published_baseline", "beats_baseline")
+
+
+def method_name(run: str, sheet_method: str) -> str:
+    name = METHOD_NAMES.get(run, run)
+    return name if run in EXTERNAL_ROWS else f"{sheet_method} - {name}"
 # ("full", "band" = the SNR band this project is judged on) then one slice per
 # SNR level. The band's own label ("15-20" etc.) is filled in from config at
 # report time - see `slice_names()`.
@@ -145,15 +154,16 @@ def snr_sheet_row(row: dict, sheet_method: str, purity: dict | None = None) -> d
     }
 
 
-def sheet_row(row: dict, band_label: str) -> dict:
+def sheet_row(row: dict, band_label: str, sheet_method: str) -> dict:
     slice_name = row["slice"]
-    slice_names = {**SLICE_NAMES_STATIC, "band": band_label}
+    slice_names = {**SLICE_NAMES_STATIC, "band": band_label,
+                   **{name: group_label(name) for name in SNR_GROUPS}}
     snr = slice_names.get(slice_name, slice_name.replace("snr_", ""))
     def value(key):
         v = row.get(key, "")
         return round(v, 6) if isinstance(v, float) else v
     return {
-        "Phuong phap": METHOD_NAMES.get(row["run"], row["run"]),
+        "Phuong phap": method_name(row["run"], sheet_method),
         "Phien ban": row["run"],
         "SNR (dB)": snr,
         "So mau (support)": row.get("samples", ""),
@@ -250,9 +260,29 @@ def per_class_rows(target: np.ndarray, predicted: np.ndarray,
     return rows
 
 
+# The three expert ranges of the SNR-aware pipeline (README: Expert Low / Mid /
+# High). A full-SNR test reports each, so one table shows how a high-band expert
+# behaves on the mixtures the router would send elsewhere.
+SNR_GROUPS = {"low": [-5.0, 0.0], "mid": [5.0, 10.0], "high": [15.0, 20.0]}
+
+
+def slice_order(name: str) -> tuple:
+    """band first, then full, low, mid, high, then SNR levels in numeric order."""
+    fixed = ["band", "full", *SNR_GROUPS]
+    if name in fixed:
+        return (0, fixed.index(name))
+    return (1, int(name.replace("snr_", ""))) if name.startswith("snr_") else (2, name)
+
+
+def group_label(name: str) -> str:
+    low, high = SNR_GROUPS[name]
+    return f"{name} ({low:g}..{high:g})"
+
+
 def slices(snr: np.ndarray, band: list[float],
            band_only: bool = False) -> list[tuple[str, np.ndarray]]:
-    """full, the SNR band we are judged on, then one slice per SNR level.
+    """full, the SNR band we are judged on, the low/mid/high groups, then one
+    slice per SNR level.
 
     With `band_only` the predictions hold nothing but the band, so "full" would be
     a duplicate of "band" and levels outside the band cannot occur: keep the band
@@ -261,6 +291,9 @@ def slices(snr: np.ndarray, band: list[float],
     in_band = (snr >= band[0]) & (snr <= band[1])
     out = [] if band_only else [("full", np.ones(snr.shape, dtype=bool))]
     out.append(("band", in_band))
+    if not band_only:
+        for name, (low, high) in SNR_GROUPS.items():
+            out.append((name, (snr >= low) & (snr <= high)))
     for level in sorted(set(snr.tolist())):
         if band_only and not band[0] <= level <= band[1]:
             continue
@@ -303,17 +336,19 @@ def mcnemar(correct_a: np.ndarray, correct_b: np.ndarray) -> dict:
     return row
 
 
-def published_rows(config: dict, band: list[float]) -> list[dict]:
+def published_rows(config: dict, band: list[float], band_only: bool = True) -> list[dict]:
     """The baseline the branch is judged against, as published in Result.xlsx.
 
-    Only the band's own SNR levels plus their support-weighted band aggregate.
-    Result.xlsx carries accuracy and F1 only, so every other column stays empty.
+    The band's own SNR levels plus their support-weighted band aggregate. With
+    `band_only` off, every level Result.xlsx has, plus the low/mid/high groups and
+    "full" wherever all of their levels are present. Result.xlsx carries accuracy
+    and F1 only, so every other column stays empty.
     """
     published = config.get("gates", {}).get("published_baseline")
     if not published:
         return []
-    levels = {int(float(k)): v for k, v in published["per_snr"].items()
-              if band[0] <= float(k) <= band[1]}
+    every = {int(float(k)): v for k, v in published["per_snr"].items()}
+    levels = {k: v for k, v in every.items() if band_only is False or band[0] <= k <= band[1]}
     if not levels:
         return []
     def row(slice_name, samples, accuracy, macro_f1, micro_f1):
@@ -321,10 +356,18 @@ def published_rows(config: dict, band: list[float]) -> list[dict]:
                 "accuracy": accuracy, "macro_precision": "", "macro_recall": "",
                 "macro_f1": macro_f1, "micro_f1": micro_f1, "macro_map": "",
                 "balanced_accuracy": "", "macro_auc_ovr": "", "top3_accuracy": ""}
-    total = sum(v["samples"] for v in levels.values())
-    rows = [row("band", total,
-                *(sum(v[key] * v["samples"] for v in levels.values()) / total
-                  for key in ("accuracy", "macro_f1", "micro_f1")))]
+    def pooled(name, low, high, need):
+        chosen = [v for k, v in every.items() if low <= k <= high]
+        if len(chosen) < need:
+            return []
+        total = sum(v["samples"] for v in chosen)
+        return [row(name, total, *(sum(v[key] * v["samples"] for v in chosen) / total
+                                   for key in ("accuracy", "macro_f1", "micro_f1")))]
+    rows = pooled("band", *band, need=1)
+    if not band_only:
+        for name, (low, high) in SNR_GROUPS.items():
+            rows += pooled(name, low, high, need=2)
+        rows += pooled("full", -1e9, 1e9, need=6)
     for level, v in sorted(levels.items()):
         rows.append(row(f"snr_{level}", v["samples"], v["accuracy"], v["macro_f1"],
                         v["micro_f1"]))
@@ -549,15 +592,16 @@ def command_report36(config: dict) -> None:
 
     # The published Result.xlsx numbers when the config has them; the on-disk
     # checkpoint's metrics file is a different training run and only a fallback.
-    summary.extend(published_rows(config, band) or baseline_rows(labels, band))
-    summary.sort(key=lambda r: (r["slice"] != "band", r["slice"], r["run"]))
+    summary.extend(published_rows(config, band, band_only) or baseline_rows(labels, band))
+    summary.sort(key=lambda r: (slice_order(r["slice"]), r["run"]))
     write_csv(results_dir / "metrics_by_run.csv", summary,
               ["run", "slice", "samples", *METRIC_COLUMNS])
     write_csv(results_dir / "ket_qua_tong_hop.csv",
-              [sheet_row(r, band_label) for r in summary], SHEET_COLUMNS)
-    # Only the SNR levels inside `band_db`: that is the band this branch was
-    # assigned, and the other levels are not what the report claims anything about.
-    wanted = {f"snr_{int(level)}" for level in band}
+              [sheet_row(r, band_label, sheet_method) for r in summary], SHEET_COLUMNS)
+    # Band-only: just the SNR levels inside `band_db`, the band this branch was
+    # assigned. A full-SNR test (--full-test) asks about every level, so keep all.
+    wanted = ({f"snr_{int(level)}" for level in band} if band_only else
+              {r["slice"] for r in summary if r["slice"].startswith("snr_")})
     snr_rows = [r for r in summary if r["slice"] in wanted and r["run"] in SHEET_VERSION]
     snr_rows.sort(key=lambda r: (list(SHEET_VERSION).index(r["run"]),
                                  int(r["slice"].replace("snr_", ""))))
@@ -591,7 +635,7 @@ def command_report36(config: dict) -> None:
                        "delta_accuracy": round(float(ok_b.mean() - ok_a.mean()), 6)}
                 row.update(mcnemar(ok_a, ok_b))
                 comparisons.append(row)
-    comparisons.sort(key=lambda r: (r["slice"] != "band", r["slice"], r["run_a"], r["run_b"]))
+    comparisons.sort(key=lambda r: (slice_order(r["slice"]), r["run_a"], r["run_b"]))
     write_csv(results_dir / "comparison.csv", comparisons,
               ["run_a", "run_b", "slice", "samples", "accuracy_a", "accuracy_b",
                "delta_accuracy", "both_correct", "both_wrong", "only_a_correct",

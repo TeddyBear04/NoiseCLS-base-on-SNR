@@ -406,9 +406,29 @@ def apply_seed(config: dict, seed: int) -> dict:
     outputs.setdefault("seed_base_dir", outputs["dir"])
     outputs.setdefault("seed_base_seed", config["experiment"]["seed"])
     outputs["dir"] = f"{outputs['seed_base_dir']}_s{seed}"
+    if "checkpoint_dir" in outputs:   # --full-test: that seed's own checkpoints
+        outputs["checkpoint_dir"] = f"{outputs['checkpoint_dir']}_s{seed}"
     config["experiment"]["seed"] = seed
     print(f"seed={seed} outputs={outputs['dir']} teacher_from={outputs['teacher_dir']}",
           flush=True)
+    return config
+
+
+def apply_full_test(config: dict) -> dict:
+    """Score already-trained students on EVERY SNR level, not only the band.
+
+    Training is untouched - students already train on all six levels. Only the
+    test changes: `evaluation.band_only` off, checkpoints read from the normal
+    folder, results written to `<outputs.dir>_fulltest` so the band-only results
+    stay as they are. The report then adds low / mid / high slices.
+    """
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs["checkpoint_dir"] = outputs["dir"]
+    outputs["dir"] = f"{outputs['dir']}_fulltest"
+    config.setdefault("evaluation", {})["band_only"] = False
+    print(f"full test: checkpoints from {outputs['checkpoint_dir']}, "
+          f"results to {outputs['dir']}", flush=True)
     return config
 
 
@@ -455,7 +475,13 @@ def main() -> None:
                         help="Required for student36 and test36.")
     parser.add_argument("--seed", type=int,
                         help="Another seed of the same recipe, into <outputs.dir>_s<seed>.")
+    parser.add_argument("--full-test", action="store_true",
+                        help="test36/report36 only: score trained students on every SNR "
+                             "level, into <outputs.dir>_fulltest.")
     arguments = parser.parse_args()
+    if arguments.full_test and arguments.stage not in ("test36", "report36"):
+        parser.error("--full-test only applies to test36 and report36; training is "
+                     "already on every SNR level.")
 
     if arguments.stage in RUN_REQUIRED and arguments.run is None:
         parser.error(f"{arguments.stage} needs --run: {', '.join(sorted(RUNS))}")
@@ -466,6 +492,8 @@ def main() -> None:
     print(f"stage={arguments.stage} config={arguments.config}", flush=True)
     if arguments.run is not None:
         config = apply_run(config, arguments.run)
+    if arguments.full_test:          # before --seed, which then suffixes both folders
+        config = apply_full_test(config)
     if arguments.seed is not None:
         config = apply_seed(config, arguments.seed)
     resolve_stage(arguments.stage)(config)

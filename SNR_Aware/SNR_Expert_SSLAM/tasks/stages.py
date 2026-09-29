@@ -55,6 +55,24 @@ def band_rows(rows: list, config: dict) -> list:
     return [row for row in rows if low <= float(row["target_snr_db"]) <= high]
 
 
+def train_band_rows(rows: list, config: dict) -> list:
+    """Keep only the band's rows for TRAINING when `evaluation.train_band_only` is set.
+
+    The SNR-aware pipeline routes each mixture to one expert (low / mid / high), so
+    this expert only ever sees its own band. Training it on that band alone is the
+    hard mixture-of-experts setup (Gross, Ranzato, Szlam, CVPR 2017): each expert
+    learns from its own partition, the gate does the routing. Applies to the
+    teacher as well, so everything this config trains has seen the same band.
+    """
+    if not config.get("evaluation", {}).get("train_band_only", False):
+        return rows
+    low, high = config["band_db"]
+    kept = [row for row in rows if low <= float(row["target_snr_db"]) <= high]
+    print(f"train_band_only: {len(kept)} of {len(rows)} train rows in {low:g}..{high:g} dB",
+          flush=True)
+    return kept
+
+
 def jitter_snr(snr_db, sigma_db, generator):
     """The gate's error, simulated. Training on true SNR and testing on an
     estimated one would leave the student brittle exactly where it has to work.
@@ -218,7 +236,7 @@ def command_teacher36(config: dict) -> None:
     write_params(config, out_dir, "teacher")
     corpus = Corpus(config, column=config["teacher"]["source_column"])
     audit = corpus.audit()
-    train_rows = corpus.by_split[config["dataset"]["train_split"]]
+    train_rows = train_band_rows(corpus.by_split[config["dataset"]["train_split"]], config)
     validation_rows = band_rows(corpus.by_split[config["dataset"]["validation_split"]], config)
     if runtime["smoke_test"]:
         train_rows = smoke_subset(train_rows, runtime["smoke_train_rows"],
@@ -314,7 +332,7 @@ def command_student36(config: dict) -> None:
     # Only pay for loading the clean noise when a loss term actually reads it.
     paired = config["teacher"]["source_column"] if (use_kd or use_crd) else None
     corpus = Corpus(config, column=settings["source_column"], paired_column=paired)
-    train_rows = corpus.by_split[config["dataset"]["train_split"]]
+    train_rows = train_band_rows(corpus.by_split[config["dataset"]["train_split"]], config)
     validation_rows = band_rows(corpus.by_split[config["dataset"]["validation_split"]], config)
     if runtime["smoke_test"]:
         train_rows = smoke_subset(train_rows, runtime["smoke_train_rows"],
@@ -453,10 +471,20 @@ def command_test36(config: dict) -> None:
     run_name = config["run"]
     settings = config["student"]
 
-    checkpoint = out_dir / f"student_{run_name}.pt"
+    # --full-test reads the checkpoint from the normal folder and writes elsewhere.
+    checkpoint_dir = HERE / config["outputs"].get("checkpoint_dir", config["outputs"]["dir"])
+    checkpoint = checkpoint_dir / f"student_{run_name}.pt"
     if not checkpoint.exists():
         raise FileNotFoundError(f"{checkpoint} missing - run student36 first.")
     saved = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    if checkpoint_dir != out_dir:
+        # The run's history and parameters travel with its results, so thong_so.csv
+        # in the full-test folder describes the same training run.
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for suffix in ("history.json", "params.json"):
+            source = checkpoint_dir / f"student_{run_name}_{suffix}"
+            if source.exists():
+                (out_dir / source.name).write_bytes(source.read_bytes())
 
     corpus = Corpus(config, column=settings["source_column"],
                     paired_column=config["teacher"]["source_column"])

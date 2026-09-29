@@ -67,6 +67,24 @@ nhắm thẳng vào nguyên nhân high-SNR khó: speech át noise trong mixture.
 
 `run4_remix` là tên cũ trong `Mid_Expert`, ở đây đổi số vì band đã cắm vào giữa thang.
 
+## Hai cách train: mọi SNR hay chỉ dải high
+
+| Config | Train | Validation / test | Output |
+|---|---|---|---|
+| `train_config_high_beats.json` | 30.240 clip, cả 6 mức SNR | 15–20 dB | `artifacts_beats/` |
+| `train_config_high_beats_bandtrain.json` | **10.080 clip, chỉ 15 và 20 dB** (teacher cũng vậy) | 15–20 dB | `artifacts_beats_bandtrain/` |
+
+Bản `bandtrain` khớp với cách router phân luồng: mỗi expert chỉ nhận mixture của dải
+mình, nên train riêng trên dải đó — hard mixture of experts (Gross, Ranzato, Szlam,
+CVPR 2017), gate lo việc phân luồng. Hai config chỉ khác nhau ở `train_band_only`,
+tên thí nghiệm, thư mục output và nhãn report, nên so cặp được (`report_36.py` chế
+độ compare, ghép theo `sample_id`). Với 1/3 dữ liệu, 10 epoch cũng chỉ còn 1/3 số
+bước cập nhật; giữ nguyên để hai cách train cùng công thức.
+
+`--full-test` (cho `test36`/`report36`) chấm checkpoint đã train trên cả 6 mức SNR,
+ghi vào `<outputs.dir>_fulltest/`, và report tách thêm các nhóm low (−5, 0),
+mid (5, 10), high (15, 20). Mốc công bố BEATs-Mixture đã có đủ 6 mức.
+
 ## Phương pháp của từng run
 
 **`run1_baseline`** — CE thuần, KHÔNG FiLM, không KD, không CRD. Chọn checkpoint theo
