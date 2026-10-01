@@ -414,6 +414,23 @@ def apply_seed(config: dict, seed: int) -> dict:
     return config
 
 
+def apply_epochs(config: dict, epochs: int) -> dict:
+    """A longer student schedule, written to `<outputs.dir>_e<epochs>`.
+
+    The band-only config trains on a third of the clips, so its 10 epochs are a
+    third of the updates the all-SNR config gets. This stretches the student's
+    schedule (warmup + cosine scale with it) without touching anything else; the
+    teacher is still read from the base folder, so KD/CRD distil from the same one.
+    """
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs["dir"] = f"{outputs['dir']}_e{epochs}"
+    config["student"]["finetune_epochs"] = epochs
+    print(f"epochs={epochs} outputs={outputs['dir']} teacher_from={outputs['teacher_dir']}",
+          flush=True)
+    return config
+
+
 def apply_full_test(config: dict) -> dict:
     """Score already-trained students on EVERY SNR level, not only the band.
 
@@ -478,7 +495,12 @@ def main() -> None:
     parser.add_argument("--full-test", action="store_true",
                         help="test36/report36 only: score trained students on every SNR "
                              "level, into <outputs.dir>_fulltest.")
+    parser.add_argument("--epochs", type=int,
+                        help="Student epochs, into <outputs.dir>_e<epochs>; the teacher is "
+                             "still read from <outputs.dir>.")
     arguments = parser.parse_args()
+    if arguments.epochs is not None and arguments.stage == "teacher36":
+        parser.error("--epochs changes the student only; the teacher keeps its own schedule.")
     if arguments.full_test and arguments.stage not in ("test36", "report36"):
         parser.error("--full-test only applies to test36 and report36; training is "
                      "already on every SNR level.")
@@ -492,6 +514,8 @@ def main() -> None:
     print(f"stage={arguments.stage} config={arguments.config}", flush=True)
     if arguments.run is not None:
         config = apply_run(config, arguments.run)
+    if arguments.epochs is not None:  # first: --full-test and --seed build on its folder
+        config = apply_epochs(config, arguments.epochs)
     if arguments.full_test:          # before --seed, which then suffixes both folders
         config = apply_full_test(config)
     if arguments.seed is not None:
