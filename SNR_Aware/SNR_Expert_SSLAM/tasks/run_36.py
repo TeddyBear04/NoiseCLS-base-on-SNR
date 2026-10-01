@@ -498,7 +498,12 @@ def main() -> None:
     parser.add_argument("--epochs", type=int,
                         help="Student epochs, into <outputs.dir>_e<epochs>; the teacher is "
                              "still read from <outputs.dir>.")
+    parser.add_argument("--patience", type=int,
+                        help="Student early-stopping patience (epochs without a better "
+                             "validation macro-F1). Longer --epochs schedules need more.")
     arguments = parser.parse_args()
+    if arguments.patience is not None and arguments.stage == "teacher36":
+        parser.error("--patience changes the student only; the teacher keeps its own.")
     if arguments.epochs is not None and arguments.stage == "teacher36":
         parser.error("--epochs changes the student only; the teacher keeps its own schedule.")
     if arguments.full_test and arguments.stage not in ("test36", "report36"):
@@ -516,6 +521,9 @@ def main() -> None:
         config = apply_run(config, arguments.run)
     if arguments.epochs is not None:  # first: --full-test and --seed build on its folder
         config = apply_epochs(config, arguments.epochs)
+    if arguments.patience is not None:
+        config["student"]["patience"] = arguments.patience
+        print(f"patience={arguments.patience}", flush=True)
     if arguments.full_test:          # before --seed, which then suffixes both folders
         config = apply_full_test(config)
     if arguments.seed is not None:
