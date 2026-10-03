@@ -414,6 +414,27 @@ def apply_seed(config: dict, seed: int) -> dict:
     return config
 
 
+def apply_teacher_dir(config: dict, folder: str) -> dict:
+    """Distil from the teacher in another output folder, into `<dir>_teacher-<folder>`.
+
+    Lets a band-only student learn from the teacher trained on every SNR level's
+    noise (the all-SNR config's), so the teacher is the only thing that changes.
+    """
+    outputs = config["outputs"]
+    outputs["teacher_dir"] = folder
+    outputs["dir"] = f"{outputs['dir']}_teacher-{Path(folder).name}"
+    print(f"teacher_from={folder} outputs={outputs['dir']}", flush=True)
+    return config
+
+
+def apply_crd_n_data(config: dict, n_data: int) -> dict:
+    """Pin CRD's n_data (noise prior and Z normaliser), into `<dir>_crdn<n>`."""
+    config["loss"]["crd_n_data"] = n_data
+    config["outputs"]["dir"] = f"{config['outputs']['dir']}_crdn{n_data}"
+    print(f"crd_n_data={n_data} outputs={config['outputs']['dir']}", flush=True)
+    return config
+
+
 def apply_epochs(config: dict, epochs: int) -> dict:
     """A longer student schedule, written to `<outputs.dir>_e<epochs>`.
 
@@ -501,7 +522,15 @@ def main() -> None:
     parser.add_argument("--patience", type=int,
                         help="Student early-stopping patience (epochs without a better "
                              "validation macro-F1). Longer --epochs schedules need more.")
+    parser.add_argument("--teacher-dir",
+                        help="Read the KD/CRD teacher from this output folder instead, "
+                             "into <outputs.dir>_teacher-<folder>.")
+    parser.add_argument("--crd-n-data", type=int,
+                        help="Pin CRD's n_data (default: train-set size), into "
+                             "<outputs.dir>_crdn<n>.")
     arguments = parser.parse_args()
+    if arguments.stage == "teacher36" and (arguments.teacher_dir or arguments.crd_n_data):
+        parser.error("--teacher-dir / --crd-n-data change the student only.")
     if arguments.patience is not None and arguments.stage == "teacher36":
         parser.error("--patience changes the student only; the teacher keeps its own.")
     if arguments.epochs is not None and arguments.stage == "teacher36":
@@ -519,7 +548,11 @@ def main() -> None:
     print(f"stage={arguments.stage} config={arguments.config}", flush=True)
     if arguments.run is not None:
         config = apply_run(config, arguments.run)
-    if arguments.epochs is not None:  # first: --full-test and --seed build on its folder
+    if arguments.teacher_dir:         # before --epochs, whose setdefault must not override it
+        config = apply_teacher_dir(config, arguments.teacher_dir)
+    if arguments.crd_n_data:
+        config = apply_crd_n_data(config, arguments.crd_n_data)
+    if arguments.epochs is not None:  # --full-test and --seed build on its folder
         config = apply_epochs(config, arguments.epochs)
     if arguments.patience is not None:
         config["student"]["patience"] = arguments.patience

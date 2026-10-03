@@ -358,7 +358,12 @@ def command_student36(config: dict) -> None:
         g_t = Projection(dim, loss_config["proj_dim"]).to(device)
         for parameter in g_t.parameters():
             parameter.requires_grad = False
-        crd = CRDLoss(len(train_rows), loss_config["tau_nce"]).to(device)
+        # n_data sets CRD's noise prior (Pn = 1/n_data) and the Z normaliser. It is
+        # the train-set size by default; `loss.crd_n_data` pins it, so a band-only
+        # run can keep the all-SNR run's normalisation (--crd-n-data).
+        n_data = loss_config.get("crd_n_data") or len(train_rows)
+        print(f"crd n_data={n_data} (train rows {len(train_rows)})", flush=True)
+        crd = CRDLoss(n_data, loss_config["tau_nce"]).to(device)
         extra.append(list(g_s.parameters()))
 
     generator = torch.Generator().manual_seed(config["experiment"]["seed"])
