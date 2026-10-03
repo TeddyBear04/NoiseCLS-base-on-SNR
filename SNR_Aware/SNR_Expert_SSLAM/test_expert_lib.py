@@ -263,6 +263,33 @@ def test_flatten_params_skips_requested_prefixes():
     assert flatten_params(tree, skip=("gates.published_baseline",)) == {"gates.baseline": 0.5}
 
 
+def test_sam_ascend_moves_by_rho_and_descend_restores():
+    from expert_lib import sam_ascend, sam_descend
+    torch.manual_seed(0)
+    a, b, c = torch.randn(5, requires_grad=True), torch.randn(3, requires_grad=True), torch.randn(2)
+    a.grad, b.grad = torch.randn(5), torch.randn(3)
+    before = [a.detach().clone(), b.detach().clone(), c.clone()]
+    eps = sam_ascend([a, b, c], rho=0.05)
+    step = torch.cat([(a - before[0]).detach(), (b - before[1]).detach()])
+    assert abs(float(step.norm()) - 0.05) < 1e-6
+    g = torch.cat([a.grad, b.grad])
+    assert torch.allclose(step, 0.05 * g / g.norm(), atol=1e-7)
+    assert eps[2] is None and torch.equal(c, before[2])
+    sam_descend([a, b, c], eps)
+    assert torch.allclose(a, before[0], atol=1e-7) and torch.allclose(b, before[1], atol=1e-7)
+
+
+def test_distill_kl_is_zero_for_identical_logits_and_matches_t1_cross_entropy():
+    from expert_lib import distill_kl
+    torch.manual_seed(0)
+    s, t = torch.randn(4, 6), torch.randn(4, 6)
+    assert float(distill_kl(t, t, 4.0)) < 1e-6
+    p = torch.softmax(t, dim=-1)
+    cross = -(p * torch.log_softmax(s, dim=-1)).sum(-1).mean()
+    entropy = -(p * torch.log(p)).sum(-1).mean()
+    assert torch.allclose(distill_kl(s, t, 1.0), cross - entropy, atol=1e-5)
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(n, f) for n, f in sorted(globals().items())

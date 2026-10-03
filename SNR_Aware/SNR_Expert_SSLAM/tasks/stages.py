@@ -21,6 +21,7 @@ from torch import nn
 from expert_lib import (
     layer_decay_scales, warmup_cosine,
     CRDLoss, Projection, film_deviation, band_slice_mask, mask_deviation, sample_negatives,
+    distill_kl, sam_ascend, sam_descend,
 )
 from tasks.run_36 import (
     HERE, Classifier, Corpus, autocast, build_model, collect, metrics,
@@ -166,6 +167,13 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
           f"layer_decay={settings.get('layer_decay', 1.0)} "
           f"schedule={settings.get('lr_schedule', 'constant')} "
           f"augment={model.encoder.augment or 'none'}", flush=True)
+    # SAM (Foret et al., ICLR 2021): each update takes its gradient at w + eps instead
+    # of w. The micro-batches of the accumulation window are kept so that second
+    # gradient is taken over exactly the batch the first one was.
+    sam_rho = settings.get("sam_rho", 0.0)
+    if sam_rho > 0:
+        print(f"SAM rho={sam_rho} - two forward/backward passes per update", flush=True)
+    window = []
     history, stale = [], 0
     for epoch in range(1, epochs + 1):
         model.train()
@@ -177,7 +185,19 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
             if not torch.isfinite(loss):
                 raise FloatingPointError("non-finite loss; refusing to save NaN weights")
             (loss / settings["accumulation_steps"]).backward()
+            if sam_rho > 0:
+                window.append(batch)
             if step % settings["accumulation_steps"] == 0 or step == len(train_loader):
+                if sam_rho > 0:
+                    eps = sam_ascend(watched, sam_rho)
+                    optimizer.zero_grad(set_to_none=True)
+                    for replay in window:
+                        again = step_fn(replay)[0]
+                        if not torch.isfinite(again):
+                            raise FloatingPointError("non-finite SAM loss; refusing to save NaN weights")
+                        (again / settings["accumulation_steps"]).backward()
+                    sam_descend(watched, eps)
+                    window.clear()
                 nn.utils.clip_grad_norm_(watched, settings["gradient_clip_norm"])
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
@@ -318,6 +338,27 @@ def load_teacher(config: dict, device: torch.device) -> Classifier | None:
     return teacher
 
 
+def load_born_again(config: dict, device: torch.device) -> Classifier:
+    """The previous generation for Born-Again self-distillation (Furlanello et al.,
+    ICML 2018): a student of the SAME run, trained on the same band-only mixtures,
+    read from `loss.ban.dir`. Frozen, and fed the mixture the student sees."""
+    settings = config["student"]
+    path = HERE / config["loss"]["ban"]["dir"] / f"student_{config['run']}.pt"
+    if not path.exists():
+        raise FileNotFoundError(f"{path} is missing - Born-Again needs the previous "
+                                "generation's student checkpoint.")
+    saved = torch.load(path, map_location="cpu", weights_only=False)
+    model = build_model(config, device, settings["film"]["enabled"], 0,
+                        settings["attention"]["enabled"])
+    model.load_state_dict(saved["state"], strict=False)
+    model.eval()
+    for parameter in model.parameters():
+        parameter.requires_grad = False
+    print(f"born-again teacher <- {path} (val band acc "
+          f"{saved['validation']['band']['accuracy']:.4f})", flush=True)
+    return model
+
+
 def command_student36(config: dict) -> None:
     device = seed_everything(config["experiment"]["seed"])
     settings, loss_config = config["student"], config["loss"]
@@ -344,6 +385,8 @@ def command_student36(config: dict) -> None:
     model = build_model(config, device, settings["film"]["enabled"],
                         settings["trainable_blocks"], settings["attention"]["enabled"])
     teacher = load_teacher(config, device) if (use_kd or use_crd) else None
+    ban = loss_config.get("ban")
+    born_again = load_born_again(config, device) if ban else None
     print(f"run={run_name} train={len(train_rows)} kd={use_kd} crd={use_crd} "
           f"teacher={'online' if teacher else 'none'}", flush=True)
 
@@ -392,13 +435,19 @@ def command_student36(config: dict) -> None:
                         batch["paired"].to(device, non_blocking=True))
 
             if use_kd:
-                rho = loss_config["rho_kd"]
-                kd = nn.functional.kl_div(
-                    nn.functional.log_softmax(logits / rho, dim=-1),
-                    nn.functional.softmax(t_logits / rho, dim=-1),
-                    reduction="batchmean") * (rho ** 2)
+                kd = distill_kl(logits, t_logits, loss_config["rho_kd"])
                 loss = loss + loss_config["a_kd"] * kd
                 parts["kd"] = kd.detach()
+
+            if born_again is not None:
+                # Second KD term: the previous generation on the SAME mixture, given
+                # the true SNR as at test time. BAN+L: label loss plus teacher loss,
+                # logits not softened (T = 1), as in the paper.
+                with torch.no_grad():
+                    b_logits, _, _ = born_again(audio, true_snr if born_again.film else None)
+                kd_ban = distill_kl(logits, b_logits, ban["temperature"])
+                loss = loss + ban["weight"] * kd_ban
+                parts["kd_ban"] = kd_ban.detach()
 
             if use_crd:
                 if patch_level:

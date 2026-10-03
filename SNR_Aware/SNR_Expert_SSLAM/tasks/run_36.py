@@ -435,6 +435,36 @@ def apply_crd_n_data(config: dict, n_data: int) -> dict:
     return config
 
 
+def apply_sam(config: dict, rho: float) -> dict:
+    """Train the student with SAM (Foret et al., ICLR 2021), into `<dir>_sam<rho>`.
+
+    The paper's default rho = 0.05 needed no tuning across its experiments. Only the
+    optimiser step changes; loss, data and schedule stay as they are.
+    """
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs["dir"] = f"{outputs['dir']}_sam{rho:g}"
+    config["student"]["sam_rho"] = rho
+    print(f"sam_rho={rho} outputs={outputs['dir']}", flush=True)
+    return config
+
+
+def apply_born_again(config: dict, folder: str) -> dict:
+    """Add Born-Again self-distillation (Furlanello et al., ICML 2018), into `<dir>_ban`.
+
+    The student of the same run in `folder` (trained on the same band-only data)
+    becomes a second, frozen teacher on the mixture itself. BAN+L as in the paper:
+    the label loss stays, the teacher loss is added with weight 1, logits unsoftened.
+    The clean-noise teacher's KD and CRD are kept alongside it.
+    """
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs["dir"] = f"{outputs['dir']}_ban"
+    config["loss"]["ban"] = {"dir": folder, "weight": 1.0, "temperature": 1.0}
+    print(f"born_again_from={folder} outputs={outputs['dir']}", flush=True)
+    return config
+
+
 def apply_epochs(config: dict, epochs: int) -> dict:
     """A longer student schedule, written to `<outputs.dir>_e<epochs>`.
 
@@ -528,9 +558,16 @@ def main() -> None:
     parser.add_argument("--crd-n-data", type=int,
                         help="Pin CRD's n_data (default: train-set size), into "
                              "<outputs.dir>_crdn<n>.")
+    parser.add_argument("--sam", type=float, metavar="RHO",
+                        help="Student optimiser SAM with this rho (paper default 0.05), "
+                             "into <outputs.dir>_sam<rho>.")
+    parser.add_argument("--ban-dir",
+                        help="Born-Again: the same run's student in this folder becomes a "
+                             "second KD teacher on the mixture, into <outputs.dir>_ban.")
     arguments = parser.parse_args()
-    if arguments.stage == "teacher36" and (arguments.teacher_dir or arguments.crd_n_data):
-        parser.error("--teacher-dir / --crd-n-data change the student only.")
+    if arguments.stage == "teacher36" and (arguments.teacher_dir or arguments.crd_n_data
+                                           or arguments.sam or arguments.ban_dir):
+        parser.error("--teacher-dir / --crd-n-data / --sam / --ban-dir change the student only.")
     if arguments.patience is not None and arguments.stage == "teacher36":
         parser.error("--patience changes the student only; the teacher keeps its own.")
     if arguments.epochs is not None and arguments.stage == "teacher36":
@@ -552,6 +589,10 @@ def main() -> None:
         config = apply_teacher_dir(config, arguments.teacher_dir)
     if arguments.crd_n_data:
         config = apply_crd_n_data(config, arguments.crd_n_data)
+    if arguments.ban_dir:
+        config = apply_born_again(config, arguments.ban_dir)
+    if arguments.sam:
+        config = apply_sam(config, arguments.sam)
     if arguments.epochs is not None:  # --full-test and --seed build on its folder
         config = apply_epochs(config, arguments.epochs)
     if arguments.patience is not None:

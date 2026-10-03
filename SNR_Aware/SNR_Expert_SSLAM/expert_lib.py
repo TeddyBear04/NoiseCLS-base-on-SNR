@@ -259,3 +259,44 @@ def layer_decay_scales(num_blocks: int, decay: float) -> list[float]:
     constant gradient scale straight back out - it has almost no effect there.
     """
     return [decay ** (num_blocks - 1 - index) for index in range(num_blocks)]
+
+
+@torch.no_grad()
+def sam_ascend(params: list, rho: float) -> list:
+    """SAM's first half (Foret et al., ICLR 2021, Eq. 2 with p = 2): move every
+    parameter to w + eps, eps = rho * g / ||g||_2, the norm taken over ALL of them.
+
+    Reads the gradients already in `.grad` and returns the eps it added, so
+    `sam_descend` can put the weights back after the second backward pass. A
+    parameter without a gradient gets no eps (None) and stays where it is.
+    """
+    grads = [p.grad for p in params if p.grad is not None]
+    if not grads:
+        return [None] * len(params)
+    norm = torch.norm(torch.stack([g.detach().float().norm(2) for g in grads]), 2)
+    scale = rho / (norm + 1e-12)
+    eps = []
+    for p in params:
+        if p.grad is None:
+            eps.append(None)
+            continue
+        e = (p.grad.float() * scale).to(p.dtype)
+        p.add_(e)
+        eps.append(e)
+    return eps
+
+
+@torch.no_grad()
+def sam_descend(params: list, eps: list) -> None:
+    """Undo `sam_ascend`: back to w, keeping the gradient taken at w + eps."""
+    for p, e in zip(params, eps):
+        if e is not None:
+            p.sub_(e)
+
+
+def distill_kl(student_logits: Tensor, teacher_logits: Tensor, temperature: float) -> Tensor:
+    """Hinton KD: KL(softmax(t/T) || softmax(s/T)) * T^2, averaged over the batch."""
+    return torch.nn.functional.kl_div(
+        torch.nn.functional.log_softmax(student_logits / temperature, dim=-1),
+        torch.nn.functional.softmax(teacher_logits / temperature, dim=-1),
+        reduction="batchmean") * (temperature ** 2)

@@ -85,6 +85,17 @@ bước cập nhật; giữ nguyên để hai cách train cùng công thức.
 ghi vào `<outputs.dir>_fulltest/`, và report tách thêm các nhóm low (−5, 0),
 mid (5, 10), high (15, 20). Mốc công bố BEATs-Mixture đã có đủ 6 mức.
 
+### Chống overfit khi student chỉ thấy 15–20 dB (dữ liệu giữ nguyên)
+
+Student band-only (teacher học noise mọi SNR, `--teacher-dir artifacts_beats`) ngang
+công thức 29/09 nhưng không vượt; val chững từ epoch 7–14, train 30 epoch còn kém
+hơn 10. Hai cờ chỉ đổi cách train, không thêm hay trộn lại mẫu nào:
+
+| Cờ | Paper | Cách làm | Output |
+|---|---|---|---|
+| `--sam 0.05` | Foret et al., ICLR 2021; ViT: Chen, Hsieh, Gong, ICLR 2022 | Mỗi update lấy gradient tại w + ρ·g/‖g‖₂ (ρ = 0.05, mặc định của paper), trên đúng các micro-batch của cửa sổ accumulation | `<dir>_sam0.05` |
+| `--ban-dir <folder>` | Born-Again, Furlanello et al., ICML 2018 (lý thuyết: Mobahi et al., NeurIPS 2020) | Student cùng run trong `<folder>` (đã train band-only) thành teacher thứ hai, đông cứng, nghe đúng mixture với SNR thật. BAN+L: giữ CE, cộng KD(T = 1) trọng số 1; KD + CRD của teacher noise sạch giữ nguyên | `<dir>_ban` |
+
 ## Phương pháp của từng run
 
 **`run1_baseline`** — CE thuần, KHÔNG FiLM, không KD, không CRD. Chọn checkpoint theo
