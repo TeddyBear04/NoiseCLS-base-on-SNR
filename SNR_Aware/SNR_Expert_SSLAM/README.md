@@ -66,6 +66,20 @@ uv pip install --index-url https://download.pytorch.org/whl/cu130 \
 Checkpoint tự tải từ hub (`ta012/SSLAM_pretrain`, 90M tham số) — không cần file `.pt`
 đặt sẵn như BEATs.
 
+**Backbone CLAP** (`config/train_config_high_clap_bandtrain.json`, xem `VERSIONS.md`):
+`laion-clap` 1.1.6 ghim `numpy<2.0`, cài thẳng sẽ hạ numpy mà torch đang dùng. Cài
+không kèm dependency, rồi thêm đúng các gói nó import, ghim lại bản đang có:
+
+```bash
+PY=/tmp/uv-venv/bin/python
+uv pip install --python $PY --no-deps laion-clap==1.1.6
+uv pip install --python $PY "numpy==<bản đang có>" "torch==<bản đang có>" "torchvision==<bản đang có>" \
+  librosa torchlibrosa ftfy braceexpand webdataset wget h5py regex progressbar \
+  --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/cu130
+```
+
+Checkpoint `630k-audioset-best.pt` tự tải từ HF (`lukewys/laion_clap`).
+
 ## Chạy
 
 ```bash

@@ -73,6 +73,7 @@ nhắm thẳng vào nguyên nhân high-SNR khó: speech át noise trong mixture.
 |---|---|---|---|
 | `train_config_high_beats.json` | 30.240 clip, cả 6 mức SNR | 15–20 dB | `artifacts_beats/` |
 | `train_config_high_beats_bandtrain.json` | **10.080 clip, chỉ 15 và 20 dB** (teacher cũng vậy) | 15–20 dB | `artifacts_beats_bandtrain/` |
+| `train_config_high_clap_bandtrain.json` | như dòng trên, backbone **CLAP** | 15–20 dB | `artifacts_clap_bandtrain/` |
 
 Bản `bandtrain` khớp với cách router phân luồng: mỗi expert chỉ nhận mixture của dải
 mình, nên train riêng trên dải đó — hard mixture of experts (Gross, Ranzato, Szlam,
@@ -84,6 +85,29 @@ bước cập nhật; giữ nguyên để hai cách train cùng công thức.
 `--full-test` (cho `test36`/`report36`) chấm checkpoint đã train trên cả 6 mức SNR,
 ghi vào `<outputs.dir>_fulltest/`, và report tách thêm các nhóm low (−5, 0),
 mid (5, 10), high (15, 20). Mốc công bố BEATs-Mixture đã có đủ 6 mức.
+
+### Backbone CLAP (`backbone.type = "clap"`, `models/clap_backbone.py`)
+
+LAION-CLAP (Wu et al., ICASSP 2023), checkpoint `630k-audioset-best.pt` (HTSAT-tiny, bản
+README khuyên cho audio < 10 s). KD, CRD mức patch, FiLM, attention mask giữ nguyên; chỉ
+đổi backbone, công thức train y hệt `train_config_high_beats_bandtrain.json`.
+
+| Theo paper | Cách làm |
+|---|---|
+| §2.3/§4.1: 48 kHz, 10 s, mel 64, hop 480 | resample 16 → 48 kHz (dải 8–14 kHz của CLAP để trống — dữ liệu 16 kHz không có) |
+| §3.4: clip < 10 s thì lặp rồi đệm 0 | 4 s → 4 + 4 s tín hiệu + 2 s số 0 |
+| Hình 1, phân loại có giám sát: encoder → MLP chiếu → lớp phân loại | head = MLP chiếu pretrained → chuẩn hoá L2 → Linear(512, 36) |
+| §4.3: zero-shot bằng prompt nhãn | Linear khởi tạo = `logit_scale` × text embedding của `"This is a sound of {label}."` — zero-shot head làm điểm xuất phát fine-tune như WiSE-FT (Wortsman et al., CVPR 2022) |
+
+Token: HTSAT cho lưới 2 dải tần × 32 bước thời gian (0.32 s). Patch token cho CRD và
+attention chỉ giữ **25 bước nằm trọn trên tín hiệu** (50 token/clip), bỏ các bước rơi vào
+đoạn đệm 0 — ở đó token mọi clip gần như giống nhau, negative của CRD không mang thông tin.
+Vector gộp vẫn trung bình đủ 64 token (đúng `embedding` của HTSAT) để MLP chiếu thấy đúng
+phân phối nó được train.
+
+Đã kiểm tra trên molab (2026-10-04): encoder + head của project cho **đúng y** logit của
+đường zero-shot chính thức (`get_audio_embedding_from_data`, chênh 0.0000, argmax trùng
+100%). Zero-shot trước khi train, lát 15–20 dB test: noise sạch 0.488, mixture 0.188.
 
 ### Chống overfit khi student chỉ thấy 15–20 dB (dữ liệu giữ nguyên)
 
