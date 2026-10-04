@@ -290,6 +290,53 @@ def test_distill_kl_is_zero_for_identical_logits_and_matches_t1_cross_entropy():
     assert torch.allclose(distill_kl(s, t, 1.0), cross - entropy, atol=1e-5)
 
 
+def test_clap_repeat_pad_repeats_then_zero_pads_like_paper_3_4():
+    from models.clap_backbone import repeat_pad, signal_steps
+    clip = torch.randn(2, 192_000)                       # 4 s at 48 kHz
+    padded, signal = repeat_pad(clip, 480_000)
+    assert padded.shape == (2, 480_000) and signal == 384_000
+    assert torch.equal(padded[:, :192_000], clip)
+    assert torch.equal(padded[:, 192_000:384_000], clip)
+    assert padded[:, 384_000:].abs().sum() == 0
+    # 8 s of 10 s on signal -> 25.6 of 32 steps; only the 25 whole ones are kept.
+    assert signal_steps(signal, 480_000) == 25
+    assert signal_steps(480_000, 480_000) == 32
+
+
+def test_clap_unfold_tokens_matches_htsat_forward_features():
+    from models.clap_backbone import unfold_tokens
+    batch, channels, side, freq_ratio = 2, 3, 8, 4
+    tokens = torch.randn(batch, side * side, channels)
+    # HTSAT_Swin_Transformer.forward_features, verbatim reshapes.
+    x = tokens.permute(0, 2, 1).contiguous().reshape(batch, channels, side, side)
+    c_freq_bin = side // freq_ratio
+    x = x.reshape(batch, channels, side // c_freq_bin, c_freq_bin, side)
+    x = x.permute(0, 1, 3, 2, 4).contiguous().reshape(batch, channels, c_freq_bin, -1)
+    ordered = unfold_tokens(tokens, freq_ratio)
+    assert ordered.shape == (batch, 32, 2, channels)
+    assert torch.equal(ordered, x.permute(0, 3, 2, 1))
+    # The mean over all tokens is HTSAT's `embedding` (avgpool over the 2 x 32 map).
+    assert torch.allclose(ordered.mean(dim=(1, 2)), x.flatten(2).mean(-1), atol=1e-6)
+    # Time step t is grid row (t // 8) * 2 + f, column t % 8.
+    grid = tokens.reshape(batch, side, side, channels)
+    for t in (0, 7, 8, 25, 31):
+        for f in (0, 1):
+            assert torch.equal(ordered[:, t, f], grid[:, (t // 8) * 2 + f, t % 8])
+
+
+def test_clap_head_starts_as_the_zero_shot_classifier():
+    from models.clap_backbone import CLAPHead
+    torch.manual_seed(0)
+    projection = torch.nn.Sequential(torch.nn.Linear(6, 4), torch.nn.ReLU(),
+                                     torch.nn.Linear(4, 4))
+    text = _unit(torch.randn(5, 4))
+    head = CLAPHead(projection, text, scale=23.4, classes=5)
+    pooled = torch.randn(3, 6)
+    expected = 23.4 * _unit(projection(pooled)) @ text.T
+    assert torch.allclose(head(pooled), expected, atol=1e-5)
+    assert all(p.requires_grad for p in head.parameters())
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(n, f) for n, f in sorted(globals().items())

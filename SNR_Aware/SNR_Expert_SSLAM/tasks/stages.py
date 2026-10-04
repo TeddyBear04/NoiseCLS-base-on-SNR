@@ -585,19 +585,21 @@ def command_test36(config: dict) -> None:
               flush=True)
 
     # Where the mask looks. BEATs tokens are ordered t*8 + f over 8 mel bands of
-    # 16 bins (low to high frequency), so the per-band mean says whether the mask
-    # learned to lean away from the speech band. Mechanism check, not accuracy.
+    # 16 bins (low to high frequency), CLAP's t*2 + f over 2 halves of its 64 bins;
+    # the encoder says which. The per-band mean says whether the mask learned to
+    # lean away from the speech band. Mechanism check, not accuracy.
     attention = {}
     if "mask" in out:
         masks = out["mask"].float()
-        grid = masks.shape[1] % 8 == 0
+        bands_n = getattr(model.encoder, "freq_bands", 8)
+        grid = masks.shape[1] % bands_n == 0
         print("\nattention mask" + (" (mean A per mel band, low -> high):" if grid else ":"),
               flush=True)
         for level in sorted(set(out["snr"].tolist())):
             chosen = out["snr"] == level
             entry = {"mask_deviation": mask_deviation(masks[chosen])}
             if grid:
-                bands = masks[chosen].reshape(int(chosen.sum()), -1, 8).mean(dim=(0, 1))
+                bands = masks[chosen].reshape(int(chosen.sum()), -1, bands_n).mean(dim=(0, 1))
                 entry["band_mean"] = [round(float(v), 4) for v in bands]
             attention[str(level)] = entry
             print(f"  snr={level:>3} mask_dev={entry['mask_deviation']:.4f} "

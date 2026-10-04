@@ -55,6 +55,7 @@ from expert_lib import (  # noqa: E402
     sample_negatives,
 )
 from models.beats_backbone import BEATsEncoder, beats_head_rows, load_beats  # noqa: E402
+from models.clap_backbone import build_clap, load_clap  # noqa: E402
 from models.sslam import SSLAMEncoder, audioset_head_rows, load_sslam  # noqa: E402
 
 
@@ -238,10 +239,12 @@ class Classifier(nn.Module):
     """
 
     def __init__(self, encoder: SSLAMEncoder, dim: int, classes: int,
-                 film: FiLM | None, pool: AttentionMaskPool | None = None):
+                 film: FiLM | None, pool: AttentionMaskPool | None = None,
+                 head: nn.Module | None = None):
         super().__init__()
         self.encoder = encoder
-        self.head = nn.Linear(dim, classes)
+        # CLAP brings its own head (projection MLP + zero-shot class layer).
+        self.head = head if head is not None else nn.Linear(dim, classes)
         self.film = film
         self.pool = pool
 
@@ -271,6 +274,13 @@ def build_model(config: dict, device: torch.device, film_enabled: bool,
                                config["dataset"]["sample_rate"],
                                backbone.get("pooling", "mean_patches"))
         head_rows = lambda: audioset_head_rows(raw, label_mids(config))  # noqa: E731
+    elif kind == "clap":
+        clap = load_clap(device, backbone["repo"], backbone["checkpoint"],
+                         backbone.get("amodel", "HTSAT-tiny"))
+        encoder, head = build_clap(clap, label_names(config), backbone["prompt"],
+                                   backbone.get("head_init") == "zeroshot",
+                                   config["dataset"]["sample_rate"])
+        del clap  # the text branch is only needed for the prompts
     else:
         raise ValueError(f"unknown backbone type {kind!r}")
 
@@ -288,7 +298,11 @@ def build_model(config: dict, device: torch.device, film_enabled: bool,
     pool = AttentionMaskPool(backbone["embedding_dim"],
                              config["student"]["attention"]["hidden"]) if attention else None
     model = Classifier(encoder, backbone["embedding_dim"],
-                       config["experiment"]["num_classes"], film, pool)
+                       config["experiment"]["num_classes"], film, pool,
+                       head if kind == "clap" else None)
+    if kind == "clap" and backbone.get("head_init") == "zeroshot":
+        print("head = CLAP projection MLP + zero-shot text classifier "
+              f"(prompt {backbone['prompt']!r})", flush=True)
     if backbone.get("head_init", "random") == "audioset":
         weight, bias = head_rows()
         with torch.no_grad():
@@ -307,6 +321,14 @@ def resolve_checkpoint(candidates: list[str]) -> Path:
         if path.exists():
             return path
     raise FileNotFoundError("none of the backbone checkpoints exist: " + ", ".join(candidates))
+
+
+def label_names(config: dict) -> list[str]:
+    """labels.txt in order - the model's class order, and CLAP's prompt words."""
+    dataset = config["dataset"]
+    return [line.strip() for line in
+            (Path(dataset["path"]) / dataset["labels_file"]).read_text(
+                encoding="utf-8").splitlines() if line.strip()]
 
 
 def label_mids(config: dict) -> list[str]:
