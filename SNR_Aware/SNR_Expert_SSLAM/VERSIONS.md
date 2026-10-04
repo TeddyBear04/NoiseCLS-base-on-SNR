@@ -76,6 +76,7 @@ nhắm thẳng vào nguyên nhân high-SNR khó: speech át noise trong mixture.
 | `train_config_high_clap_bandtrain.json` | như dòng trên, backbone **CLAP** | 15–20 dB | `artifacts_clap_bandtrain/` |
 | `train_config_high_clap.json` | 30.240 clip, cả 6 mức SNR, backbone **CLAP** | 15–20 dB | `artifacts_clap/` |
 | `train_config_beats_fullsnr.json` | 30.240 clip, cả 6 mức SNR | **cả 6 mức** (chọn checkpoint trên toàn bộ val, `evaluation.select_on = full` ghi đè `select_on` của từng run) | `artifacts_beats_fullsnr/` |
+| `train_config_sslam_fullsnr.json` | như dòng trên, backbone **SSLAM** (AS2M-finetuned), cùng công thức BEATs | **cả 6 mức** | `artifacts_sslam_fullsnr/` |
 
 Bản `bandtrain` khớp với cách router phân luồng: mỗi expert chỉ nhận mixture của dải
 mình, nên train riêng trên dải đó — hard mixture of experts (Gross, Ranzato, Szlam,

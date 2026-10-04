@@ -1,0 +1,181 @@
+{
+  "experiment": {
+    "name": "snr_expert_sslam_fullsnr_36",
+    "task": "single_label_noise_classification",
+    "num_classes": 36,
+    "seed": 2026
+  },
+  "dataset": {
+    "path": "/marimo/dataset/mix-dataset",
+    "manifest_file": "manifest.csv",
+    "labels_file": "labels.txt",
+    "clip_seconds": 4.0,
+    "sample_rate": 16000,
+    "train_split": "train",
+    "validation_split": "validation",
+    "test_split": "test"
+  },
+  "backbone": {
+    "type": "sslam",
+    "model_id": "ta012/SSLAM_AS2M_Finetuned",
+    "embedding_dim": 768,
+    "num_mel_bins": 128,
+    "norm_divisor": 2.0,
+    "pooling": "cls_fcnorm",
+    "head_init": "audioset",
+    "config_overrides": {
+      "drop_rate": 0.1,
+      "start_drop_path_rate": 0.1,
+      "end_drop_path_rate": 0.1
+    },
+    "_note": "Same fine-tuning recipe as train_config_high_beats.json - that file and this one differ only in backbone, experiment name, output dir and report label (checked when this file was generated). Dropout 0.1 and stochastic depth 0.1 mirror BEATs' dropout 0.1 / layerdrop 0.1; the checkpoint ships both at 0.0. Pooling and head init follow each checkpoint's own classification path: fc_norm(CLS) here, mean pooling for BEATs."
+  },
+  "run": "run1_baseline",
+  "band_db": [
+    15.0,
+    20.0
+  ],
+  "teacher": {
+    "source_column": "noise_path",
+    "head_lr": 0.0001,
+    "extract_batch_size": 32,
+    "finetune_epochs": 10,
+    "trainable_blocks": 12,
+    "encoder_lr": 0.0001,
+    "batch_size": 16,
+    "validation_batch_size": 32,
+    "accumulation_steps": 2,
+    "gradient_clip_norm": 5.0,
+    "patience": 3,
+    "workers": 4,
+    "checkpoint": "teacher_noise_best.pt",
+    "layer_decay": 0.3,
+    "weight_decay": 0.01,
+    "lr_schedule": "warmup_cosine",
+    "warmup_fraction": 0.1,
+    "_recipe_note": "BEATs paper (Chen et al., ICML 2023) appendix Table 4, AS-20K column - closest in size to our 30k clips: SpecAugment 0.2, peak lr 1e-4, cosine, warmup 8K/80K = 10%, layer-wise lr decay 0.3, dropout 0.1, layer dropout 0.1, weight decay 0.01. Deviation: no mixup (0.8 in the paper) - not implemented, and it does not compose cleanly with per-clip KD/CRD targets.",
+    "augment": {
+      "spec_ratio": 0.2,
+      "roll": true
+    }
+  },
+  "student": {
+    "source_column": "mixture_path",
+    "finetune_epochs": 10,
+    "trainable_blocks": 12,
+    "head_lr": 0.0001,
+    "encoder_lr": 0.0001,
+    "film_lr": 0.001,
+    "batch_size": 16,
+    "validation_batch_size": 32,
+    "accumulation_steps": 2,
+    "gradient_clip_norm": 5.0,
+    "patience": 3,
+    "workers": 4,
+    "film": {
+      "enabled": true,
+      "hidden": 128,
+      "snr_jitter_db": 2.0,
+      "placement": "pooled"
+    },
+    "attention": {
+      "enabled": false,
+      "hidden": 128,
+      "lr": 0.001,
+      "_note": "Soft attention mask A(t,f) over the patch tokens (direction 2, run7_attn). hidden=128 matches FiLM and the CRD projection; lr matches film_lr, the rate every other new module here uses. Neither value comes from a paper for this task."
+    },
+    "layer_decay": 0.3,
+    "weight_decay": 0.01,
+    "lr_schedule": "warmup_cosine",
+    "warmup_fraction": 0.1,
+    "_recipe_note": "BEATs paper (Chen et al., ICML 2023) appendix Table 4, AS-20K column - closest in size to our 30k clips: SpecAugment 0.2, peak lr 1e-4, cosine, warmup 8K/80K = 10%, layer-wise lr decay 0.3, dropout 0.1, layer dropout 0.1, weight decay 0.01. Deviation: no mixup (0.8 in the paper) - not implemented, and it does not compose cleanly with per-clip KD/CRD targets.",
+    "augment": {
+      "spec_ratio": 0.2,
+      "roll": false,
+      "_note": "No roll for the student: patch-level CRD pairs student patch i with teacher patch i, and a time shift on the mixture only would misalign them."
+    }
+  },
+  "loss": {
+    "r_ce": 1.0,
+    "a_kd": 0.0,
+    "b_crd": 0.0,
+    "rho_kd": 4.0,
+    "tau_nce": 0.07,
+    "proj_dim": 128,
+    "n_negatives": 1024,
+    "negative_mode": "different_label",
+    "crd_level": "patch",
+    "_note": "crd_level 'patch' aligns every patch token against the teacher's; 'pooled' reproduces the BEATs project's single-vector CRD. patch is the reason for switching backbones - see VERSIONS.md. Weights r/a/b come from the CRD reference repo (-r 1 -a 1 -b 0.8); do not invent replacements."
+  },
+  "gates": {
+    "teacher_min_headroom": 0.1,
+    "_teacher_gate_note": "Gate = baseline_band_accuracy + 0.10 = 0.6315. The mid project's absolute 0.75 floor sat above a 0.67 mixture baseline; carried to this band (baseline 0.53) it stopped a clean-noise teacher of 0.738, which is 0.21 above the baseline - twice the mid project's teacher headroom (0.78 - 0.67 = 0.11). Flagged as uncalibrated for SSLAM/high from the first commit; recalibrated after the teacher sweep of 2026-09-28.",
+    "baseline_band_accuracy": 0.5315,
+    "baseline_band_macro_f1": 0.52935,
+    "_baseline_band_note": "Published BEATs-Mixture, Result.xlsx 'Theo tung SNR': (0.5769@15dB + 0.4861@20dB)/2 and (0.5757+0.4830)/2, equal support (1080 each). This is the gate; it is NOT the same run as BEATs_Experts/checkpoint/test_metrics_36.json (that checkpoint's own 15/20 numbers are 0.6102/0.5315 - a different training run, no per-clip predictions, cannot enter a paired test).",
+    "published_baseline": {
+      "name": "BEATs-Mixture (Result.xlsx)",
+      "per_snr": {
+        "-5": {
+          "samples": 1080,
+          "accuracy": 0.7065,
+          "macro_f1": 0.7034,
+          "micro_f1": 0.7065
+        },
+        "0": {
+          "samples": 1080,
+          "accuracy": 0.6981,
+          "macro_f1": 0.6943,
+          "micro_f1": 0.6981
+        },
+        "5": {
+          "samples": 1080,
+          "accuracy": 0.6583,
+          "macro_f1": 0.6541,
+          "micro_f1": 0.6583
+        },
+        "10": {
+          "samples": 1080,
+          "accuracy": 0.6269,
+          "macro_f1": 0.6224,
+          "micro_f1": 0.6269
+        },
+        "15": {
+          "samples": 1080,
+          "accuracy": 0.5769,
+          "macro_f1": 0.5757,
+          "micro_f1": 0.5769
+        },
+        "20": {
+          "samples": 1080,
+          "accuracy": 0.4861,
+          "macro_f1": 0.483,
+          "micro_f1": 0.4861
+        }
+      },
+      "_note": "Copied from Result.xlsx, sheet 'Theo tung SNR', rows BEATs-Mixture / final, all six levels (the band-only report keeps 15 and 20; --full-test uses all). Only accuracy and F1 exist there, and no per-clip predictions, so it cannot enter the McNemar comparison."
+    }
+  },
+  "evaluation": {
+    "band_only": false,
+    "select_on": "full",
+    "_note": "One model for every SNR: train, validation (checkpoint selection, early stopping) and test all use the six levels (30,240 / 6,480 / 6,480). select_on='full' overrides each run's own choice, so the KD/CRD runs no longer select on the 15-20 dB slice. Everything else - backbone, recipe, FiLM, seed - is identical to train_config_beats_fullsnr.json except the backbone (SSLAM AS2M-finetuned), so the two backbones pair clip for clip."
+  },
+  "report": {
+    "sheet_method": "SSLAM-FullSNR",
+    "band_label": "15-20"
+  },
+  "outputs": {
+    "dir": "artifacts_sslam_fullsnr",
+    "embedding_cache": "teacher_emb.pt",
+    "history": "teacher_history.json",
+    "summary": "teacher_summary.json"
+  },
+  "runtime": {
+    "device": "cuda",
+    "pin_memory": true,
+    "smoke_test": false,
+    "smoke_train_rows": 400,
+    "smoke_validation_rows": 200
+  }
+}
