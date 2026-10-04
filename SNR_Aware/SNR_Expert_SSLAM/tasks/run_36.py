@@ -406,10 +406,13 @@ def apply_run(config: dict, name: str) -> dict:
     config["loss"]["a_kd"] = switches["a_kd"]
     config["loss"]["b_crd"] = switches["b_crd"]
     config["student"]["film"]["enabled"] = switches["film"]
-    config["student"]["select_on"] = switches["select_on"]
+    # `evaluation.select_on` overrides every run's own choice: with validation on all
+    # six levels, a run's "band" would quietly select on the 15-20 dB slice of it.
+    select_on = config.get("evaluation", {}).get("select_on", switches["select_on"])
+    config["student"]["select_on"] = select_on
     config["student"]["attention"]["enabled"] = switches.get("attention", False)
     print(f"run={name} a_kd={switches['a_kd']} b_crd={switches['b_crd']} "
-          f"film={switches['film']} select_on={switches['select_on']} "
+          f"film={switches['film']} select_on={select_on} "
           f"attention={config['student']['attention']['enabled']} "
           f"crd_level={config['loss']['crd_level']}", flush=True)
     return config
