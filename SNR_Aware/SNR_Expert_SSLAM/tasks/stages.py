@@ -21,11 +21,12 @@ from torch import nn
 from expert_lib import (
     layer_decay_scales, warmup_cosine,
     CRDLoss, Projection, film_deviation, band_slice_mask, mask_deviation, sample_negatives,
-    distill_kl, sam_ascend, sam_descend,
+    align_patch_grid, distill_kl, sam_ascend, sam_descend,
 )
 from tasks.run_36 import (
     HERE, Classifier, Corpus, autocast, build_model, collect, metrics,
-    seed_everything, snapshot, split_metrics, trainable_parameters, write_params,
+    seed_everything, snapshot, split_metrics, teacher_backbone, trainable_parameters,
+    write_params,
 )
 
 
@@ -266,7 +267,8 @@ def command_teacher36(config: dict) -> None:
         print("SMOKE TEST - results are not reportable", flush=True)
 
     model = build_model(config, device, film_enabled=False,
-                        trainable_blocks=config["teacher"]["trainable_blocks"])
+                        trainable_blocks=config["teacher"]["trainable_blocks"],
+                        backbone=teacher_backbone(config))
     criterion = nn.CrossEntropyLoss()
 
     def step(batch):
@@ -329,7 +331,8 @@ def load_teacher(config: dict, device: torch.device) -> Classifier | None:
         raise FileNotFoundError(
             f"{path} is missing, and KD or CRD needs it.\n"
             "Train it with:  python -u main.py teacher36 --config <config>")
-    teacher = build_model(config, device, film_enabled=False, trainable_blocks=0)
+    teacher = build_model(config, device, film_enabled=False, trainable_blocks=0,
+                          backbone=teacher_backbone(config))
     teacher.load_state_dict(torch.load(path, map_location="cpu",
                                        weights_only=False)["state"], strict=False)
     teacher.eval()
@@ -389,8 +392,14 @@ def command_student36(config: dict) -> None:
     born_again = load_born_again(config, device) if ban else None
     print(f"run={run_name} train={len(train_rows)} kd={use_kd} crd={use_crd} "
           f"teacher={'online' if teacher else 'none'}", flush=True)
+    # What the student costs at inference: encoder, pooling, FiLM and head. The
+    # teacher and the CRD projections are training-only.
+    student_params = sum(p.numel() for p in model.parameters())
+    print(f"student params = {student_params / 1e6:.2f}M "
+          f"(backbone={config['backbone'].get('type')})", flush=True)
 
     dim = config["backbone"]["embedding_dim"]
+    teacher_dim = teacher_backbone(config)["embedding_dim"]
     g_s = g_t = crd = None
     extra = []
     if use_crd:
@@ -398,7 +407,7 @@ def command_student36(config: dict) -> None:
         # g_t frozen: the CRD reference learns both, but a fixed random projection
         # preserves relative distances and halves what has to be optimised here.
         torch.manual_seed(config["experiment"]["seed"])
-        g_t = Projection(dim, loss_config["proj_dim"]).to(device)
+        g_t = Projection(teacher_dim, loss_config["proj_dim"]).to(device)
         for parameter in g_t.parameters():
             parameter.requires_grad = False
         # n_data sets CRD's noise prior (Pn = 1/n_data) and the Z normaliser. It is
@@ -455,6 +464,14 @@ def command_student36(config: dict) -> None:
                     # project rests on: the BEATs run pooled first and threw the
                     # time-frequency structure away before the loss saw it.
                     b, n, _ = patches.shape
+                    # A student of another architecture has its own token grid;
+                    # the teacher's is pooled onto it so patch i still means the
+                    # same time-frequency region on both sides.
+                    student_grid = getattr(model.encoder, "grid", None)
+                    if student_grid is not None:
+                        bands = getattr(teacher.encoder, "freq_bands", 8)
+                        t_patches = align_patch_grid(
+                            t_patches, (t_patches.shape[1] // bands, bands), student_grid)
                     student_vec = g_s(patches.reshape(b * n, -1).float())
                     positive = g_t(t_patches.reshape(b * n, -1).float())
                     labels_flat = target.repeat_interleave(n)
@@ -481,7 +498,8 @@ def command_student36(config: dict) -> None:
                 "validation": best}, out_dir / f"student_{run_name}.pt")
     (out_dir / f"student_{run_name}_history.json").write_text(
         json.dumps({"history": history, "best_validation": best,
-                    "loss_config": loss_config, "student_config": settings},
+                    "loss_config": loss_config, "student_config": settings,
+                    "student_params": student_params},
                    indent=2), encoding="utf-8")
     print(f"\ncheckpoint -> {out_dir / f'student_{run_name}.pt'}", flush=True)
     print(f"best val_band_accuracy={best['band']['accuracy']:.4f} "
@@ -567,6 +585,9 @@ def command_test36(config: dict) -> None:
 
     purity = {}
     try:
+        if config["backbone"]["embedding_dim"] != teacher_backbone(config)["embedding_dim"]:
+            # Cosines between e.g. a 384-d student and a 768-d teacher mean nothing.
+            raise ValueError("student and teacher embeddings differ in size")
         teacher = load_teacher(config, device)
         teacher_out = collect(teacher, loader, device, use_snr=False)
         for name, mask in (("band", band_slice_mask(out["snr"].float(), *band)),
@@ -580,9 +601,8 @@ def command_test36(config: dict) -> None:
             print(f"  {name:<7} cos_pos={values['emb_cos_pos']:.4f} "
                   f"cos_neg={values['emb_cos_neg']:.4f} gap={values['emb_gap']:.4f} "
                   f"retrieval@1={values['emb_retrieval_top1']:.4f}", flush=True)
-    except FileNotFoundError:
-        print("\nno teacher checkpoint - skipping the embedding purity check.",
-              flush=True)
+    except (FileNotFoundError, ValueError) as reason:
+        print(f"\nskipping the embedding purity check: {reason}", flush=True)
 
     # Where the mask looks. BEATs tokens are ordered t*8 + f over 8 mel bands of
     # 16 bins (low to high frequency), CLAP's t*2 + f over 2 halves of its 64 bins;

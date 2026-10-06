@@ -294,6 +294,29 @@ def sam_descend(params: list, eps: list) -> None:
             p.sub_(e)
 
 
+def align_patch_grid(tokens: Tensor, source: tuple[int, int],
+                     target: tuple[int, int]) -> Tensor:
+    """Time-major tokens [B, T*F, C] on a (T, F) grid -> the same region on another grid.
+
+    For patch-level CRD between a teacher and a student of different architectures
+    (BEATs' 24 x 8 grid vs CED's 25 x 4 or MobileNet's 13 x 4): adaptive average
+    pooling over (time, frequency) maps every target cell to the teacher tokens
+    covering the same relative region. In the spirit of FitNets' hint training
+    (Romero et al., ICLR 2015), which also has to reconcile two feature maps of
+    different shape before matching them; pooling the teacher, rather than
+    learning a regressor, adds no parameters.
+    """
+    if tuple(source) == tuple(target):
+        return tokens
+    batch, count, channels = tokens.shape
+    time, freq = source
+    if time * freq != count:
+        raise ValueError(f"{count} tokens do not fill a {time} x {freq} grid")
+    grid = tokens.reshape(batch, time, freq, channels).permute(0, 3, 1, 2)
+    grid = torch.nn.functional.adaptive_avg_pool2d(grid, tuple(target))
+    return grid.permute(0, 2, 3, 1).reshape(batch, -1, channels)
+
+
 def distill_kl(student_logits: Tensor, teacher_logits: Tensor, temperature: float) -> Tensor:
     """Hinton KD: KL(softmax(t/T) || softmax(s/T)) * T^2, averaged over the batch."""
     return torch.nn.functional.kl_div(

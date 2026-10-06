@@ -55,7 +55,9 @@ from expert_lib import (  # noqa: E402
     sample_negatives,
 )
 from models.beats_backbone import BEATsEncoder, beats_head_rows, load_beats  # noqa: E402
+from models.ced_backbone import build_ced  # noqa: E402
 from models.clap_backbone import build_clap, load_clap  # noqa: E402
+from models.efficientat_backbone import build_efficientat  # noqa: E402
 from models.sslam import SSLAMEncoder, audioset_head_rows, load_sslam  # noqa: E402
 
 
@@ -243,7 +245,7 @@ class Classifier(nn.Module):
                  head: nn.Module | None = None):
         super().__init__()
         self.encoder = encoder
-        # CLAP brings its own head (projection MLP + zero-shot class layer).
+        # CLAP, CED and EfficientAT bring their own head (pretrained layers + our rows).
         self.head = head if head is not None else nn.Linear(dim, classes)
         self.film = film
         self.pool = pool
@@ -259,10 +261,19 @@ class Classifier(nn.Module):
         return self.head(pooled), pooled, patches
 
 
+def teacher_backbone(config: dict) -> dict:
+    """The teacher's backbone: `teacher_backbone` when the student uses another
+    architecture (a compact student distilled from the BEATs teacher), else the
+    student's own."""
+    return config.get("teacher_backbone", config["backbone"])
+
+
 def build_model(config: dict, device: torch.device, film_enabled: bool,
-                trainable_blocks: int, attention: bool = False) -> Classifier:
-    backbone = config["backbone"]
+                trainable_blocks: int, attention: bool = False,
+                backbone: dict | None = None) -> Classifier:
+    backbone = backbone or config["backbone"]
     kind = backbone.get("type", "sslam")
+    head = None
     if kind == "beats":
         raw, checkpoint = load_beats(device, resolve_checkpoint(backbone["checkpoint_candidates"]),
                                      backbone.get("dropout", 0.0), backbone.get("layerdrop", 0.0))
@@ -281,6 +292,11 @@ def build_model(config: dict, device: torch.device, film_enabled: bool,
                                    backbone.get("head_init") == "zeroshot",
                                    config["dataset"]["sample_rate"])
         del clap  # the text branch is only needed for the prompts
+    elif kind == "ced":
+        encoder, head = build_ced(device, backbone, label_mids(config))
+    elif kind == "efficientat":
+        encoder, head = build_efficientat(device, backbone, label_mids(config),
+                                          config["dataset"]["sample_rate"])
     else:
         raise ValueError(f"unknown backbone type {kind!r}")
 
@@ -298,12 +314,14 @@ def build_model(config: dict, device: torch.device, film_enabled: bool,
     pool = AttentionMaskPool(backbone["embedding_dim"],
                              config["student"]["attention"]["hidden"]) if attention else None
     model = Classifier(encoder, backbone["embedding_dim"],
-                       config["experiment"]["num_classes"], film, pool,
-                       head if kind == "clap" else None)
+                       config["experiment"]["num_classes"], film, pool, head)
     if kind == "clap" and backbone.get("head_init") == "zeroshot":
         print("head = CLAP projection MLP + zero-shot text classifier "
               f"(prompt {backbone['prompt']!r})", flush=True)
-    if backbone.get("head_init", "random") == "audioset":
+    if kind in ("ced", "efficientat"):
+        print("head = the checkpoint's own AudioSet head, last layer cut to the rows "
+              "of our 36 labels", flush=True)
+    elif backbone.get("head_init", "random") == "audioset":
         weight, bias = head_rows()
         with torch.no_grad():
             model.head.weight.copy_(weight)

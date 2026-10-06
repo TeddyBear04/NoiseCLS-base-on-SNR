@@ -337,6 +337,28 @@ def test_clap_head_starts_as_the_zero_shot_classifier():
     assert all(p.requires_grad for p in head.parameters())
 
 
+def test_align_patch_grid_is_identity_on_equal_grids_and_pools_2x2_blocks():
+    from expert_lib import align_patch_grid
+    torch.manual_seed(0)
+    tokens = torch.randn(2, 24 * 8, 5)
+    assert torch.equal(align_patch_grid(tokens, (24, 8), (24, 8)), tokens)
+    out = align_patch_grid(tokens, (24, 8), (12, 4))
+    assert out.shape == (2, 48, 5)
+    grid = tokens.reshape(2, 24, 8, 5)
+    block = grid[:, 2:4, 6:8].mean(dim=(1, 2))      # target cell (t=1, f=3)
+    assert torch.allclose(out[:, 1 * 4 + 3], block, atol=1e-6)
+
+
+def test_align_patch_grid_maps_to_ced_and_mobilenet_grids():
+    from expert_lib import align_patch_grid
+    tokens = torch.randn(3, 192, 7)
+    assert align_patch_grid(tokens, (24, 8), (25, 4)).shape == (3, 100, 7)
+    assert align_patch_grid(tokens, (24, 8), (13, 4)).shape == (3, 52, 7)
+    # a constant teacher map stays constant wherever its cells land
+    flat = torch.ones(1, 192, 2)
+    assert torch.allclose(align_patch_grid(flat, (24, 8), (13, 4)), torch.ones(1, 52, 2))
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(n, f) for n, f in sorted(globals().items())

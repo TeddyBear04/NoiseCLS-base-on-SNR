@@ -190,11 +190,16 @@ def audioset_head_rows(model, label_mids: list[str]) -> tuple[Tensor, Tensor]:
     a random head gave 0.6912 after 7 epochs, below that zero-shot number.
     LP-FT (Kumar et al., ICLR 2022): a random head distorts pretrained features.
     """
+    rows = audioset_indices(label_mids)
+    head = model.model.head
+    return head.weight.detach()[rows].clone(), head.bias.detach()[rows].clone()
+
+
+def audioset_indices(label_mids: list[str]) -> Tensor:
+    """Row of each of our labels in the standard 527-class AudioSet output order."""
     index_of = {row["mid"]: int(row["index"])
                 for row in csv.DictReader(AUDIOSET_INDEX_CSV.open(encoding="utf-8"))}
     missing = [mid for mid in label_mids if mid not in index_of]
     if missing:
         raise KeyError(f"labels not in the AudioSet ontology: {missing}")
-    rows = torch.tensor([index_of[mid] for mid in label_mids])
-    head = model.model.head
-    return head.weight.detach()[rows].clone(), head.bias.detach()[rows].clone()
+    return torch.tensor([index_of[mid] for mid in label_mids])
