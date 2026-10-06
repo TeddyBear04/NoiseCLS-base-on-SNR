@@ -15,6 +15,7 @@ nothing beyond network access.
 from __future__ import annotations
 
 import importlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -49,15 +50,20 @@ def import_isolated(repo_dir: str, url: str, commit: str, *modules: str) -> list
     __init__.py, and Python prefers a regular package anywhere on the path (ours)
     over a namespace package earlier on it. So every entry that carries its own
     `models` or `helpers` is left off the path for the duration of the import.
+    The import also runs from the repo's root: EfficientAT's helpers open
+    `metadata/...` relative to the working directory at import time.
     """
     path = str(ensure_repo(repo_dir, url, commit))
     ours = {name: sys.modules.pop(name) for name in list(sys.modules) if _owned(name)}
-    saved_path = list(sys.path)
-    sys.path[:] = [path] + [entry for entry in saved_path if not _shadows(entry)]
+    saved_path, saved_cwd = list(sys.path), os.getcwd()
+    sys.path[:] = [path] + [entry for entry in saved_path
+                            if entry and not _shadows(entry)]
     importlib.invalidate_caches()
+    os.chdir(path)
     try:
         return [importlib.import_module(name) for name in modules]
     finally:
+        os.chdir(saved_cwd)
         sys.path[:] = saved_path
         for name in [name for name in sys.modules if _owned(name)]:
             del sys.modules[name]
