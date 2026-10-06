@@ -24,7 +24,12 @@
     "repo_dir": "/marimo/ext/EfficientAT",
     "embedding_dim": 2880,
     "head_init": "audioset",
-    "_note": "EfficientAT mn30_as (Schmid et al., ICASSP 2023): MobileNetV3 width 3.0, ~39M params, AudioSet mAP 48.2, trained at 32 kHz / 128 mel - our 16 kHz clips are resampled, so its mel bins above 8 kHz stay empty. Tokens = the 4 x 13 cells of the 2880-channel last feature map."
+    "_note": "EfficientAT mn30_as (Schmid et al., ICASSP 2023): MobileNetV3 width 3.0, ~39M params, AudioSet mAP 48.2, trained at 32 kHz / 128 mel - our 16 kHz clips are resampled, so its mel bins above 8 kHz stay empty. Tokens = the 4 x 13 cells of the 2880-channel last feature map.",
+    "pooled_stats": {
+      "mean": -0.0007,
+      "std": 0.0317,
+      "_note": "Per-clip mean / std of the 2880-d pooled vector of the pretrained network, averaged over 256 train mixtures (every 120th train row; molab 2026-10-06); across clips they vary by +-0.0012 / +-0.0009. Folded into the head's first Linear so FiLM's LayerNorm does not blow up the pretrained logits (see models/efficientat_backbone.py)."
+    }
   },
   "teacher_backbone": {
     "type": "beats",

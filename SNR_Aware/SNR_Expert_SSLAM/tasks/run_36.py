@@ -296,7 +296,7 @@ def build_model(config: dict, device: torch.device, film_enabled: bool,
         encoder, head = build_ced(device, backbone, label_mids(config))
     elif kind == "efficientat":
         encoder, head = build_efficientat(device, backbone, label_mids(config),
-                                          config["dataset"]["sample_rate"])
+                                          config["dataset"]["sample_rate"], film_enabled)
     else:
         raise ValueError(f"unknown backbone type {kind!r}")
 

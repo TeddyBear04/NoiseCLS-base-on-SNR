@@ -24,6 +24,17 @@ AudioSet. What is taken from its code, step by step:
 
 Tokens are the 52 cells of the last feature map, time-major (t * 4 + f), and the
 pooled vector is their mean - exactly the classifier's own AdaptiveAvgPool2d(1).
+
+FiLM and the head. FiLM always LayerNorms the pooled vector before modulating it.
+BEATs' and CED's pooled vectors already sit at LayerNorm scale, so FiLM starts as
+(near) identity, as `expert_lib.FiLM` intends. This CNN's do not: over 256 train
+mixtures each clip's 2880-d vector has mean -0.0007 and std 0.0317 (+- 0.0009
+across clips), so LayerNorm multiplies it by ~31 and the pretrained head's
+cross-entropy goes from 2.10 to 44.2 (measured on molab, 2026-10-06). With a
+per-clip std that steady, LN(x) ~ (x - mean) / std exactly enough to fold back
+into the head's first Linear: W' = std * W, b' = b + mean * W 1, so that
+head(LN(x)) ~ head(x) at initialisation. Only when FiLM is on - without it the
+head sees the raw vector it was trained on.
 """
 
 from __future__ import annotations
@@ -103,11 +114,19 @@ class EfficientATEncoder(nn.Module):
 
 
 def build_efficientat(device: torch.device, backbone: dict, label_mids: list[str],
-                      sample_rate: int) -> tuple[EfficientATEncoder, PretrainedHead]:
+                      sample_rate: int, layernormed: bool) -> tuple[EfficientATEncoder,
+                                                                     PretrainedHead]:
     net, mel = load_efficientat(device, backbone)
     classifier = net.classifier            # pool, flatten, Linear, Hardswish, Dropout, Linear
-    head = PretrainedHead([copied(classifier[2]), nn.Hardswish(),
-                           nn.Dropout(classifier[4].p)],
+    first = copied(classifier[2])
+    if layernormed:                        # FiLM's LayerNorm sits in front (see above)
+        stats = backbone["pooled_stats"]
+        with torch.no_grad():
+            first.bias.add_(stats["mean"] * first.weight.sum(dim=1))
+            first.weight.mul_(stats["std"])
+        print(f"head input = LayerNorm(pooled): first layer rescaled by the pooled "
+              f"vector's std {stats['std']} (mean {stats['mean']})", flush=True)
+    head = PretrainedHead([first, nn.Hardswish(), nn.Dropout(classifier[4].p)],
                           classifier[5], audioset_indices(label_mids))
     net.classifier = nn.Identity()         # replaced by `head`; keeps the param count honest
     return EfficientATEncoder(net, mel, sample_rate), head
