@@ -36,15 +36,30 @@ def _owned(name: str) -> bool:
     return any(name == root or name.startswith(root + ".") for root in _CLASHING)
 
 
+def _shadows(entry: str) -> bool:
+    """Does this sys.path entry hold a `models`/`helpers` of its own (ours, say)?"""
+    root = Path(entry or ".")
+    return any((root / name).is_dir() for name in _CLASHING)
+
+
 def import_isolated(repo_dir: str, url: str, commit: str, *modules: str) -> list:
-    """Import `modules` from the repo at `repo_dir` without touching ours."""
+    """Import `modules` from the repo at `repo_dir` without touching ours.
+
+    Putting the repo first on sys.path is not enough: EfficientAT's `models` has no
+    __init__.py, and Python prefers a regular package anywhere on the path (ours)
+    over a namespace package earlier on it. So every entry that carries its own
+    `models` or `helpers` is left off the path for the duration of the import.
+    """
     path = str(ensure_repo(repo_dir, url, commit))
     ours = {name: sys.modules.pop(name) for name in list(sys.modules) if _owned(name)}
-    sys.path.insert(0, path)
+    saved_path = list(sys.path)
+    sys.path[:] = [path] + [entry for entry in saved_path if not _shadows(entry)]
+    importlib.invalidate_caches()
     try:
         return [importlib.import_module(name) for name in modules]
     finally:
-        sys.path.remove(path)
+        sys.path[:] = saved_path
         for name in [name for name in sys.modules if _owned(name)]:
             del sys.modules[name]
         sys.modules.update(ours)
+        importlib.invalidate_caches()
