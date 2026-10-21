@@ -67,6 +67,7 @@ Accuracy trên validation sạch, trọng số EMA, chạy ngày 2026-10-20/21 t
 | Run | Acc val sạch |
 |---|---|
 | `panns_reviewkd` | 0.521 |
+| `mn10_reviewkd` | 0.545 |
 
 ## Kiểm thử
 
