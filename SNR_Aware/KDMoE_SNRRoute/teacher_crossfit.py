@@ -168,9 +168,9 @@ def command_features(config: dict) -> None:
     train_logits = torch.zeros(len(order), config["experiment"]["num_classes"])
     validation_sum, validation_order = None, None
     for fold in range(crossfit["folds"]):
-        data = torch.load(out_dir / f"fold{fold}.pt", map_location="cpu", weights_only=False)
+        data = torch.load(out_dir / f"beats_teacher_fold{fold}_weights.pt", map_location="cpu", weights_only=False)
         if "state_dict" not in data:
-            raise KeyError(f"fold{fold}.pt has no weights; rerun `teacher_crossfit.py crossfit` with crossfit.save_weights")
+            raise KeyError(f"beats_teacher_fold{fold}_weights.pt has no weights; rerun `teacher_crossfit.py crossfit` with crossfit.save_weights")
         model = build_model(config, device, film_enabled=False, trainable_blocks=settings["trainable_blocks"],
                             backbone=teacher_backbone(config))
         model.load_state_dict(data["state_dict"])
@@ -223,7 +223,7 @@ def command_features(config: dict) -> None:
         packed = {"source": f"BEATs crossfit {crossfit['folds']} folds on FRCRN n_hat", "precision": "fp16 logits",
                   "label_order": "labels.txt", "train": pack(order, train_logits),
                   "validation": pack(validation_order, validation_sum / crossfit["folds"])}
-        packed_path = out_dir / crossfit.get("hint_packed", "teacher_crossfit_nhat.pt")
+        packed_path = out_dir / crossfit.get("hint_packed", "beats_teacher_logits_frcrn_nhat.pt")
         torch.save(packed, packed_path)
         print(f"logits on n_hat -> {packed_path}: train OOF acc {packed['train']['accuracy']:.4f}, "
               f"validation acc {packed['validation']['accuracy']:.4f}", flush=True)
@@ -274,7 +274,7 @@ def command_crossfit(config: dict) -> None:
     at_layers = list(crossfit.get("at_layers", []))  # export Attention Transfer maps of these layers
     at_source = crossfit.get("at_source", "energy")
     for fold in range(folds):
-        fold_path = out_dir / f"fold{fold}.pt"
+        fold_path = out_dir / f"beats_teacher_fold{fold}_weights.pt"
         if fold_path.is_file():
             print(f"fold {fold}: done earlier, {fold_path.name}", flush=True)
             continue
@@ -319,7 +319,7 @@ def command_crossfit(config: dict) -> None:
     labels_of = {id(row): int(corpus.label_to_index[row["label_names"]]) for row in corpus.rows}
     oof, oof_at, validation_sum, at_sum, fold_summary = {}, {}, None, None, []
     for fold in range(folds):
-        data = torch.load(out_dir / f"fold{fold}.pt", map_location="cpu", weights_only=False)
+        data = torch.load(out_dir / f"beats_teacher_fold{fold}_weights.pt", map_location="cpu", weights_only=False)
         fold_summary.append({k: data[k] for k in ("fold", "best_epoch", "clean_val_accuracy", "clean_val_macro_f1")})
         for position, index in enumerate(data["held_out"]["row_index"].tolist()):
             oof[index] = data["held_out"]["logits"][position].float()
@@ -391,9 +391,9 @@ def command_atmaps(config: dict) -> None:
     eval_batch, workers = settings["validation_batch_size"], settings["workers"]
     oof, oof_at, validation_sum, at_sum, order = {}, {}, None, None, None
     for fold in range(folds):
-        data = torch.load(out_dir / f"fold{fold}.pt", map_location="cpu", weights_only=False)
+        data = torch.load(out_dir / f"beats_teacher_fold{fold}_weights.pt", map_location="cpu", weights_only=False)
         if "state_dict" not in data:
-            raise KeyError(f"fold{fold}.pt has no weights; rerun `teacher_crossfit.py crossfit` with crossfit.save_weights")
+            raise KeyError(f"beats_teacher_fold{fold}_weights.pt has no weights; rerun `teacher_crossfit.py crossfit` with crossfit.save_weights")
         model = build_model(config, device, film_enabled=False, trainable_blocks=settings["trainable_blocks"],
                             backbone=teacher_backbone(config))
         model.load_state_dict(data["state_dict"])

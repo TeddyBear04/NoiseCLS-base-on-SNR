@@ -180,7 +180,7 @@
   "crossfit": {
     "folds": 5,
     "exclude_noise_ytids": "config/audioset_train_noise_ytids.txt",
-    "packed": "teacher_unified.pt",
+    "packed": "beats_teacher_logits_clean.pt",
     "save_weights": true,
     "n_hat_cache": "output/frcrn_cache_fp32",
     "hint_layers": [
@@ -190,7 +190,7 @@
       12
     ],
     "hint_source": "n_hat",
-    "hint_packed": "teacher_unified_nhat.pt",
+    "hint_packed": "beats_teacher_logits_frcrn_nhat.pt",
     "_note": "crossfit: 5 fold teacher dùng chung; features: token layer 3/6/9/12 trên n_hat (ReviewKD)."
   }
 }
