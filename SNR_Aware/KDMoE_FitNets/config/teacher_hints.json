@@ -180,7 +180,7 @@
   "crossfit": {
     "folds": 5,
     "exclude_noise_ytids": "config/audioset_train_noise_ytids.txt",
-    "packed": "teacher_unified.pt",
+    "packed": "beats_teacher_logits_clean.pt",
     "save_weights": true,
     "n_hat_cache": "output/frcrn_cache_fp32",
     "hint_layers": [

@@ -15,11 +15,11 @@ def test_default_config_resolves_local_frcrn_checkpoint_and_teacher():
     assert config["runtime"]["seed"] == 2026
     if not (HERE / "model" / "frcrn_best.pt").is_file():
         pytest.skip("model/frcrn_best.pt chưa có (xin trực tiếp, xem README)")
-    if not (HERE / "output" / "teacher_unified" / "teacher_unified.pt").is_file():
+    if not (HERE / "output" / "teacher_unified" / "beats_teacher_logits_clean.pt").is_file():
         pytest.skip("logit teacher chưa có (run.sh bước teacher)")
     paths = validate_config(config, require_dataset=False)
     assert paths["frcrn_checkpoint"] == (HERE / "model" / "frcrn_best.pt").resolve()
-    assert paths["teacher_cache"] == (HERE / "output" / "teacher_unified" / "teacher_unified.pt").resolve()
+    assert paths["teacher_cache"] == (HERE / "output" / "teacher_unified" / "beats_teacher_logits_clean.pt").resolve()
 
 
 def test_configs_only_point_inside_this_folder():

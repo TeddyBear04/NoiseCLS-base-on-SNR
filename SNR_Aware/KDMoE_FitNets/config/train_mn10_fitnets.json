@@ -6,7 +6,7 @@
     "student_config": "config/kdmoe_mn10_fitnets.yaml",
     "group_map": "config/group_map.json",
     "membership": "config/membership.npy",
-    "teacher_cache": "output/teacher_unified/teacher_unified.pt",
+    "teacher_cache": "output/teacher_unified/beats_teacher_logits_clean.pt",
     "frcrn_cache_dir": "output/frcrn_cache_fp32",
     "output": "output/runs/mn10_fitnets",
     "validation_exclude_noise_ytids": "config/audioset_train_noise_ytids.txt",
