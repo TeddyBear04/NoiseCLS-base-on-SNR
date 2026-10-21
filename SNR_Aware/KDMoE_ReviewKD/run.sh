@@ -50,7 +50,14 @@ build_frcrn_snr(logging.getLogger('snr'), num_workers=8, splits=splits)
 " "$DATASET" || exit 1
 
 T=output/teacher_unified
-if [ ! -f $T/teacher_unified.pt ] || { [ -n "$NEED_FOLDS" ] && ! ls $T/fold*.pt > /dev/null 2>&1; }; then
+missing() { [ ! -f $T/teacher_unified.pt ] || { [ -n "$NEED_FOLDS" ] && ! ls $T/fold*.pt > /dev/null 2>&1; }; }
+# teacher dùng chung trên HF (repo private: cần `hf auth login` bằng tài khoản có quyền đọc); tải vào thư mục tạm,
+# kiểm SHA256SUMS rồi mới chuyển vào $T. Không tải được thì train lại (~30 phút).
+HF_TEACHER=${HF_TEACHER:-Keshio1/frcrn-kdmoe-teacher}
+if missing && command -v hf > /dev/null; then
+  step teacher_download hf download $HF_TEACHER --local-dir $T.hf && (cd $T.hf && sha256sum -c --quiet SHA256SUMS)     && mkdir -p $T && mv $T.hf/*.pt $T.hf/*.json $T/ || echo "tải teacher từ HF thất bại, sẽ train lại" >> output/chain.log
+fi
+if missing; then
   step teacher_crossfit $PY teacher_crossfit.py crossfit --config $C/teacher.json || exit 1
 fi
 step features_teacher $PY teacher_crossfit.py features --config $C/teacher.json || exit 1
