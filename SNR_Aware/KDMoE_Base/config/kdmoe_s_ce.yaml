@@ -1,0 +1,70 @@
+# [unified 2026-10-20] Giao thức thống nhất: teacher BEATs cross-fit chung (output/teacher_unified),
+# n_hat FRCRN fp32 + rms_normalize 0.07925, chọn epoch trên val sạch, seed 2026 (JSON), 50 epoch, patience 8,
+# stage 1 8 epoch. Còn lại giữ công thức riêng của kiến trúc (lr, định tuyến).
+model:
+  rms_normalize: 0.07925   # RMS n_hat sau FRCRN (trung vị RMS nhiễu AudioSet)
+  d: 128
+  heads: 4
+  n_hybrid: 2
+  n_vit: 2
+  ffn_ratio: 4
+  hybrid_gru_hidden: 64
+  final_gru_hidden: 64
+  expert_hidden: 128
+  router_hidden: 64
+  gate_eps: 0.05
+  gate_bias_init: 2.0
+  dropout: 0.1
+  drop_path_max: 0.05
+  patch_size: 16
+  freq_bins: 128
+  num_frames: 384
+  num_classes: 36
+  num_groups: 4
+  use_gate: true
+  hybrid_branches: both
+  freq_pool: mean
+  inference_mode: weighted
+  specaug_freq_masks: 2
+  specaug_freq_width: 16
+  specaug_time_masks: 2
+  specaug_time_width: 24
+
+frontend:
+  sample_rate: 16000
+  n_fft: 512
+  win_length: 400
+  hop_length: 160
+  n_mels: 128
+  f_min: 20.0
+  f_max: 8000.0
+  num_frames: 384
+  log_eps: 1.0e-6
+  norm_eps: 1.0e-5
+
+loss:
+  label_smoothing: 0.1
+  kd_temperature: 2.0
+  kd_weight: 0.0
+  kd_weight_by_snr: false
+  route_ce_weight: 0.0
+  front_weight: 1.0
+  front_lam_over: 2.0
+  cons_weight: 0.1
+
+train:
+  lr: 5.0e-4
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  warmup_ratio: 0.05
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+  batch_size: 64
+  eval_batch_size: 64
+  epochs: 50
+  patience: 8
+  stage1_epochs: 8
+  ema_decay: 0.999
+  amp: bf16
+  seed: 42
+  resume_every: 1

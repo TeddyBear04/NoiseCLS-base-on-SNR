@@ -1,0 +1,64 @@
+# [unified 2026-10-20] Giao thức thống nhất: teacher BEATs cross-fit chung (output/teacher_unified),
+# n_hat FRCRN fp32 + rms_normalize 0.07925, chọn epoch trên val sạch, seed 2026 (JSON), 50 epoch, patience 8,
+# stage 1 8 epoch. Còn lại giữ công thức riêng của kiến trúc (lr, định tuyến).
+model:
+  rms_normalize: 0.07925   # RMS n_hat sau FRCRN (trung vị RMS nhiễu AudioSet)
+  encoder: panns_cnn10    # đường encode CNN của KD-MoE; EfficientATKDMoE thay front-end/encoder/pooling
+  panns_checkpoint: ""
+  use_gate: true
+  gate_eps: 0.05
+  gate_bias_init: 2.0
+  patch_size: 32          # NoiseHead: mỗi ô feature map mn10 (stride 32) dựng lại 32x32 log-mel nhiễu
+  freq_bins: 128
+  num_frames: 384          # cắt giữa 384 frame (3.84 s) -> lưới 4 x 12
+  num_classes: 36
+  route_by: snr           # 3 expert: [-5, 5), [5, 15), [15, 20] dB
+  snr_band_edges: [5.0, 15.0]
+  num_groups: 3
+  expert_hidden: 256
+  router_hidden: 64
+  dropout: 0.1
+  inference_mode: weighted
+  specaug_freq_masks: 0   # recipe ESC-50 của EfficientAT: freqm = timem = 0, augment bằng fmin/fmax ngẫu nhiên
+  specaug_freq_width: 0
+  specaug_time_masks: 0
+  specaug_time_width: 0
+
+frontend:
+  sample_rate: 16000
+
+loss:
+  label_smoothing: 0.1
+  kd_temperature: 2.0
+  kd_weight: 1.0
+  kd_target: logits       # KD Hinton 2015 trên 36 logit; teacher không biết SNR nên không KD vào router
+  kd_weight_by_snr: false
+  route_ce_weight: 1.0    # router học khoảng SNR thật của clip
+  front_weight: 1.0
+  front_lam_over: 2.0
+  cons_weight: 0.1
+
+train:
+  lr: 6.0e-5              # ex_esc50.py của EfficientAT (fine-tune mn10_as)
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  warmup_ratio: 0.05
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+  batch_size: 64
+  eval_batch_size: 64
+  epochs: 50
+  patience: 8
+  stage1_epochs: 8
+  ema_decay: 0.999
+  amp: bf16
+  seed: 42
+  resume_every: 1
+
+student:
+  type: efficientat
+  variant: mn10_as
+  width_mult: 1.0
+  repo_url: https://github.com/fschmid56/EfficientAT.git
+  commit: a425fdc
+  repo_dir: /marimo/ext/EfficientAT
