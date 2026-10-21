@@ -180,7 +180,7 @@
   "crossfit": {
     "folds": 5,
     "exclude_noise_ytids": "config/audioset_train_noise_ytids.txt",
-    "packed": "teacher_unified.pt",
+    "packed": "beats_teacher_logits_clean.pt",
     "save_weights": true,
     "n_hat_cache": "output/frcrn_cache_fp32",
     "at_layers": [
@@ -188,7 +188,7 @@
       12
     ],
     "at_source": "rollout",
-    "at_packed": "teacher_unified_at_rollout.pt",
+    "at_packed": "beats_teacher_logits_at_rollout_l6l12.pt",
     "_note": "atmaps: attention rollout tới layer 6/12 trên nhiễu sạch (AT rollout, AT Pearson)."
   }
 }
