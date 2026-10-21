@@ -76,6 +76,9 @@ Accuracy trên validation sạch, trọng số EMA, chạy ngày 2026-10-20/21 t
 | `panns_at_energy` | 0.518 |
 | `panns_at_rollout` | 0.515 |
 | `panns_at_pearson` | 0.512 |
+| `mn10_at_energy` | 0.542 |
+| `mn10_at_rollout` | 0.544 |
+| `mn10_at_pearson` | 0.538 |
 
 ## Kiểm thử
 
