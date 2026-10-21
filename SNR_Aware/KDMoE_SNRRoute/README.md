@@ -62,7 +62,12 @@ và logit teacher của bước 1-2).
 
 ## Kết quả tham chiếu
 
-Đang chạy, chưa có số.
+Accuracy trên validation sạch, trọng số EMA, chạy ngày 2026-10-20/21 trên molab (1 GPU), seed 2026. Chạy lại cho số gần như vậy (GPU không tất định từng bit).
+
+| Run | Acc val sạch |
+|---|---|
+| `panns_snrroute` | 0.521 (router học: 0.519) |
+| `mn10_snrroute` | 0.556 (router học: 0.550) |
 
 ## Kiểm thử
 
