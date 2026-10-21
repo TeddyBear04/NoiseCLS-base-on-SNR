@@ -49,12 +49,12 @@ RUNS="panns_reviewkd" bash run.sh          # chỉ chạy một số run (cách 
 `run.sh` chạy tuần tự (1 GPU) và bỏ qua bước đã xong (cache, teacher, run đã có `stage2/result.json`):
 
 1. **cache**: FRCRN đóng băng tính `n_hat` fp32 cho train/validation/test (`output/frcrn_cache_fp32/`) và SNR năng lượng FRCRN mỗi clip (`frcrn_{split}.snr.npy`).
-2. **teacher**: BEATs iter3+ AS2M cpt2 fine-tune 36 lớp trên nhiễu sạch, cross-fit 5 fold theo `noise_ytid` (`config/teacher.json`) -> logit out-of-fold `output/teacher_unified/teacher_unified.pt` + trọng số 5 fold. Nếu chưa có, `run.sh` tải teacher dùng chung từ HuggingFace `Keshio1/frcrn-kdmoe-teacher` (private, cần `hf auth login` bằng tài khoản được cấp quyền; kiểm `SHA256SUMS`), tải không được mới train lại (~30 phút).
+2. **teacher**: BEATs iter3+ AS2M cpt2 fine-tune 36 lớp trên nhiễu sạch, cross-fit 5 fold theo `noise_ytid` (`config/teacher.json`) -> logit out-of-fold `output/teacher_unified/beats_teacher_logits_clean.pt` + trọng số 5 fold. Nếu chưa có, `run.sh` tải teacher dùng chung từ HuggingFace `Keshio1/frcrn-kdmoe-teacher` (private, cần `hf auth login` bằng tài khoản được cấp quyền; kiểm `SHA256SUMS`), tải không được mới train lại (~30 phút).
 3. **features teacher**: token BEATs layer 3/6/9/12 trên n_hat (ReviewKD), từ trọng số 5 fold đã lưu.
 4. **train**: lần lượt từng run ở bảng trên (`main.py train --config ...`), 2 giai đoạn: stage 1 chỉ học L_front, stage 2 toàn bộ loss; kết quả `output/runs/<run>/train/`.
 5. **evaluate**: `evaluate.py` chấm validation + test theo từng mức SNR, tập sạch/rò AudioSet -> `output/eval/metrics_by_snr.csv` + `predictions_*.csv` (cho McNemar).
 
-Nhánh này cần đặc trưng bên trong teacher nên cần thêm trọng số 5 fold (`output/teacher_unified/fold*.pt`, có trên repo HF); đặc trưng được xuất lại từ 5 fold (~10 phút). Teacher trên HF là bản train ngày 2026-10-21 (cùng config, seed 2026), chính là teacher của các run mn10 + AT / FitNets / ReviewKD; các run còn lại trong bảng tham chiếu dùng một lần train teacher trước đó (cùng config).
+Nhánh này cần đặc trưng bên trong teacher nên cần thêm trọng số 5 fold (`output/teacher_unified/beats_teacher_fold*_weights.pt`, có trên repo HF); đặc trưng được xuất lại từ 5 fold (~10 phút). Teacher trên HF là bản train ngày 2026-10-21 (cùng config, seed 2026), chính là teacher của các run mn10 + AT / FitNets / ReviewKD; các run còn lại trong bảng tham chiếu dùng một lần train teacher trước đó (cùng config).
 
 Log từng bước nằm ở `output/logs/`. Muốn kiểm nhanh trước khi chạy thật:
 `python main.py smoke --config config/train_panns_reviewkd.json` (32 mẫu mỗi split, 1 epoch mỗi giai đoạn; cần cache
