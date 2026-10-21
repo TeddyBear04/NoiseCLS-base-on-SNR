@@ -67,6 +67,7 @@ Accuracy trên validation sạch, trọng số EMA, chạy ngày 2026-10-20/21 t
 | Run | Acc val sạch |
 |---|---|
 | `panns_fitnets` | 0.521 |
+| `mn10_fitnets` | 0.498 |
 
 ## Kiểm thử
 
