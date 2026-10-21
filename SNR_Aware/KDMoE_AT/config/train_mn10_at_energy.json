@@ -1,0 +1,26 @@
+{
+  "paths": {
+    "dataset": "/marimo/dataset/mix-dataset",
+    "frcrn_checkpoint": "model/frcrn_best.pt",
+    "frcrn_config": "config/frcrn.yaml",
+    "student_config": "config/kdmoe_mn10_at.yaml",
+    "group_map": "config/group_map.json",
+    "membership": "config/membership.npy",
+    "teacher_cache": "output/teacher_unified/teacher_unified_at_energy.pt",
+    "frcrn_cache_dir": "output/frcrn_cache_fp32",
+    "output": "output/runs/mn10_at_energy",
+    "validation_exclude_noise_ytids": "config/audioset_train_noise_ytids.txt"
+  },
+  "data": {
+    "train_split": "train",
+    "validation_split": "validation",
+    "clip_seconds": 4.0,
+    "num_workers": 4,
+    "paired_units_per_batch": 32
+  },
+  "runtime": {
+    "device": "auto",
+    "smoke_samples": 32,
+    "seed": 2026
+  }
+}
