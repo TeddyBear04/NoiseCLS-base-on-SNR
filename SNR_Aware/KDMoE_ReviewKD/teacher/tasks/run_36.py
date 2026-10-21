@@ -1,0 +1,628 @@
+"""Mid-SNR expert on an SSLAM backbone.
+
+    python -u main.py teacher36 --config config/train_config_high.json
+    python -u main.py student36 --config config/train_config_high.json --run <run>
+    python -u main.py test36    --config config/train_config_high.json --run <run>
+    python -u main.py report36  --config config/train_config_high.json
+
+Same experiment as `../Mid_Expert`, two things changed:
+
+  * SSLAM replaces BEATs (0.502 vs 0.480 mAP on AudioSet, and pretrained on
+    mixtures rather than isolated clips).
+  * CRD aligns PATCH TOKENS instead of one pooled vector. The BEATs run threw the
+    time-frequency structure away at `sequence.mean(dim=1)` before the loss saw
+    it, and that is the most likely reason CRD contributed so little there
+    (+0.37 points against KD's +0.92).
+
+There is no `bank36` stage here. A patch-level teacher bank would be
+201 tokens x 768 x 43,200 rows, about 13 GB, so the frozen teacher runs online
+beside the student instead. That costs roughly 50% more time per epoch, removes
+the staleness the BEATs project had to caveat, and matches how SSLAM itself runs
+its teacher.
+
+Requires `transformers<5` and `timm`; transformers 5.x cannot load the hub's
+remote code. See `models/sslam.py`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import random
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import torch
+from sklearn.metrics import f1_score, precision_recall_fscore_support
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
+
+HERE = Path(__file__).resolve().parent.parent
+# Bản chép từ SNR_Expert_SSLAM/tasks/run_36.py cho teacher BEATs của KDMoE_ReviewKD: chỉ giữ backbone
+# BEATs (mã nguồn BEATs chép ở ../beats); HERE = KDMoE_ReviewKD/teacher.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from models.audio_io import load_float_audio, load_mix_manifest  # noqa: E402
+
+from expert_lib import (  # noqa: E402
+    AttentionMaskPool, CRDLoss, FiLM, Projection, film_deviation, band_slice_mask,
+    sample_negatives,
+)
+from models.beats_backbone import BEATsEncoder, beats_head_rows, load_beats  # noqa: E402
+
+
+#   run1_baseline  the recipe without any privileged information: CE only, no
+#                  FiLM, checkpoint chosen on the whole validation split. The
+#                  control every other run is measured against, because a
+#                  published baseline from a different training run cannot enter
+#                  a paired test and cannot separate method from run-to-run noise.
+#   run7_attn      direction 2 on its own: run1_baseline with the token mean
+#                  replaced by a soft attention mask (gated attention, Ilse et al.
+#                  ICML 2018). No KD, no CRD, no FiLM, same selection, so the paired
+#                  test against run1_baseline isolates the mask and nothing else.
+#                  5 and 6 stay reserved for remix and GRL (VERSIONS.md).
+#   run8_attn_kd_crd  run3_kd_crd with the same mask switched on, and nothing else
+#                  changed, so the paired test against run3_kd_crd says what the
+#                  mask adds once KD and CRD are already in.
+RUNS = {
+    "run1_baseline": {"a_kd": 0.0, "b_crd": 0.0, "film": False, "select_on": "full"},
+    "run2_ce_only": {"a_kd": 0.0, "b_crd": 0.0, "film": True, "select_on": "band"},
+    "run3_kd_crd": {"a_kd": 1.0, "b_crd": 0.8, "film": True, "select_on": "band"},
+    "run3b_crd_only": {"a_kd": 0.0, "b_crd": 0.8, "film": True, "select_on": "band"},
+    "run3c_kd_only": {"a_kd": 1.0, "b_crd": 0.0, "film": True, "select_on": "band"},
+    "run7_attn": {"a_kd": 0.0, "b_crd": 0.0, "film": False, "select_on": "full",
+                  "attention": True},
+    "run8_attn_kd_crd": {"a_kd": 1.0, "b_crd": 0.8, "film": True, "select_on": "band",
+                         "attention": True},
+}
+RUN_REQUIRED = ("student36", "test36")
+STAGES = ("teacher36", "student36", "test36", "report36")
+
+
+# --------------------------------------------------------------------------- setup
+
+
+def load_config(path: Path) -> dict:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def seed_everything(seed: int) -> torch.device:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = True
+    return device
+
+
+def autocast(device: torch.device):
+    return torch.autocast(
+        device_type=device.type, dtype=torch.bfloat16,
+        enabled=device.type == "cuda" and torch.cuda.is_bf16_supported(),
+    )
+
+
+def metrics(logits: torch.Tensor, targets: torch.Tensor, snrs: torch.Tensor,
+            labels) -> dict:
+    """Copied rather than imported: the BEATs version lives in a module that pulls
+    in a colliding `config` package. Same computation, same field names, so the
+    two projects' numbers line up."""
+    predictions = logits.argmax(dim=1).cpu().numpy()
+    expected = targets.cpu().numpy()
+    indices = np.arange(len(labels))
+    precision, recall, class_f1, support = precision_recall_fscore_support(
+        expected, predictions, labels=indices, zero_division=0)
+    result = {
+        "accuracy": float((predictions == expected).mean()),
+        "precision": float(precision.mean()),
+        "recall": float(recall.mean()),
+        "macro_f1": float(class_f1.mean()),
+        "micro_f1": float(f1_score(expected, predictions, average="micro",
+                                   zero_division=0)),
+        "per_class": {label: {"f1": float(class_f1[i]), "support": int(support[i])}
+                      for i, label in enumerate(labels)},
+        "per_snr": {},
+    }
+    snr_values = snrs.cpu().numpy()
+    for snr in sorted(set(snr_values.tolist())):
+        mask = snr_values == snr
+        _, _, snr_f1, _ = precision_recall_fscore_support(
+            expected[mask], predictions[mask], labels=indices, zero_division=0)
+        result["per_snr"][str(snr)] = {
+            "samples": int(mask.sum()),
+            "accuracy": float((predictions[mask] == expected[mask]).mean()),
+            "macro_f1": float(snr_f1.mean()),
+            "micro_f1": float(f1_score(expected[mask], predictions[mask],
+                                       average="micro", zero_division=0)),
+        }
+    return result
+
+
+# ------------------------------------------------------------------------- dataset
+
+
+class ClipDataset(Dataset):
+    """One audio column plus label, SNR and the manifest row it came from.
+
+    Returns both the mixture and the clean noise when `paired` is set, which is
+    what lets the frozen teacher run beside the student in the same step.
+    """
+
+    def __init__(self, root: Path, rows, row_index, label_to_index, samples, rate,
+                 column, paired_column=None):
+        self.root = Path(root)
+        self.rows = rows
+        self.row_index = row_index
+        self.label_to_index = label_to_index
+        self.samples = samples
+        self.rate = rate
+        self.column = column
+        self.paired_column = paired_column
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def __getitem__(self, index: int) -> dict:
+        row = self.rows[index]
+        item = {
+            "audio": load_float_audio(self.root / row[self.column], self.rate,
+                                      self.samples),
+            "target": self.label_to_index[row["label_names"]],
+            "snr": int(float(row["target_snr_db"])),
+            "row_index": self.row_index[index],
+        }
+        if self.paired_column:
+            item["paired"] = load_float_audio(self.root / row[self.paired_column],
+                                              self.rate, self.samples)
+        return item
+
+
+class Corpus:
+    def __init__(self, config: dict, column: str, paired_column=None):
+        dataset = config["dataset"]
+        self.root = Path(dataset["path"])
+        self.rows = load_mix_manifest(self.root)
+        self.labels = (self.root / dataset["labels_file"]).read_text(
+            encoding="utf-8").splitlines()
+        self.label_to_index = {name: i for i, name in enumerate(self.labels)}
+        self.index_of = {id(row): i for i, row in enumerate(self.rows)}
+        self.samples = int(dataset["clip_seconds"] * dataset["sample_rate"])
+        self.rate = dataset["sample_rate"]
+        self.column = column
+        self.paired_column = paired_column
+        self.by_split: dict[str, list] = {}
+        for row in self.rows:
+            self.by_split.setdefault(row["split"], []).append(row)
+
+    def loader(self, rows, batch_size, workers, shuffle, device, seed=2026):
+        dataset = ClipDataset(self.root, rows,
+                              [self.index_of[id(r)] for r in rows],
+                              self.label_to_index, self.samples, self.rate,
+                              self.column, self.paired_column)
+        return DataLoader(
+            dataset, batch_size=batch_size, shuffle=shuffle,
+            generator=torch.Generator().manual_seed(seed) if shuffle else None,
+            num_workers=workers, pin_memory=device.type == "cuda")
+
+    def audit(self) -> dict:
+        train = self.by_split["train"]
+        unique = len({row["noise_path"] for row in train})
+        report = {"rows": len(self.rows),
+                  "per_split": {k: len(v) for k, v in self.by_split.items()},
+                  "labels": len(self.labels), "unique_noise": unique,
+                  "reuse_ratio": round(len(train) / unique, 4)}
+        print(json.dumps(report, indent=2), flush=True)
+        return report
+
+
+# --------------------------------------------------------------------------- model
+
+
+class Classifier(nn.Module):
+    """SSLAM encoder, optional SNR-FiLM on the pooled vector, then 36 classes.
+
+    `forward` hands back the patch tokens too, because the patch-level CRD term
+    is the whole reason this project exists separately from the BEATs one.
+
+    With `backbone.head_init = "audioset"` the head starts from the finetuned
+    checkpoint's AudioSet rows for our 36 labels, as the BEATs pipeline did;
+    `"random"` is what SSLAM_pretrain (no classifier) forces.
+    """
+
+    def __init__(self, encoder: nn.Module, dim: int, classes: int,
+                 film: FiLM | None, pool: AttentionMaskPool | None = None,
+                 head: nn.Module | None = None):
+        super().__init__()
+        self.encoder = encoder
+        # CLAP, CED and EfficientAT bring their own head (pretrained layers + our rows).
+        self.head = head if head is not None else nn.Linear(dim, classes)
+        self.film = film
+        self.pool = pool
+
+    def forward(self, waveform, snr_db=None):
+        patches, pooled = self.encoder(waveform)
+        if self.pool is not None:
+            # Direction 2: the soft mask replaces the encoder's own pooling. Patch
+            # tokens pass through untouched, so patch-level CRD is unaffected.
+            pooled, _ = self.pool(patches)
+        if self.film is not None and snr_db is not None:
+            pooled = self.film(pooled, snr_db)
+        return self.head(pooled), pooled, patches
+
+
+def teacher_backbone(config: dict) -> dict:
+    """The teacher's backbone: `teacher_backbone` when the student uses another
+    architecture (a compact student distilled from the BEATs teacher), else the
+    student's own."""
+    return config.get("teacher_backbone", config["backbone"])
+
+
+def build_model(config: dict, device: torch.device, film_enabled: bool,
+                trainable_blocks: int, attention: bool = False,
+                backbone: dict | None = None) -> Classifier:
+    backbone = backbone or config["backbone"]
+    kind = backbone.get("type", "sslam")
+    head = None
+    if kind == "beats":
+        raw, checkpoint = load_beats(device, resolve_checkpoint(backbone["checkpoint_candidates"]),
+                                     backbone.get("dropout", 0.0), backbone.get("layerdrop", 0.0))
+        encoder = BEATsEncoder(raw)
+        head_rows = lambda: beats_head_rows(checkpoint, label_mids(config))  # noqa: E731
+    else:
+        raise ValueError(f"unknown backbone type {kind!r}; the KDMoE_ReviewKD teacher is BEATs only")
+
+    trainable = 0
+    blocks = encoder.blocks()
+    for block in list(blocks)[len(blocks) - trainable_blocks:] if trainable_blocks else []:
+        for parameter in block.parameters():
+            parameter.requires_grad = True
+            trainable += parameter.numel()
+    print(f"backbone={kind} unfroze {trainable/1e6:.1f}M params in the last "
+          f"{trainable_blocks} of {len(blocks)} blocks", flush=True)
+
+    film = FiLM(backbone["embedding_dim"],
+                config["student"]["film"]["hidden"]) if film_enabled else None
+    pool = AttentionMaskPool(backbone["embedding_dim"],
+                             config["student"]["attention"]["hidden"]) if attention else None
+    model = Classifier(encoder, backbone["embedding_dim"],
+                       config["experiment"]["num_classes"], film, pool, head)
+    if kind == "clap" and backbone.get("head_init") == "zeroshot":
+        print("head = CLAP projection MLP + zero-shot text classifier "
+              f"(prompt {backbone['prompt']!r})", flush=True)
+    if kind in ("ced", "efficientat"):
+        print("head = the checkpoint's own AudioSet head, last layer cut to the rows "
+              "of our 36 labels", flush=True)
+    elif backbone.get("head_init", "random") == "audioset":
+        weight, bias = head_rows()
+        with torch.no_grad():
+            model.head.weight.copy_(weight)
+            model.head.bias.copy_(bias)
+        print("head warm-started from the AudioSet rows of our 36 labels", flush=True)
+    print(f"pooling={'attention_mask' if attention else encoder.pooling}", flush=True)
+    return model.to(device)
+
+
+def resolve_checkpoint(candidates: list[str]) -> Path:
+    """First existing path; relative entries are taken from this project folder."""
+    for candidate in candidates:
+        path = Path(candidate)
+        path = path if path.is_absolute() else HERE / path
+        if path.exists():
+            return path
+    raise FileNotFoundError("none of the backbone checkpoints exist: " + ", ".join(candidates))
+
+
+def label_names(config: dict) -> list[str]:
+    """labels.txt in order - the model's class order, and CLAP's prompt words."""
+    dataset = config["dataset"]
+    return [line.strip() for line in
+            (Path(dataset["path"]) / dataset["labels_file"]).read_text(
+                encoding="utf-8").splitlines() if line.strip()]
+
+
+def label_mids(config: dict) -> list[str]:
+    """AudioSet mid of every label, in labels.txt order (the model's class order)."""
+    dataset = config["dataset"]
+    root = Path(dataset["path"])
+    labels = [line.strip() for line in
+              (root / dataset["labels_file"]).read_text(encoding="utf-8").splitlines()
+              if line.strip()]
+    mid_of = {}
+    with (root / dataset["manifest_file"]).open(encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            mid_of.setdefault(row["label_names"], row["label_mids"])
+            if len(mid_of) == len(labels):
+                break
+    return [mid_of[label] for label in labels]
+
+
+def trainable_parameters(model: Classifier):
+    return [p for p in model.parameters() if p.requires_grad]
+
+
+def snapshot(model: Classifier) -> dict:
+    return {k: v.detach().cpu().clone()
+            for k, v in model.state_dict().items()
+            if v.dtype.is_floating_point}
+
+
+# -------------------------------------------------------------------------- shared
+
+
+@torch.inference_mode()
+def collect(model: Classifier, loader, device, use_snr: bool) -> dict:
+    model.eval()
+    logits, targets, snrs, rows, pooled, masks = [], [], [], [], [], []
+    for batch in loader:
+        snr = batch["snr"].float().to(device, non_blocking=True) if use_snr else None
+        with autocast(device):
+            out, vec, _ = model(batch["audio"].to(device, non_blocking=True), snr)
+        if getattr(model, "pool", None) is not None:
+            masks.append(model.pool.last_mask.half().cpu())
+        logits.append(out.float().cpu())
+        pooled.append(vec.float().cpu())
+        targets.append(batch["target"])
+        snrs.append(batch["snr"])
+        rows.append(batch["row_index"])
+    result = {"logits": torch.cat(logits), "target": torch.cat(targets),
+              "snr": torch.cat(snrs), "row_index": torch.cat(rows),
+              "pooled": torch.cat(pooled)}
+    if masks:
+        result["mask"] = torch.cat(masks)
+    return result
+
+
+def split_metrics(out: dict, labels, band) -> dict:
+    full = metrics(out["logits"], out["target"], out["snr"].long(), labels)
+    mask = band_slice_mask(out["snr"].float(), band[0], band[1])
+    in_band = metrics(out["logits"][mask], out["target"][mask],
+                       out["snr"][mask].long(), labels)
+    in_band["samples"] = int(mask.sum())
+    return {"full": full, "band": in_band}
+
+
+def resolve_stage(name: str):
+    from tasks import stages
+    return {"teacher36": stages.command_teacher36,
+            "student36": stages.command_student36,
+            "test36": stages.command_test36}[name] if name != "report36" else (
+        __import__("tasks.report_36", fromlist=["command_report36"]).command_report36)
+
+
+def apply_run(config: dict, name: str) -> dict:
+    switches = RUNS[name]
+    config["run"] = name
+    config["loss"]["a_kd"] = switches["a_kd"]
+    config["loss"]["b_crd"] = switches["b_crd"]
+    config["student"]["film"]["enabled"] = switches["film"]
+    # `evaluation.select_on` overrides every run's own choice: with validation on all
+    # six levels, a run's "band" would quietly select on the 15-20 dB slice of it.
+    select_on = config.get("evaluation", {}).get("select_on", switches["select_on"])
+    config["student"]["select_on"] = select_on
+    config["student"]["attention"]["enabled"] = switches.get("attention", False)
+    print(f"run={name} a_kd={switches['a_kd']} b_crd={switches['b_crd']} "
+          f"film={switches['film']} select_on={select_on} "
+          f"attention={config['student']['attention']['enabled']} "
+          f"crd_level={config['loss']['crd_level']}", flush=True)
+    return config
+
+
+def apply_seed(config: dict, seed: int) -> dict:
+    """Another seed of the same recipe, written to `<outputs.dir>_s<seed>`.
+
+    Its own folder so no seed overwrites another's checkpoint or predictions, and
+    `report36` can find every seed of a run by that suffix. The teacher is still
+    read from the base folder: a KD/CRD run at another seed distils from the same
+    teacher, which is what makes the seeds comparable.
+    """
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs.setdefault("seed_base_dir", outputs["dir"])
+    outputs.setdefault("seed_base_seed", config["experiment"]["seed"])
+    outputs["dir"] = f"{outputs['seed_base_dir']}_s{seed}"
+    if "checkpoint_dir" in outputs:   # --full-test: that seed's own checkpoints
+        outputs["checkpoint_dir"] = f"{outputs['checkpoint_dir']}_s{seed}"
+    config["experiment"]["seed"] = seed
+    print(f"seed={seed} outputs={outputs['dir']} teacher_from={outputs['teacher_dir']}",
+          flush=True)
+    return config
+
+
+def apply_teacher_dir(config: dict, folder: str) -> dict:
+    """Distil from the teacher in another output folder, into `<dir>_teacher-<folder>`.
+
+    Lets a band-only student learn from the teacher trained on every SNR level's
+    noise (the all-SNR config's), so the teacher is the only thing that changes.
+    """
+    outputs = config["outputs"]
+    outputs["teacher_dir"] = folder
+    outputs["dir"] = f"{outputs['dir']}_teacher-{Path(folder).name}"
+    print(f"teacher_from={folder} outputs={outputs['dir']}", flush=True)
+    return config
+
+
+def apply_crd_n_data(config: dict, n_data: int) -> dict:
+    """Pin CRD's n_data (noise prior and Z normaliser), into `<dir>_crdn<n>`."""
+    config["loss"]["crd_n_data"] = n_data
+    config["outputs"]["dir"] = f"{config['outputs']['dir']}_crdn{n_data}"
+    print(f"crd_n_data={n_data} outputs={config['outputs']['dir']}", flush=True)
+    return config
+
+
+def apply_sam(config: dict, rho: float) -> dict:
+    """Train the student with SAM (Foret et al., ICLR 2021), into `<dir>_sam<rho>`.
+
+    The paper's default rho = 0.05 needed no tuning across its experiments. Only the
+    optimiser step changes; loss, data and schedule stay as they are.
+    """
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs["dir"] = f"{outputs['dir']}_sam{rho:g}"
+    config["student"]["sam_rho"] = rho
+    print(f"sam_rho={rho} outputs={outputs['dir']}", flush=True)
+    return config
+
+
+def apply_born_again(config: dict, folder: str) -> dict:
+    """Add Born-Again self-distillation (Furlanello et al., ICML 2018), into `<dir>_ban`.
+
+    The student of the same run in `folder` (trained on the same band-only data)
+    becomes a second, frozen teacher on the mixture itself. BAN+L as in the paper:
+    the label loss stays, the teacher loss is added with weight 1, logits unsoftened.
+    The clean-noise teacher's KD and CRD are kept alongside it.
+    """
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs["dir"] = f"{outputs['dir']}_ban"
+    config["loss"]["ban"] = {"dir": folder, "weight": 1.0, "temperature": 1.0}
+    print(f"born_again_from={folder} outputs={outputs['dir']}", flush=True)
+    return config
+
+
+def apply_epochs(config: dict, epochs: int) -> dict:
+    """A longer student schedule, written to `<outputs.dir>_e<epochs>`.
+
+    The band-only config trains on a third of the clips, so its 10 epochs are a
+    third of the updates the all-SNR config gets. This stretches the student's
+    schedule (warmup + cosine scale with it) without touching anything else; the
+    teacher is still read from the base folder, so KD/CRD distil from the same one.
+    """
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs["dir"] = f"{outputs['dir']}_e{epochs}"
+    config["student"]["finetune_epochs"] = epochs
+    print(f"epochs={epochs} outputs={outputs['dir']} teacher_from={outputs['teacher_dir']}",
+          flush=True)
+    return config
+
+
+def apply_full_test(config: dict) -> dict:
+    """Score already-trained students on EVERY SNR level, not only the band.
+
+    Training is untouched - students already train on all six levels. Only the
+    test changes: `evaluation.band_only` off, checkpoints read from the normal
+    folder, results written to `<outputs.dir>_fulltest` so the band-only results
+    stay as they are. The report then adds low / mid / high slices.
+    """
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs["checkpoint_dir"] = outputs["dir"]
+    outputs["dir"] = f"{outputs['dir']}_fulltest"
+    config.setdefault("evaluation", {})["band_only"] = False
+    print(f"full test: checkpoints from {outputs['checkpoint_dir']}, "
+          f"results to {outputs['dir']}", flush=True)
+    return config
+
+
+def write_params(config: dict, out_dir: Path, name: str) -> Path:
+    """The run's effective parameters, written before training starts.
+
+    Everything another method needs to be run under the same conditions: the
+    config after `--run`/`--seed` were applied, the commit it ran from, and the
+    software/hardware. `report36` turns these into `thong_so.csv`.
+    """
+    import datetime
+    import subprocess
+
+    def git(*args):
+        try:
+            return subprocess.run(["git", *args], cwd=HERE, capture_output=True,
+                                  text=True, timeout=30).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    payload = {
+        "config": config,
+        "commit": git("rev-parse", "HEAD") or "unknown",
+        # Tracked files only: untracked artifact folders are not a change to the code.
+        "dirty": bool(git("status", "--porcelain", "--untracked-files=no", "--", ".")),
+        "torch": torch.__version__,
+        "device": (torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"),
+        "started": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{name}_params.json"
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"params -> {path} (commit {payload['commit'][:7]}"
+          f"{', dirty' if payload['dirty'] else ''})", flush=True)
+    return path
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("stage", choices=STAGES)
+    parser.add_argument("--config", type=Path,
+                        default=HERE / "config/train_config_high.json")
+    parser.add_argument("--run", choices=sorted(RUNS),
+                        help="Required for student36 and test36.")
+    parser.add_argument("--seed", type=int,
+                        help="Another seed of the same recipe, into <outputs.dir>_s<seed>.")
+    parser.add_argument("--full-test", action="store_true",
+                        help="test36/report36 only: score trained students on every SNR "
+                             "level, into <outputs.dir>_fulltest.")
+    parser.add_argument("--epochs", type=int,
+                        help="Student epochs, into <outputs.dir>_e<epochs>; the teacher is "
+                             "still read from <outputs.dir>.")
+    parser.add_argument("--patience", type=int,
+                        help="Student early-stopping patience (epochs without a better "
+                             "validation macro-F1). Longer --epochs schedules need more.")
+    parser.add_argument("--teacher-dir",
+                        help="Read the KD/CRD teacher from this output folder instead, "
+                             "into <outputs.dir>_teacher-<folder>.")
+    parser.add_argument("--crd-n-data", type=int,
+                        help="Pin CRD's n_data (default: train-set size), into "
+                             "<outputs.dir>_crdn<n>.")
+    parser.add_argument("--sam", type=float, metavar="RHO",
+                        help="Student optimiser SAM with this rho (paper default 0.05), "
+                             "into <outputs.dir>_sam<rho>.")
+    parser.add_argument("--ban-dir",
+                        help="Born-Again: the same run's student in this folder becomes a "
+                             "second KD teacher on the mixture, into <outputs.dir>_ban.")
+    arguments = parser.parse_args()
+    if arguments.stage == "teacher36" and (arguments.teacher_dir or arguments.crd_n_data
+                                           or arguments.sam or arguments.ban_dir):
+        parser.error("--teacher-dir / --crd-n-data / --sam / --ban-dir change the student only.")
+    if arguments.patience is not None and arguments.stage == "teacher36":
+        parser.error("--patience changes the student only; the teacher keeps its own.")
+    if arguments.epochs is not None and arguments.stage == "teacher36":
+        parser.error("--epochs changes the student only; the teacher keeps its own schedule.")
+    if arguments.full_test and arguments.stage not in ("test36", "report36"):
+        parser.error("--full-test only applies to test36 and report36; training is "
+                     "already on every SNR level.")
+
+    if arguments.stage in RUN_REQUIRED and arguments.run is None:
+        parser.error(f"{arguments.stage} needs --run: {', '.join(sorted(RUNS))}")
+    if arguments.stage not in RUN_REQUIRED and arguments.run is not None:
+        parser.error(f"{arguments.stage} ignores --run; drop it.")
+
+    config = load_config(arguments.config)
+    print(f"stage={arguments.stage} config={arguments.config}", flush=True)
+    if arguments.run is not None:
+        config = apply_run(config, arguments.run)
+    if arguments.teacher_dir:         # before --epochs, whose setdefault must not override it
+        config = apply_teacher_dir(config, arguments.teacher_dir)
+    if arguments.crd_n_data:
+        config = apply_crd_n_data(config, arguments.crd_n_data)
+    if arguments.ban_dir:
+        config = apply_born_again(config, arguments.ban_dir)
+    if arguments.sam:
+        config = apply_sam(config, arguments.sam)
+    if arguments.epochs is not None:  # --full-test and --seed build on its folder
+        config = apply_epochs(config, arguments.epochs)
+    if arguments.patience is not None:
+        config["student"]["patience"] = arguments.patience
+        print(f"patience={arguments.patience}", flush=True)
+    if arguments.full_test:          # before --seed, which then suffixes both folders
+        config = apply_full_test(config)
+    if arguments.seed is not None:
+        config = apply_seed(config, arguments.seed)
+    resolve_stage(arguments.stage)(config)
+
+
+if __name__ == "__main__":
+    main()
