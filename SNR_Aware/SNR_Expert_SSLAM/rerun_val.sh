@@ -56,7 +56,7 @@ for name in ("beats_fullsnr", "sslam_fullsnr", "high_beats"):
 PYEOF
 
 # Smoke: teacher + 1 student + test trên test và validation, phát hiện lỗi môi trường trước khi chạy dài
-S=$C/beats_fullsnr_smoke.json
+S=$C/${ROUNDS%% *}_smoke.json   # smoke theo đợt đầu tiên trong ROUNDS (backbone của chính máy này)
 step smoke_teacher $PY -u main.py teacher36 --config $S
 step smoke_student $PY -u main.py student36 --config $S --run run8_attn_kd_crd
 step smoke_test    $PY -u main.py test36    --config $S --run run8_attn_kd_crd
