@@ -108,6 +108,18 @@ ps -eo pid,etime,args | grep main.py | grep -v grep
 `--run` **bắt buộc** với `student36`/`test36`; `teacher36` từ chối nó. Lý do: config nằm
 trong git, sửa tay sẽ bị `git pull` ghi đè và run chạy sai trong im lặng.
 
+### Chạy lại để lấy số validation (Result.xlsx)
+
+`rerun_val.sh` chạy lại Đợt 3-5 của Result.xlsx (BEATs 15-20 dB, BEATs và SSLAM mọi SNR; 4 run mỗi
+đợt, seed 2026), chấm mỗi student trên test và trên validation (`test36 --eval-split validation`,
+ghi vào `<outputs.dir>_validation`), rồi `report36` cho cả hai. Tuần tự từng job, có smoke test,
+chạy lại thì bỏ qua bước đã xong (`output/rerun_val/done/`).
+
+```bash
+nohup bash rerun_val.sh > output/rerun_val.out 2>&1 &
+cat output/rerun_val/chain.log
+```
+
 ## Khác biệt cần biết khi so với bản BEATs
 
 **Head khởi tạo ngẫu nhiên.** `SSLAM_pretrain` không có classifier AudioSet để
