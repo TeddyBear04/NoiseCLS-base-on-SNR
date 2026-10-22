@@ -592,7 +592,9 @@ def command_report36(config: dict) -> None:
 
     # The published Result.xlsx numbers when the config has them; the on-disk
     # checkpoint's metrics file is a different training run and only a fallback.
-    summary.extend(published_rows(config, band, band_only) or baseline_rows(labels, band))
+    # Both baselines are test numbers; a --eval-split report must not sit next to them.
+    if not config.get("evaluation", {}).get("eval_split"):
+        summary.extend(published_rows(config, band, band_only) or baseline_rows(labels, band))
     summary.sort(key=lambda r: (slice_order(r["slice"]), r["run"]))
     write_csv(results_dir / "metrics_by_run.csv", summary,
               ["run", "slice", "samples", *METRIC_COLUMNS])

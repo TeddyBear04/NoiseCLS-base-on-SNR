@@ -543,6 +543,26 @@ def apply_full_test(config: dict) -> dict:
     return config
 
 
+def apply_eval_split(config: dict, split: str) -> dict:
+    """Score already-trained students on another split (e.g. validation) instead of test.
+
+    Training is untouched: checkpoints are read from the normal folder (or the one
+    --full-test already points at), results are written to `<outputs.dir>_<split>`,
+    and `dataset.test_split` is swapped for `dataset.<split>_split`, so test36 and
+    report36 compute the same metrics on that split. The report then drops the
+    published Result.xlsx baseline, which holds test numbers.
+    """
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs.setdefault("checkpoint_dir", outputs["dir"])
+    outputs["dir"] = f"{outputs['dir']}_{split}"
+    config["dataset"]["test_split"] = config["dataset"][f"{split}_split"]
+    config.setdefault("evaluation", {})["eval_split"] = split
+    print(f"eval split: {split} ({config['dataset']['test_split']}), checkpoints from "
+          f"{outputs['checkpoint_dir']}, results to {outputs['dir']}", flush=True)
+    return config
+
+
 def write_params(config: dict, out_dir: Path, name: str) -> Path:
     """The run's effective parameters, written before training starts.
 
@@ -589,6 +609,9 @@ def main() -> None:
     parser.add_argument("--full-test", action="store_true",
                         help="test36/report36 only: score trained students on every SNR "
                              "level, into <outputs.dir>_fulltest.")
+    parser.add_argument("--eval-split", choices=("validation",),
+                        help="test36/report36 only: score trained students on this split "
+                             "instead of test, into <outputs.dir>_<split>.")
     parser.add_argument("--epochs", type=int,
                         help="Student epochs, into <outputs.dir>_e<epochs>; the teacher is "
                              "still read from <outputs.dir>.")
@@ -618,6 +641,8 @@ def main() -> None:
     if arguments.full_test and arguments.stage not in ("test36", "report36"):
         parser.error("--full-test only applies to test36 and report36; training is "
                      "already on every SNR level.")
+    if arguments.eval_split and arguments.stage not in ("test36", "report36"):
+        parser.error("--eval-split only applies to test36 and report36.")
 
     if arguments.stage in RUN_REQUIRED and arguments.run is None:
         parser.error(f"{arguments.stage} needs --run: {', '.join(sorted(RUNS))}")
@@ -643,6 +668,8 @@ def main() -> None:
         print(f"patience={arguments.patience}", flush=True)
     if arguments.full_test:          # before --seed, which then suffixes both folders
         config = apply_full_test(config)
+    if arguments.eval_split:         # after --full-test: keeps its checkpoint folder
+        config = apply_eval_split(config, arguments.eval_split)
     if arguments.seed is not None:
         config = apply_seed(config, arguments.seed)
     resolve_stage(arguments.stage)(config)
