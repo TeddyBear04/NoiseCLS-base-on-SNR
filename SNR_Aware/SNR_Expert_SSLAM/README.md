@@ -110,8 +110,8 @@ trong git, sửa tay sẽ bị `git pull` ghi đè và run chạy sai trong im l
 
 ### Chạy lại để lấy số validation (Result.xlsx)
 
-`rerun_val.sh` chạy lại Đợt 3-5 của Result.xlsx (BEATs 15-20 dB, BEATs và SSLAM mọi SNR; 4 run mỗi
-đợt, seed 2026), chấm mỗi student trên test và trên validation (`test36 --eval-split validation`,
+`rerun_val.sh` chạy lại Đợt 4-5 của Result.xlsx (BEATs và SSLAM mọi SNR; 4 run mỗi đợt, seed 2026;
+Đợt 3 BEATs 15-20 dB khi thêm `ROUNDS="beats_fullsnr sslam_fullsnr high_beats"`), chấm mỗi student trên test và trên validation (`test36 --eval-split validation`,
 ghi vào `<outputs.dir>_validation`), rồi `report36` cho cả hai. Tuần tự từng job, có smoke test,
 chạy lại thì bỏ qua bước đã xong (`output/rerun_val/done/`).
 

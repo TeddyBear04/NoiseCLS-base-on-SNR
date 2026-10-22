@@ -1,8 +1,8 @@
 #!/bin/bash
-# Chạy lại Đợt 3-5 của Result.xlsx để có số VALIDATION (cùng config, seed 2026, code high-expert):
+# Chạy lại Đợt 4-5 của Result.xlsx để có số VALIDATION (cùng config, seed 2026, code high-expert):
 #   Đợt 4  config/train_config_beats_fullsnr.json   BEATs mọi SNR       (gốc: commit 57accbd)
 #   Đợt 5  config/train_config_sslam_fullsnr.json   SSLAM mọi SNR       (gốc: commit e284ea3)
-#   Đợt 3  config/train_config_high_beats.json      BEATs 15-20 dB      (gốc: 2026-09-29, commit không ghi)
+#   (tuỳ chọn) Đợt 3  config/train_config_high_beats.json  BEATs 15-20 dB (gốc: 2026-09-29): ROUNDS="... high_beats"
 # Mỗi đợt: teacher36 -> 4 student (run1, run7, run3, run8) -> test36 trên test và --eval-split validation
 # (Đợt 3 thêm --full-test để có đủ 6 mức) -> report36 cho cả hai. Tuần tự từng job một trên GPU.
 #
@@ -13,7 +13,7 @@ set -u
 cd "$(dirname "$0")" || exit 1
 export TF_CPP_MIN_LOG_LEVEL=3 PYTHONWARNINGS=ignore
 DATASET=${DATASET:-/marimo/dataset/mix-dataset}
-ROUNDS=${ROUNDS:-beats_fullsnr sslam_fullsnr high_beats}
+ROUNDS=${ROUNDS:-beats_fullsnr sslam_fullsnr}
 RUNS="run1_baseline run7_attn run3_kd_crd run8_attn_kd_crd"
 if [ -z "${PY:-}" ]; then [ -x /tmp/uv-venv/bin/python ] && PY=/tmp/uv-venv/bin/python || PY=python; fi
 W=output/rerun_val; L=$W/logs; D=$W/done; C=$W/configs; mkdir -p $L $D $C
