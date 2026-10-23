@@ -7,10 +7,17 @@ import torch
 from torch import nn
 
 
-def save_checkpoint(path: str | Path, model: nn.Module, **metadata: Any) -> Path:
+def save_checkpoint(
+    path: str | Path,
+    model: nn.Module,
+    *,
+    state_dict: dict[str, torch.Tensor] | None = None,
+    **metadata: Any,
+) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
+    source = model.state_dict() if state_dict is None else state_dict
+    state = {key: value.detach().cpu() for key, value in source.items()}
     torch.save({"model": state, **metadata}, path)
     return path
 

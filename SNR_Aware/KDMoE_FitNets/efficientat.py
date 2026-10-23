@@ -115,6 +115,7 @@ class EfficientATKDMoE(KDMoEModel):
         self._at_stages = list(self._student.get("at_stages", []))
         self._hint_stage = self._student.get("hint_stage")
         self._review_stages = list(self._student.get("review_stages", []))
+        self._spatial_stage = self._student.get("spatial_stage")  # relation KD (relationkd.py)
         with torch.no_grad():  # số kênh từng tầng
             x, self._stage_channels = torch.zeros(1, 1, config.freq_bins, config.num_frames), []
             for module in self.encoder:
@@ -123,10 +124,11 @@ class EfficientATKDMoE(KDMoEModel):
         if self._hint_stage is not None:
             self.hint_regressor = HintRegressor(self._stage_channels[self._hint_stage], config.hint_dim)
         self._stages: list[Tensor] = []
+        self._spatial: Tensor | None = None
         return first.out_features
 
     def _encode_panns(self, x: Tensor, with_noise: bool) -> tuple:
-        taps = set(self._at_stages) | set(self._review_stages) | ({self._hint_stage} - {None})
+        taps = set(self._at_stages) | set(self._review_stages) | ({self._hint_stage, self._spatial_stage} - {None})
         tapped: dict[int, Tensor] = {}
         for index, module in enumerate(self.encoder):
             x = module(x)
@@ -142,6 +144,7 @@ class EfficientATKDMoE(KDMoEModel):
             hint = self.hint_regressor(tapped[self._hint_stage].transpose(2, 3), cfg.at_grid, cfg.at_time_fraction,
                                        cfg.at_freq_fraction)
         self._stages = [tapped[i] for i in self._review_stages]
+        self._spatial = tapped.get(self._spatial_stage)
         tokens, gate = self._gate(features.permute(0, 2, 3, 1))     # (B, F', T', C)
         noise_mel = self.noise_head(tokens) if with_noise else None
         return self.post_fc(tokens.permute(0, 3, 1, 2)), gate, noise_mel, at_maps, hint

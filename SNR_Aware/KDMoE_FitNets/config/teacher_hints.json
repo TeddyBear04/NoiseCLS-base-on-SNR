@@ -180,12 +180,13 @@
   "crossfit": {
     "folds": 5,
     "exclude_noise_ytids": "config/audioset_train_noise_ytids.txt",
-    "packed": "beats_teacher_logits_clean.pt",
+    "packed": "teacher_unified.pt",
     "save_weights": true,
     "n_hat_cache": "output/frcrn_cache_fp32",
     "hint_layers": [
       6
     ],
-    "_note": "features: token layer 6 trên nhiễu sạch (FitNets)."
+    "export_pooled": true,
+    "_note": "features: token layer 6 trên nhiễu sạch (FitNets, relation KD theo vị trí) + embedding gộp 768 (relation KD giữa mẫu)."
   }
 }

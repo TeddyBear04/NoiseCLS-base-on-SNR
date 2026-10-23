@@ -177,7 +177,12 @@ class KDMoETrainer(Trainer):
         if self._resumed_best_state is not None:
             state, self._resumed_best_state = copy.deepcopy(self._resumed_best_state), None
             return state
-        return super().snapshot()
+        state = super().snapshot()
+        if self.stage == 2:
+            for name, value in self.ema.shadow.items():
+                if name in state:
+                    state[name] = value.detach().clone()
+        return state
 
     def run_epoch(self, loader: DataLoader, epoch: int) -> dict[str, float]:
         if epoch <= self._completed_epochs:
