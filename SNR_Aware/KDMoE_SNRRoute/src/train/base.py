@@ -113,6 +113,9 @@ class Trainer(ABC):
     def end_epoch(self, epoch: int) -> None:
         pass
 
+    def should_stop(self, epoch: int) -> bool:
+        return False
+
     def snapshot(self) -> dict[str, Tensor]:
         return copy.deepcopy(self.checkpoint_module.state_dict())
 
@@ -122,7 +125,13 @@ class Trainer(ABC):
 
     def _record_best(self, score: float, epoch: int) -> None:
         self._best_score, self._best_epoch, self._best_state = score, epoch, self.snapshot()
-        save_checkpoint(self.checkpoint_path, self.checkpoint_module, epoch=epoch, **{self.selection_metric: score})
+        save_checkpoint(
+            self.checkpoint_path,
+            self.checkpoint_module,
+            state_dict=self._best_state,
+            epoch=epoch,
+            **{self.selection_metric: score},
+        )
         if self.on_checkpoint is not None:
             self.on_checkpoint(self.checkpoint_path, epoch, score)
 
@@ -181,7 +190,7 @@ class Trainer(ABC):
                 f" | train {self._format(train_stats)} | val {self._format(scores)}"
                 f" | best {self._best_score:.3f} @ {self._best_epoch} | stale {stale}/{self.config.patience}"
             )
-            if stale >= self.config.patience:
+            if stale >= self.config.patience or self.should_stop(epoch):
                 self.logger.info("%s early stop at epoch %d", self.name, epoch)
                 break
             if stale:
