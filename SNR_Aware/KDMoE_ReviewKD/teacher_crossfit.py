@@ -137,6 +137,10 @@ def command_features(config: dict) -> None:
     read from `crossfit.n_hat_cache`. With n_hat the teacher's logits on n_hat are
     packed too (train out-of-fold, validation the mean of the folds), in the layout
     of the cross-fit pack, for logit KD next to the features.
+
+    `crossfit.export_pooled`: also write the fold teacher's pooled embedding (the 768-d
+    vector its classifier head reads) as teacher_pooled{suffix}.npy [train rows, 768],
+    for relation KD between samples (relationkd.py).
     """
     device = seed_everything(config["experiment"]["seed"])
     out_dir = HERE / config["outputs"]["dir"]
@@ -165,12 +169,14 @@ def command_features(config: dict) -> None:
 
     paths = {layer: out_dir / f"teacher_hints_l{layer}{suffix}.npy" for layer in layers}
     hints = {}
+    pooled_path = out_dir / f"teacher_pooled{suffix}.npy" if crossfit.get("export_pooled") else None
+    pooled_out = None
     train_logits = torch.zeros(len(order), config["experiment"]["num_classes"])
     validation_sum, validation_order = None, None
     for fold in range(crossfit["folds"]):
-        data = torch.load(out_dir / f"beats_teacher_fold{fold}_weights.pt", map_location="cpu", weights_only=False)
+        data = torch.load(out_dir / f"fold{fold}.pt", map_location="cpu", weights_only=False)
         if "state_dict" not in data:
-            raise KeyError(f"beats_teacher_fold{fold}_weights.pt has no weights; rerun `teacher_crossfit.py crossfit` with crossfit.save_weights")
+            raise KeyError(f"fold{fold}.pt has no weights; rerun `teacher_crossfit.py crossfit` with crossfit.save_weights")
         model = build_model(config, device, film_enabled=False, trainable_blocks=settings["trainable_blocks"],
                             backbone=teacher_backbone(config))
         model.load_state_dict(data["state_dict"])
@@ -184,9 +190,14 @@ def command_features(config: dict) -> None:
         with torch.inference_mode():
             for batch in loader(held_out, train_split):
                 with autocast(device):
-                    logits, _, _ = model(batch["audio"].to(device, non_blocking=True), None)
+                    logits, vec, _ = model(batch["audio"].to(device, non_blocking=True), None)
                 rows = [position[index] for index in batch["row_index"].tolist()]
                 train_logits[rows] = logits.float().cpu()
+                if pooled_path is not None:
+                    if pooled_out is None:
+                        pooled_out = np.lib.format.open_memmap(pooled_path, mode="w+", dtype=np.float16,
+                                                               shape=(len(order), vec.shape[-1]))
+                    pooled_out[rows] = vec.float().cpu().numpy()
                 for layer in layers:
                     tokens = captured.pop(layer)                           # [B, tokens, C]
                     if layer not in hints:
@@ -209,6 +220,10 @@ def command_features(config: dict) -> None:
         hints[layer].flush()
         paths[layer].with_suffix(".ids.json").write_text(json.dumps(ids), encoding="utf-8")
         print(f"hints -> {paths[layer]} {hints[layer].shape}", flush=True)
+    if pooled_out is not None:
+        pooled_out.flush()
+        pooled_path.with_suffix(".ids.json").write_text(json.dumps(ids), encoding="utf-8")
+        print(f"pooled -> {pooled_path} {pooled_out.shape}", flush=True)
     if source == "n_hat":
         labels_of = {id(row): int(corpus.label_to_index[row["label_names"]]) for row in corpus.rows}
 
@@ -223,7 +238,7 @@ def command_features(config: dict) -> None:
         packed = {"source": f"BEATs crossfit {crossfit['folds']} folds on FRCRN n_hat", "precision": "fp16 logits",
                   "label_order": "labels.txt", "train": pack(order, train_logits),
                   "validation": pack(validation_order, validation_sum / crossfit["folds"])}
-        packed_path = out_dir / crossfit.get("hint_packed", "beats_teacher_logits_frcrn_nhat.pt")
+        packed_path = out_dir / crossfit.get("hint_packed", "teacher_crossfit_nhat.pt")
         torch.save(packed, packed_path)
         print(f"logits on n_hat -> {packed_path}: train OOF acc {packed['train']['accuracy']:.4f}, "
               f"validation acc {packed['validation']['accuracy']:.4f}", flush=True)
@@ -274,7 +289,7 @@ def command_crossfit(config: dict) -> None:
     at_layers = list(crossfit.get("at_layers", []))  # export Attention Transfer maps of these layers
     at_source = crossfit.get("at_source", "energy")
     for fold in range(folds):
-        fold_path = out_dir / f"beats_teacher_fold{fold}_weights.pt"
+        fold_path = out_dir / f"fold{fold}.pt"
         if fold_path.is_file():
             print(f"fold {fold}: done earlier, {fold_path.name}", flush=True)
             continue
@@ -319,7 +334,7 @@ def command_crossfit(config: dict) -> None:
     labels_of = {id(row): int(corpus.label_to_index[row["label_names"]]) for row in corpus.rows}
     oof, oof_at, validation_sum, at_sum, fold_summary = {}, {}, None, None, []
     for fold in range(folds):
-        data = torch.load(out_dir / f"beats_teacher_fold{fold}_weights.pt", map_location="cpu", weights_only=False)
+        data = torch.load(out_dir / f"fold{fold}.pt", map_location="cpu", weights_only=False)
         fold_summary.append({k: data[k] for k in ("fold", "best_epoch", "clean_val_accuracy", "clean_val_macro_f1")})
         for position, index in enumerate(data["held_out"]["row_index"].tolist()):
             oof[index] = data["held_out"]["logits"][position].float()
@@ -391,9 +406,9 @@ def command_atmaps(config: dict) -> None:
     eval_batch, workers = settings["validation_batch_size"], settings["workers"]
     oof, oof_at, validation_sum, at_sum, order = {}, {}, None, None, None
     for fold in range(folds):
-        data = torch.load(out_dir / f"beats_teacher_fold{fold}_weights.pt", map_location="cpu", weights_only=False)
+        data = torch.load(out_dir / f"fold{fold}.pt", map_location="cpu", weights_only=False)
         if "state_dict" not in data:
-            raise KeyError(f"beats_teacher_fold{fold}_weights.pt has no weights; rerun `teacher_crossfit.py crossfit` with crossfit.save_weights")
+            raise KeyError(f"fold{fold}.pt has no weights; rerun `teacher_crossfit.py crossfit` with crossfit.save_weights")
         model = build_model(config, device, film_enabled=False, trainable_blocks=settings["trainable_blocks"],
                             backbone=teacher_backbone(config))
         model.load_state_dict(data["state_dict"])
