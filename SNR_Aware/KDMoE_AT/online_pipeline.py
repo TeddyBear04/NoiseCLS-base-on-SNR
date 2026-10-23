@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +42,18 @@ def student_type(student_config: Path) -> str | None:
 
     raw = yaml.safe_load(Path(student_config).read_text(encoding="utf-8"))
     return (raw.get("student") or {}).get("type")
+
+
+def loss_config(
+    student_config: Path, overrides: dict[str, Any] | None = None
+) -> KDMoELossConfig:
+    config = KDMoELossConfig.from_yaml(student_config)
+    values = dict(overrides or {})
+    valid = {field.name for field in fields(KDMoELossConfig) if field.init}
+    unknown = sorted(set(values) - valid)
+    if unknown:
+        raise KeyError(f"unknown loss overrides: {unknown}")
+    return replace(config, **values) if values else config
 
 
 def resolve_device(value: str) -> torch.device:
@@ -85,6 +97,10 @@ def validate_config(
         missing = [str(item) for item in required["teacher_review"] if not item.is_file()]
         if missing:
             raise FileNotFoundError("Missing teacher_review features:\n" + "\n".join(missing))
+    if paths.get("teacher_pooled"):  # relation KD giữa mẫu: embedding teacher gộp (.npy + .ids.json), chỉ cho train
+        required["teacher_pooled"] = resolve_path(paths["teacher_pooled"])
+        if not required["teacher_pooled"].is_file():
+            raise FileNotFoundError(required["teacher_pooled"])
     if paths.get("validation_exclude_noise_ytids"):
         required["validation_exclude_noise_ytids"] = resolve_path(paths["validation_exclude_noise_ytids"])
         if not required["validation_exclude_noise_ytids"].is_file():
@@ -117,21 +133,30 @@ def build_loaders(
     validation_exclude: Path | None = None,
     teacher_hints: Path | None = None,
     review_features: list[Path] | None = None,
+    teacher_pooled: Path | None = None,
 ) -> dict[str, Any]:
     """frcrn_cache: n_hat fp32 đã tính sẵn thay mixture; teacher_cache: logit teacher đã cache.
     validation_exclude: bỏ khỏi validation các clip nhiễu backbone pretrain đã thấy (chọn epoch trên phần sạch).
     teacher_hints: hint FitNets (.npy) cho train; loss hint chỉ tính trên train.
     review_features: đặc trưng teacher nhiều layer cho ReviewKD (train).
+    teacher_pooled: embedding teacher gộp cho relation KD giữa mẫu (train).
 
     model_config.route_by == "snr": nhóm expert là khoảng SNR (snr_band_edges) thay cho nhóm lớp.
     """
     edges = model_config.snr_band_edges if model_config and model_config.route_by == "snr" else None
 
     def dataset(split: str) -> KDMoEMixDataset:
-        review = review_features if review_features and split == data_config["train_split"] else None
+        train_split = split == data_config["train_split"]
+        review = review_features if review_features and train_split else None
+        cls, extra = KDMoEMixDataset, {}
         if review:
             from reviewkd import ReviewKDMixDataset
-        cls, extra = (ReviewKDMixDataset, {"review_features": review}) if review else (KDMoEMixDataset, {})
+
+            cls, extra = ReviewKDMixDataset, {"review_features": review}
+        elif teacher_pooled and train_split:
+            from relationkd import RelationKDMixDataset
+
+            cls, extra = RelationKDMixDataset, {"teacher_pooled": teacher_pooled}
         return cls(
             **extra,
             root=dataset_root,
@@ -194,6 +219,7 @@ def _run_stage(
     logger: logging.Logger,
     separator: FRCRNSeparator | None,
     review: dict[str, Any] | None = None,
+    relation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     stage_dir = output_dir / f"stage{stage}"
     stage_dir.mkdir(parents=True, exist_ok=True)
@@ -206,6 +232,14 @@ def _run_stage(
 
         trainer_cls = ReviewKDTrainer
         extra = {"review_weight": float(review["weight"]), "warmup_epochs": float(review["warmup_epochs"])}
+    elif relation is not None:  # {"config": RelationKDConfig, "section": mục relationkd của JSON}
+        from relationkd import RelationKDTrainer
+
+        trainer_cls = RelationKDTrainer
+        extra = {"relation": relation["config"],
+                 "grad_probe_every": int(relation["section"].get("grad_probe_every", 0)),
+                 "stop_after_epochs": int(relation["section"].get("stop_after_epochs", 0)),
+                 "teacher_bank": relation.get("bank")}
     trainer = trainer_cls(
         model,
         train_config,
@@ -233,10 +267,21 @@ def _run_stage(
     return result
 
 
-def build_student(paths: dict[str, Any], review: dict[str, Any] | None, logger: logging.Logger) -> KDMoEModel:
-    """KD-MoE theo yaml: ReviewKDMoE (reviewkd.py) khi config có `reviewkd`, EfficientATKDMoE (efficientat.py) khi
-    yaml có student.type = efficientat, còn lại KDMoEModel; nạp trọng số pretrained của encoder."""
-    if review is not None and student_type(paths["student_config"]) == "efficientat":
+def build_student(paths: dict[str, Any], review: dict[str, Any] | None, logger: logging.Logger,
+                  relation: dict[str, Any] | None = None) -> KDMoEModel:
+    """KD-MoE theo yaml: ReviewKDMoE (reviewkd.py) khi config có `reviewkd`, EfficientATRelationKDMoE (relationkd.py)
+    khi có `relationkd`, EfficientATKDMoE (efficientat.py) khi yaml có student.type = efficientat, còn lại
+    KDMoEModel; nạp trọng số pretrained của encoder."""
+    if relation is not None:
+        if student_type(paths["student_config"]) != "efficientat":
+            raise ValueError("relationkd needs an EfficientAT student (student.type: efficientat)")
+        from relationkd import EfficientATRelationKDMoE
+
+        model = EfficientATRelationKDMoE.from_yaml(paths["student_config"])
+        loaded = model.load_efficientat_pretrained()
+        logger.info("student: KD-MoE EfficientAT %s + relation KD %s (stage %s), %d pretrained tensors",
+                    model._student["variant"], relation["config"], model._spatial_stage, loaded)
+    elif review is not None and student_type(paths["student_config"]) == "efficientat":
         from efficientat import EfficientATReviewKDMoE
 
         model = EfficientATReviewKDMoE.from_yaml(paths["student_config"])
@@ -316,7 +361,13 @@ def train(config: dict[str, Any], smoke: bool = False) -> dict[str, Any]:
 
     membership = torch.from_numpy(np.load(paths["membership"])).float()
     review = config.get("reviewkd")  # ReviewKD: PANNs CNN10 pretrained + ReviewModule (reviewkd.py)
-    model = build_student(paths, review, logger)
+    relation = None
+    if "relationkd" in config:  # KD theo quan hệ vị trí / mẫu (relationkd.py)
+        from relationkd import relation_settings
+
+        relation = {"config": relation_settings(paths["student_config"], config["relationkd"]),
+                    "section": config["relationkd"]}
+    model = build_student(paths, review, logger, relation)
     loaders = build_loaders(
         paths["dataset"],
         paths["group_map"],
@@ -330,9 +381,15 @@ def train(config: dict[str, Any], smoke: bool = False) -> dict[str, Any]:
         validation_exclude=None if smoke else paths.get("validation_exclude_noise_ytids"),
         teacher_hints=paths.get("teacher_hints"),
         review_features=paths.get("teacher_review"),
+        teacher_pooled=paths.get("teacher_pooled"),
     )
+    if relation is not None and relation["config"].crd_weight:  # R6: bank teacher cho âm của CRD
+        from relationkd import teacher_bank
 
-    full_loss = KDMoELossConfig.from_yaml(paths["student_config"])
+        relation["bank"] = teacher_bank(loaders["train"].dataset)
+        logger.info("crd: teacher bank %s", tuple(relation["bank"][0].shape))
+
+    full_loss = loss_config(paths["student_config"], config.get("loss"))
     if review is not None and "kd_weight" in review:  # ghi đè kd_weight của yaml cho riêng run này
         full_loss = replace(full_loss, kd_weight=float(review["kd_weight"]))
     front_only = replace(full_loss, kd_weight=0.0, cons_weight=0.0, route_ce_weight=0.0, at_weight=0.0,
@@ -363,5 +420,6 @@ def train(config: dict[str, Any], smoke: bool = False) -> dict[str, Any]:
         logger,
         separator,
         review,
+        relation,
     )
     return {"device": str(device), "stage1": stage1, "stage2": stage2}

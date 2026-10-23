@@ -50,7 +50,7 @@ build_frcrn_snr(logging.getLogger('snr'), num_workers=8, splits=splits)
 " "$DATASET" || exit 1
 
 T=output/teacher_unified
-missing() { [ ! -f $T/beats_teacher_logits_clean.pt ] || { [ -n "$NEED_FOLDS" ] && ! ls $T/beats_teacher_fold*_weights.pt > /dev/null 2>&1; }; }
+missing() { [ ! -f $T/teacher_unified.pt ] || { [ -n "$NEED_FOLDS" ] && ! ls $T/fold*.pt > /dev/null 2>&1; }; }
 # teacher dùng chung trên HF (repo private: cần `hf auth login` bằng tài khoản có quyền đọc); tải vào thư mục tạm,
 # kiểm SHA256SUMS rồi mới chuyển vào $T. Không tải được thì train lại (~30 phút).
 HF_TEACHER=${HF_TEACHER:-Keshio1/frcrn-kdmoe-teacher}
