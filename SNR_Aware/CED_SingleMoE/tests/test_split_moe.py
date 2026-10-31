@@ -22,58 +22,41 @@ def test_split_moe_ffn_identity_warm_start():
         nn.GELU(),
         nn.Linear(768, 192),
     )
-
-    moe = SplitMoEFFN(base_mlp)
     x = torch.randn(4, 97, 192)
-
-    # Reference output from base MLP
     y_base = base_mlp(x)
 
-    # Test identity for multiple alpha values across [0, 1]
-    for alpha_val in [0.0, 0.15, 0.50, 0.75, 1.0]:
-        alpha = torch.full((4, 1), alpha_val)
-        y_moe = moe(x, alpha)
-        # Difference must be essentially zero
-        assert torch.allclose(y_moe, y_base, atol=1e-5), f"Failed for alpha={alpha_val}"
+    # Đầu ra đúng bằng MLP gốc với mọi gates, cả 2 lẫn 3 expert
+    for names in (("low", "high"), ("low", "mid", "high")):
+        moe = SplitMoEFFN(base_mlp, names)
+        for _ in range(5):
+            gates = torch.softmax(torch.randn(4, len(names)) * 3, dim=-1)
+            assert torch.allclose(moe(x, gates), y_base, atol=1e-5), f"Failed for {names}"
 
 
 def test_model_architecture_and_deep_moe_blocks():
-    model = CEDSingleMoESplitFFN(num_classes=36, split_blocks=(10, 11))
+    model = CEDSingleMoESplitFFN(num_classes=36, split_blocks=(10, 11), expert_names=("low", "mid", "high"))
 
     # Blocks 0 through 9 are standard timm/ViT MLPs
     for i in range(10):
-        mlp = model.vit_base.vit.blocks[i].mlp
-        assert not isinstance(mlp, SplitMoEFFN)
+        assert not isinstance(model.vit_base.vit.blocks[i].mlp, SplitMoEFFN)
 
-    # Deep Blocks 10 and 11 MUST be SplitMoEFFN
-    assert isinstance(model.vit_base.vit.blocks[10].mlp, SplitMoEFFN)
-    assert isinstance(model.vit_base.vit.blocks[11].mlp, SplitMoEFFN)
+    # Deep Blocks 10 and 11 MUST be SplitMoEFFN with 3 routed experts
+    for i in (10, 11):
+        moe = model.vit_base.vit.blocks[i].mlp
+        assert isinstance(moe, SplitMoEFFN)
+        assert all(hasattr(moe, f"ffn_{name}") for name in ("shared", "low", "mid", "high"))
 
-    # Check Dual Classifier Heads
-    assert isinstance(model.head_low, nn.Linear)
-    assert isinstance(model.head_high, nn.Linear)
-    assert model.head_low.out_features == 36
-    assert model.head_high.out_features == 36
+    # Một head mỗi expert
+    for name in ("low", "mid", "high"):
+        head = getattr(model, f"head_{name}")
+        assert isinstance(head, nn.Linear) and head.out_features == 36
+    assert model.router.mlp[-1].out_features == 3
 
 
-def test_dual_head_soft_blending():
-    model = CEDSingleMoESplitFFN(num_classes=36)
-    cls_token = torch.randn(2, 192)
-
-    z_low = model.head_low(cls_token)
-    z_high = model.head_high(cls_token)
-
-    # Case 1: alpha = 0 -> z == z_low
-    alpha_0 = torch.tensor([[0.0], [0.0]])
-    z_fused_0 = (1.0 - alpha_0) * z_low + alpha_0 * z_high
-    assert torch.allclose(z_fused_0, z_low, atol=1e-5)
-
-    # Case 2: alpha = 1 -> z == z_high
-    alpha_1 = torch.tensor([[1.0], [1.0]])
-    z_fused_1 = (1.0 - alpha_1) * z_low + alpha_1 * z_high
-    assert torch.allclose(z_fused_1, z_high, atol=1e-5)
-
-    # Case 3: alpha = 0.5 -> z == 0.5 * z_low + 0.5 * z_high
-    alpha_half = torch.tensor([[0.5], [0.5]])
-    z_fused_half = (1.0 - alpha_half) * z_low + alpha_half * z_high
-    assert torch.allclose(z_fused_half, 0.5 * (z_low + z_high), atol=1e-5)
+def test_head_blending_follows_gates(sample_waveform):
+    model = CEDSingleMoESplitFFN(num_classes=36, expert_names=("low", "mid", "high")).eval()
+    with torch.no_grad():
+        out = model(sample_waveform, return_dict=True)
+    fused = (out["gates"].unsqueeze(-1) * out["logits_experts"]).sum(dim=1)
+    assert torch.allclose(out["logits"], fused, atol=1e-5)
+    assert torch.allclose(out["alpha"], out["gates"][:, -1:])

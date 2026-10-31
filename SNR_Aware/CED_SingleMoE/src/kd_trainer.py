@@ -1,6 +1,6 @@
 """
 Knowledge Distillation Engine for Single-Backbone MoE (CEDSingleMoESplitFFN).
-KD từ teacher BEATs 5 fold fine-tune trên nhiễu sạch (logit out-of-fold); student nghe n_hat.
+KD từ teacher BEATs: một teacher (5 fold nhiễu sạch, logit out-of-fold) hoặc hai teacher Fold0/EMA như bản gốc.
 
 References:
     - KD: Hinton et al., "Distilling the Knowledge in a Neural Network", NIPS 2014 Workshop.
@@ -24,35 +24,37 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 
 from src.metrics import compute_snr_breakdown
+from src.router import router_loss, snr_band_index, snr_band_targets
 
 
-def apply_mixup_with_teacher(
+def apply_mixup_with_teachers(
     waveform: Tensor,
     target: Tensor,
     snr_db: Tensor,
     teacher_logits: Tensor,
+    band: Tensor,
     alpha: float = 0.4,
     prob: float = 0.8,
     temp: float = 2.0,
-) -> tuple[Tensor, Tensor, Tensor, Tensor]:
-    """Mixup nhất quán trên waveform, nhãn, SNR và phân phối mềm của teacher (Beyer et al., CVPR 2022)."""
+) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+    """Mixup nhất quán trên waveform, nhãn, SNR, khoảng SNR one-hot [B, K] và phân phối mềm của teacher từng
+    expert [B, K, C] (Beyer et al., CVPR 2022)."""
     p_teacher = F.softmax(teacher_logits / temp, dim=-1)
     if np.random.rand() > prob or alpha <= 0.0:
-        return waveform, target, snr_db, p_teacher
+        return waveform, target, snr_db, p_teacher, band
 
     perm = torch.randperm(waveform.shape[0], device=waveform.device)
     lam = float(np.random.beta(alpha, alpha))
-    return (
-        lam * waveform + (1.0 - lam) * waveform[perm],
-        lam * target + (1.0 - lam) * target[perm],
-        lam * snr_db + (1.0 - lam) * snr_db[perm],
-        lam * p_teacher + (1.0 - lam) * p_teacher[perm],
-    )
+
+    def mix(x: Tensor) -> Tensor:
+        return lam * x + (1.0 - lam) * x[perm]
+
+    return mix(waveform), mix(target), mix(snr_db), mix(p_teacher), mix(band)
 
 
 class KDTrainer:
     """
-    Knowledge Distillation Trainer (teacher BEATs 5 fold nghe nhiễu sạch) for Single-Backbone MoE.
+    Knowledge Distillation Trainer (một teacher mỗi expert SNR) for Single-Backbone MoE.
     Integrates fused-logit KD, SNR-weighted expert distillation,
     dynamic router supervision, and cosine annealing schedule.
     """
@@ -76,8 +78,11 @@ class KDTrainer:
         kd_temperature: float = 2.0,
         kd_fused_weight: float = 0.65,
         kd_expert_weight: float = 0.35,
-        snr_center_db: float = 15.0,
+        snr_edges_db: tuple[float, ...] = (15.0,),
         snr_tau: float = 2.5,
+        band_labels: str = "soft",
+        oracle_prob_start: float = 0.0,
+        oracle_prob_end: float = 0.0,
         grad_clip: float = 1.0,
         num_classes: int = 36,
         amp_dtype: str = "bfloat16",
@@ -96,8 +101,11 @@ class KDTrainer:
         self.temp = kd_temperature
         self.kd_fused_weight = kd_fused_weight
         self.kd_expert_weight = kd_expert_weight
-        self.snr_center_db = snr_center_db
+        self.snr_edges_db = tuple(snr_edges_db)
         self.snr_tau = snr_tau
+        self.band_labels = band_labels
+        self.oracle_prob_start = oracle_prob_start
+        self.oracle_prob_end = oracle_prob_end
         self.grad_clip = grad_clip
         self.num_classes = num_classes
         self.out_dir = Path(out_dir)
@@ -134,14 +142,7 @@ class KDTrainer:
                 continue
             if "router" in name or "acoustic_extractor" in name:
                 router_params.append(param)
-            elif (
-                "moe" in name
-                or "head_low" in name
-                or "head_high" in name
-                or "ffn_low" in name
-                or "ffn_high" in name
-                or "ffn_shared" in name
-            ):
+            elif "moe" in name or "head_" in name or "ffn_" in name:
                 expert_params.append(param)
             else:
                 backbone_params.append(param)
@@ -158,6 +159,11 @@ class KDTrainer:
             groups.append({"params": list(self.model.parameters()), "lr": lr_backbone, "weight_decay": weight_decay})
         return groups
 
+    def oracle_probability(self, epoch: int) -> float:
+        """Xác suất dùng gate oracle ở epoch này: tuyến tính từ oracle_prob_start (epoch đầu) tới oracle_prob_end (epoch cuối)."""
+        frac = epoch / max(1, self.epochs - 1)
+        return self.oracle_prob_start + (self.oracle_prob_end - self.oracle_prob_start) * frac
+
     def train_epoch(self, epoch: int) -> dict[str, float]:
         self.model.train()
         total_loss, total_ce, total_kd, total_route = 0.0, 0.0, 0.0, 0.0
@@ -169,10 +175,11 @@ class KDTrainer:
             wave = batch["waveform"].to(self.device, non_blocking=True)
             target = batch["target"].to(self.device, non_blocking=True)
             snr_db = batch["snr_db"].to(self.device, non_blocking=True)
-            teacher_log = batch["teacher_logits"].to(self.device, non_blocking=True)
+            teacher_log = batch["teacher_logits"].to(self.device, non_blocking=True)  # [B, K, C]
+            band = F.one_hot(snr_band_index(snr_db, self.snr_edges_db), teacher_log.shape[1]).float()
 
-            wave_m, target_m, snr_m, p_teacher = apply_mixup_with_teacher(
-                wave, target, snr_db, teacher_log,
+            wave_m, target_m, snr_m, p_teacher, band_m = apply_mixup_with_teachers(
+                wave, target, snr_db, teacher_log, band,
                 alpha=self.mixup_alpha, prob=self.mixup_prob, temp=self.temp,
             )
 
@@ -182,38 +189,42 @@ class KDTrainer:
             else:
                 target_smooth = target_m
 
-            # Trọng số SNR liên tục w_snr: SNR thấp -> 0 (expert low), SNR cao -> 1 (expert high); cũng là nhãn router
-            w_snr = torch.sigmoid((snr_m - self.snr_center_db) / self.snr_tau).unsqueeze(-1)
+            # Nhãn khoảng SNR [B, K]: trọng số expert trong KD, nhãn router và gate oracle.
+            # "hard": one-hot khoảng thật (trộn theo mixup); "soft": sigmoid quanh ngưỡng như bản gốc.
+            if self.band_labels == "hard":
+                w_band = band_m
+            else:
+                w_band = snr_band_targets(snr_m, self.snr_edges_db, self.snr_tau)
+            # Scheduled sampling (Bengio et al., NeurIPS 2015) cho gate: mẫu dùng gate oracle với xác suất
+            # eps giảm tuyến tính qua các epoch, còn lại dùng gate của router như lúc suy luận.
+            eps = self.oracle_probability(epoch)
+            oracle_mask = torch.rand(wave_m.shape[0], device=self.device) < eps if eps > 0.0 else None
+            # Đích KD của logit trộn: teacher của mỗi expert theo trọng số khoảng SNR
+            p_fused = (w_band.unsqueeze(-1) * p_teacher).sum(dim=1)
 
             self.optimizer.zero_grad()
             with torch.autocast(self.device.type, dtype=self.amp_type, enabled=self.use_amp):
-                out = self.model(wave_m, return_dict=True)
-
+                out = self.model(wave_m, return_dict=True,
+                                 oracle_gates=w_band if oracle_mask is not None else None, oracle_mask=oracle_mask)
                 logits_fused = out["logits"]
-                logits_low = out["logits_low"]
-                logits_high = out["logits_high"]
-                alpha = out["alpha"]
 
                 # 1. Supervised Task Cross-Entropy
-                log_probs_fused = F.log_softmax(logits_fused, dim=-1)
-                loss_ce = -(target_smooth * log_probs_fused).sum(dim=-1).mean()
+                loss_ce = -(target_smooth * F.log_softmax(logits_fused, dim=-1)).sum(dim=-1).mean()
 
-                # 2. KD từ teacher nhiễu sạch trên logit đã trộn (T^2 scaling)
+                # 2. KD trên logit đã trộn (T^2 scaling)
                 log_p_fused_kd = F.log_softmax(logits_fused / self.temp, dim=-1)
-                loss_kd_fused = -(p_teacher * log_p_fused_kd).sum(dim=-1).mean() * (self.temp ** 2)
+                loss_kd_fused = -(p_fused * log_p_fused_kd).sum(dim=-1).mean() * (self.temp ** 2)
 
-                # 3. Expert KD: cả hai expert học cùng teacher, trọng số theo SNR
-                log_p_low_kd = F.log_softmax(logits_low / self.temp, dim=-1)
-                log_p_high_kd = F.log_softmax(logits_high / self.temp, dim=-1)
-                loss_low_kd = -(p_teacher * log_p_low_kd).sum(dim=-1) * (self.temp ** 2)
-                loss_high_kd = -(p_teacher * log_p_high_kd).sum(dim=-1) * (self.temp ** 2)
-                loss_kd_experts = ((1.0 - w_snr.squeeze(-1)) * loss_low_kd + w_snr.squeeze(-1) * loss_high_kd).mean()
+                # 3. Expert KD: expert k học teacher của nó, trọng số theo khoảng SNR
+                log_p_experts = F.log_softmax(out["logits_experts"] / self.temp, dim=-1)  # [B, K, C]
+                loss_per_expert = -(p_teacher * log_p_experts).sum(dim=-1) * (self.temp ** 2)  # [B, K]
+                loss_kd_experts = (w_band * loss_per_expert).sum(dim=-1).mean()
 
                 loss_kd = self.kd_fused_weight * loss_kd_fused + self.kd_expert_weight * loss_kd_experts
 
-                # 4. Router Supervision Loss
+                # 4. Router: CE giữa gates của router và nhãn khoảng SNR (soft, K = 2: đúng BCE(alpha, w) của bản gốc)
                 with torch.autocast(self.device.type, enabled=False):
-                    loss_route = F.binary_cross_entropy(alpha.float().clamp(1e-6, 1.0 - 1e-6), w_snr.float())
+                    loss_route = router_loss(out["gates"], w_band)
 
                 # Total Multi-Task Objective
                 loss = (1.0 - self.lambda_kd) * loss_ce + self.lambda_kd * loss_kd + self.lambda_route * loss_route.to(loss_ce.dtype)
@@ -238,7 +249,7 @@ class KDTrainer:
     @torch.no_grad()
     def evaluate(self) -> dict[str, Any]:
         self.model.eval()
-        all_preds, all_targets, all_snrs, all_alphas = [], [], [], []
+        all_preds, all_targets, all_snrs, all_gates = [], [], [], []
 
         for batch in self.val_loader:
             wave = batch["waveform"].to(self.device, non_blocking=True)
@@ -248,13 +259,13 @@ class KDTrainer:
             with torch.autocast(self.device.type, dtype=self.amp_type, enabled=self.use_amp):
                 out = self.model(wave, return_dict=True)
                 logits = out["logits"]
-                alpha = out["alpha"]
+                gates = out["gates"].float()
 
             probs = F.softmax(logits, dim=-1).cpu().numpy()
             all_preds.append(probs)
             all_targets.append(target_idx)
             all_snrs.append(snr_val)
-            all_alphas.append(alpha.cpu().numpy())
+            all_gates.append(gates.cpu().numpy())
 
         if not all_preds:
             return {}
@@ -262,10 +273,12 @@ class KDTrainer:
         preds = np.concatenate(all_preds, axis=0)
         targets = np.concatenate(all_targets, axis=0)
         snrs = np.concatenate(all_snrs, axis=0)
-        alphas = np.concatenate(all_alphas, axis=0)
+        gates = np.concatenate(all_gates, axis=0)
 
         results = compute_snr_breakdown(preds, targets, snrs)
-        results["mean_alpha"] = float(np.mean(alphas))
+        results["mean_gates"] = gates.mean(axis=0).tolist()
+        band = snr_band_index(torch.from_numpy(snrs), self.snr_edges_db).numpy()
+        results["router_band_acc"] = float((gates.argmax(axis=1) == band).mean())
         return results
 
     def save_checkpoint(self, path: Path | str, is_best: bool = False) -> None:

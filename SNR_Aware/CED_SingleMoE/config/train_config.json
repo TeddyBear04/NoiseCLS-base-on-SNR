@@ -9,18 +9,12 @@
     "nhat_dir": "/marimo/nhat_cache",
     "nhat_pattern": "frcrn_{split}.npy",
     "output_dir": "output/ced_singlemoe_v2",
-    "_note": "nhat_dir: n_hat = FRCRN(mixture) fp32 do scripts/frcrn_cache.py của FRCRN_KD_MoE tạo (frcrn_{split}.npy + .json sample_id, FRCRN model/frcrn_best.pt), trên 36_labels nên val có 6480 clip; v2 lấy 3064 clip theo sample_id. Split validation = thư mục eval của v2. teacher_logits: logit OOF của teacher BEATs 5 fold trên nhiễu sạch, đóng gói {train|validation: {mix_id, logits36}}.",
-    "teacher_logits": "/marimo/teacher/beats_teacher_logits_clean.pt"
+    "_note": "nhat_dir: n_hat = FRCRN(mixture) fp32 do scripts/frcrn_cache.py của FRCRN_KD_MoE tạo (frcrn_{split}.npy + .json sample_id, FRCRN model/frcrn_best.pt), trên 36_labels nên val có 6480 clip; v2 lấy 3064 clip theo sample_id. Split validation = thư mục eval của v2."
   },
-  "hf": {
-    "dataset_repo": "phitruong0606/mix-dataset-v2",
-    "dataset_files": [
-      "labels.txt",
-      "cache-nhat.zip",
-      "mix-dataset-v2.zip"
-    ],
-    "teacher_repo": "Keshio1/frcrn-kdmoe-teacher",
-    "teacher_file": "beats_teacher_logits_clean.pt"
+  "teacher": {
+    "mode": "clean5fold",
+    "logits": "/marimo/teacher/beats_teacher_logits_clean.pt",
+    "_note": "logit OOF của teacher BEATs 5 fold fine-tune trên nhiễu sạch, đóng gói {train|validation: {mix_id, logits36}}; mọi expert học cùng teacher."
   },
   "model": {
     "freq_bins": 64,
@@ -30,7 +24,17 @@
       11
     ],
     "dropout": 0.0,
-    "load_pretrained": true
+    "load_pretrained": true,
+    "experts": [
+      "low",
+      "high"
+    ]
+  },
+  "routing": {
+    "band_labels": "soft",
+    "oracle_prob_start": 0.0,
+    "oracle_prob_end": 0.0,
+    "_note": "Như bản gốc: nhãn router mềm, expert luôn dùng gate của router (run 1)."
   },
   "loss": {
     "lambda_kd": 0.65,
@@ -39,8 +43,11 @@
     "kd_fused_weight": 0.65,
     "kd_expert_weight": 0.35,
     "label_smoothing": 0.05,
-    "snr_center_db": 15.0,
-    "snr_tau": 2.5
+    "snr_tau": 2.5,
+    "snr_edges_db": [
+      15.0
+    ],
+    "_note": "snr_edges_db: ngưỡng chia khoảng SNR cho router/expert (nhãn mềm, độ dốc snr_tau). [15] = 2 expert như bản gốc."
   },
   "train": {
     "epochs": 15,

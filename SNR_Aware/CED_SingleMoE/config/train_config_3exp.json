@@ -1,0 +1,73 @@
+{
+  "experiment": {
+    "name": "ced_singlemoe_v2_3exp",
+    "seed": 42,
+    "num_classes": 36
+  },
+  "paths": {
+    "data_root": "/marimo/dataset_v2/mix-dataset-v2",
+    "nhat_dir": "/marimo/nhat_cache",
+    "nhat_pattern": "frcrn_{split}.npy",
+    "output_dir": "output/ced_singlemoe_v2_3exp",
+    "_note": "nhat_dir: n_hat = FRCRN(mixture) fp32 do scripts/frcrn_cache.py của FRCRN_KD_MoE tạo (frcrn_{split}.npy + .json sample_id, FRCRN model/frcrn_best.pt), trên 36_labels nên val có 6480 clip; v2 lấy 3064 clip theo sample_id. Split validation = thư mục eval của v2."
+  },
+  "teacher": {
+    "mode": "clean5fold",
+    "logits": "/marimo/teacher/beats_teacher_logits_clean.pt",
+    "_note": "logit OOF của teacher BEATs 5 fold fine-tune trên nhiễu sạch, đóng gói {train|validation: {mix_id, logits36}}; mọi expert học cùng teacher."
+  },
+  "model": {
+    "freq_bins": 64,
+    "frames": 398,
+    "split_blocks": [
+      10,
+      11
+    ],
+    "dropout": 0.0,
+    "load_pretrained": true,
+    "experts": [
+      "low",
+      "mid",
+      "high"
+    ]
+  },
+  "routing": {
+    "band_labels": "hard",
+    "oracle_prob_start": 1.0,
+    "oracle_prob_end": 0.0,
+    "_note": "Chẩn đoán run 1: expert không chuyên môn hoá (FFN low/high lệch nhau ~2%, ép-low = cả model, router chỉ đạt alpha 0.41 ở 20 dB). Sửa: lúc train route cứng theo khoảng SNR thật (Hash Layers, Roller et al., NeurIPS 2021: routing cố định theo khoá) để mỗi expert chỉ nhận gradient của khoảng mình; xác suất dùng gate oracle giảm tuyến tính 1 -> 0 qua các epoch (Scheduled Sampling, Bengio et al., NeurIPS 2015) để expert quen gate của router trước khi suy luận. Router học nhãn khoảng cứng."
+  },
+  "loss": {
+    "lambda_kd": 0.65,
+    "lambda_route": 0.2,
+    "kd_temperature": 2.0,
+    "kd_fused_weight": 0.65,
+    "kd_expert_weight": 0.35,
+    "label_smoothing": 0.05,
+    "snr_tau": 2.5,
+    "snr_edges_db": [
+      2.5,
+      12.5
+    ],
+    "_note": "snr_edges_db [2.5, 12.5]: -5/0 dB -> low, 5/10 dB -> mid, 15/20 dB -> high (3 khoảng của KD-MoE)."
+  },
+  "train": {
+    "epochs": 15,
+    "batch_size": 64,
+    "num_workers": 4,
+    "lr_backbone": 4e-05,
+    "lr_experts": 0.00012,
+    "lr_router": 0.0002,
+    "weight_decay": 0.05,
+    "warmup_epochs": 2,
+    "grad_clip": 1.0,
+    "mixup_alpha": 0.4,
+    "mixup_prob": 0.8,
+    "amp_dtype": "bfloat16"
+  },
+  "smoke": {
+    "max_samples": 64,
+    "epochs": 1,
+    "batch_size": 16
+  }
+}

@@ -23,24 +23,32 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
+def snr_band_targets(snr_db: Tensor, edges_db: tuple[float, ...], tau: float) -> Tensor:
+    """Nhãn router mềm [B, K] trên K = len(edges_db) + 1 khoảng SNR.
+
+    c_k = sigmoid((SNR - e_k) / tau) là xác suất "SNR trên ngưỡng e_k"; khoảng 0 nhận 1 - c_0, khoảng k nhận
+    c_{k-1} - c_k, khoảng cuối nhận c_{K-2}. Ngưỡng tăng dần nên mọi phần >= 0 và tổng bằng 1.
+    Một ngưỡng [15] cho [1 - w, w] với w = sigmoid((SNR - 15) / tau): đúng nhãn alpha của bản gốc 2 expert.
+    Ngưỡng [2.5, 12.5]: -5/0 dB -> low, 5/10 dB -> mid, 15/20 dB -> high (cùng 3 khoảng của KD-MoE)."""
+    above = torch.sigmoid((snr_db.float().unsqueeze(-1) - snr_db.new_tensor(edges_db).float()) / tau)  # [B, K-1]
+    ones, zeros = torch.ones_like(above[:, :1]), torch.zeros_like(above[:, :1])
+    return torch.cat([ones, above], dim=-1) - torch.cat([above, zeros], dim=-1)
+
+
+def snr_band_index(snr_db: Tensor, edges_db: tuple[float, ...]) -> Tensor:
+    """Chỉ số khoảng SNR cứng [B]: số ngưỡng <= SNR (ngưỡng [2.5, 12.5]: -5/0 -> 0, 5/10 -> 1, 15/20 -> 2)."""
+    return (snr_db.float().unsqueeze(-1) >= snr_db.new_tensor(edges_db).float()).sum(dim=-1)
+
+
 class SelfContainedSpectralTokenRouter(nn.Module):
     """
-    Self-Contained Dynamic Routing Module estimating continuous soft gating weight alpha.
-
-    Dataflow Architecture:
-        1. CLS token h_9 [B, 192] after Block 9
-           -> LayerNorm(192) -> Linear(192, 16) -> GELU -> h_tilde_9 [B, 16]
-        2. Concat with f_spec [B, 6] from frontend:
-           -> u = [f_spec || h_tilde_9] [B, 22]
-        3. Cross-feature MLP interaction:
-           -> Linear(22, 32) -> LayerNorm(32) -> GELU -> Linear(32, 2)
-           -> Logits [r_low, r_high] [B, 2]
-        4. Softmax normalization:
-           -> alpha = exp(r_high) / (exp(r_low) + exp(r_high)) in (0, 1)
+    Router nội tại: CLS token sau Block 9 (nén 192 -> 16) ghép 6 đặc trưng âm học -> MLP 22 -> 32 -> K
+    -> softmax -> gates [B, K] trên các expert SNR (low, [mid,] high). Không cần nhãn SNR lúc suy luận;
+    lúc train gates được giám sát bằng nhãn mềm `snr_band_targets`.
 
     Outputs:
-        - alpha: [B, 1] soft routing weight for High-Expert (1 - alpha for Low-Expert)
-        - gates: [B, 2] normalized probabilities over [Low, High]
+        - alpha: [B, 1] gate của expert cao nhất (high), dùng cho log và trộn teacher lúc suy luận
+        - gates: [B, K] xác suất trên các expert, tổng bằng 1
     """
     def __init__(
         self,
@@ -48,12 +56,10 @@ class SelfContainedSpectralTokenRouter(nn.Module):
         token_dim: int = 192,
         token_proj_dim: int = 16,
         hidden_dim: int = 32,
-        transition_center_db: float = 15.0,
-        transition_tau: float = 2.5,
+        num_experts: int = 2,
     ) -> None:
         super().__init__()
-        self.transition_center_db = transition_center_db
-        self.transition_tau = transition_tau
+        self.num_experts = num_experts
 
         # Branch 1: Token projection layer (192 -> 16)
         self.token_proj = nn.Sequential(
@@ -62,61 +68,20 @@ class SelfContainedSpectralTokenRouter(nn.Module):
             nn.GELU(),
         )
 
-        # Branch 2: Cross-level interaction MLP (22 -> 32 -> 2)
-        in_total = spectral_dim + token_proj_dim
+        # Branch 2: Cross-level interaction MLP (22 -> 32 -> K)
         self.mlp = nn.Sequential(
-            nn.Linear(in_total, hidden_dim),
+            nn.Linear(spectral_dim + token_proj_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, 2),  # [r_low, r_high]
+            nn.Linear(hidden_dim, num_experts),
         )
 
-    def forward(
-        self,
-        spectral_feat: Tensor,
-        intermediate_token: Tensor,
-    ) -> tuple[Tensor, Tensor]:
-        """
-        Args:
-            spectral_feat: [B, 6] from AcousticFeatureExtractor
-            intermediate_token: [B, 192] CLS token after Block 9
-        Returns:
-            alpha: [B, 1] soft routing weight for High-SNR Expert
-            gates: [B, 2] normalized softmax probabilities [p_low, p_high]
-        """
-        # Compress 192-dim token to 16-dim representation
+    def forward(self, spectral_feat: Tensor, intermediate_token: Tensor) -> tuple[Tensor, Tensor]:
         token_h = self.token_proj(intermediate_token)  # [B, 16]
+        gates = F.softmax(self.mlp(torch.cat([spectral_feat, token_h], dim=-1)), dim=-1)  # [B, K]
+        return gates[:, -1:], gates
 
-        # Concatenate physical and semantic representations
-        fused_feat = torch.cat([spectral_feat, token_h], dim=-1)  # [B, 22]
 
-        # Compute routing logits
-        logits = self.mlp(fused_feat)  # [B, 2]
-
-        # Softmax probability distribution
-        gates = F.softmax(logits, dim=-1)  # [B, 2]
-        alpha = gates[:, 1:2]              # [B, 1] High-Expert weight
-        return alpha, gates
-
-    def compute_target_soft_label(self, snr_db: Tensor) -> Tensor:
-        """
-        Compute continuous ground-truth routing label from SNR during training:
-        y_target = Sigmoid((SNR - 15.0) / 2.5)
-
-        Reference behavior:
-            SNR = -5 dB -> y_target = 0.0003  (Fully Low-SNR mode)
-            SNR =  0 dB -> y_target = 0.0025
-            SNR =  5 dB -> y_target = 0.0180
-            SNR = 10 dB -> y_target = 0.1192
-            SNR = 15 dB -> y_target = 0.5000  (Smooth transition zone)
-            SNR = 20 dB -> y_target = 0.8808  (High-SNR speech leakage mode)
-        """
-        z = (snr_db.float() - self.transition_center_db) / self.transition_tau
-        return torch.sigmoid(z).unsqueeze(-1)
-
-    def compute_router_loss(self, alpha: Tensor, snr_db: Tensor) -> Tensor:
-        """
-        Supervised Binary Cross Entropy loss for routing weight during training.
-        """
-        target = self.compute_target_soft_label(snr_db)
-        return F.binary_cross_entropy(alpha.float().clamp(1e-6, 1.0 - 1e-6), target.float())
+def router_loss(gates: Tensor, targets: Tensor) -> Tensor:
+    """CE mềm giữa gates và nhãn khoảng SNR; với K = 2 đúng bằng BCE(alpha, w) của bản gốc."""
+    return -(targets.float() * gates.float().clamp_min(1e-6).log()).sum(dim=-1).mean()

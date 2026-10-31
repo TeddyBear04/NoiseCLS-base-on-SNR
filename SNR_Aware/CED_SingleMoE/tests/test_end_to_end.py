@@ -13,7 +13,7 @@ from src.models.split_moe import CEDSingleMoESplitFFN
 
 
 def test_end_to_end_forward_pass(sample_waveform):
-    model = CEDSingleMoESplitFFN(num_classes=36, freq_bins=64, frames=398)
+    model = CEDSingleMoESplitFFN(num_classes=36, freq_bins=64, frames=398, expert_names=("low", "mid", "high"))
     model.eval()
 
     with torch.no_grad():
@@ -21,8 +21,7 @@ def test_end_to_end_forward_pass(sample_waveform):
 
     # 1. Output dict fields
     assert "logits" in out
-    assert "logits_low" in out
-    assert "logits_high" in out
+    assert "logits_experts" in out
     assert "alpha" in out
     assert "gates" in out
     assert "spectral_feat" in out
@@ -30,10 +29,9 @@ def test_end_to_end_forward_pass(sample_waveform):
 
     # 2. Output shapes
     assert out["logits"].shape == (2, 36)
-    assert out["logits_low"].shape == (2, 36)
-    assert out["logits_high"].shape == (2, 36)
+    assert out["logits_experts"].shape == (2, 3, 36)
     assert out["alpha"].shape == (2, 1)
-    assert out["gates"].shape == (2, 2)
+    assert out["gates"].shape == (2, 3)
     assert out["spectral_feat"].shape == (2, 6)
     assert out["block9_token"].shape == (2, 192)
 
@@ -44,7 +42,7 @@ def test_end_to_end_forward_pass(sample_waveform):
 
 
 def test_full_backward_gradient_flow(sample_waveform):
-    model = CEDSingleMoESplitFFN(num_classes=36, freq_bins=64, frames=398)
+    model = CEDSingleMoESplitFFN(num_classes=36, freq_bins=64, frames=398, expert_names=("low", "mid", "high"))
     model.train()
 
     out = model(sample_waveform, return_dict=True)
@@ -63,9 +61,9 @@ def test_full_backward_gradient_flow(sample_waveform):
     # 3. Gradient in Deep MoE Experts (Blocks 10 & 11)
     moe10 = model.vit_base.vit.blocks[10].mlp
     assert moe10.ffn_shared.fc1.weight.grad is not None
-    assert moe10.ffn_low.fc1.weight.grad is not None
-    assert moe10.ffn_high.fc1.weight.grad is not None
+    for name in ("low", "mid", "high"):
+        assert getattr(moe10, f"ffn_{name}").fc1.weight.grad is not None
 
-    # 4. Gradient in Dual Heads
-    assert model.head_low.weight.grad is not None
-    assert model.head_high.weight.grad is not None
+    # 4. Gradient in expert heads
+    for name in ("low", "mid", "high"):
+        assert getattr(model, f"head_{name}").weight.grad is not None

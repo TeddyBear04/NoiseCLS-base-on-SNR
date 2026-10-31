@@ -1,7 +1,8 @@
-"""Suy luận student CEDSingleMoESplitFFN: chỉ n_hat vào, không cần teacher hay nhãn SNR.
+"""Suy luận student CEDSingleMoESplitFFN: chỉ n_hat vào, không cần nhãn SNR.
 
 TTA 3 hướng dịch thời gian (0, +50 ms, -50 ms = +-800 mẫu ở 16 kHz), lấy trung bình logit,
-softmax với nhiệt độ hiệu chuẩn T_student = 1.40.
+softmax với nhiệt độ hiệu chuẩn T_student = 1.40. `ensemble_with_teachers` là phép trộn của bản gốc
+với hai teacher Fold0/EMA (cũng nghe n_hat), trọng số teacher theo alpha = gate của expert high.
 """
 
 from __future__ import annotations
@@ -45,6 +46,27 @@ class StudentPipeline:
         mean_logits = torch.stack(logits).mean(dim=0)
         probs = F.softmax(mean_logits / self.temperature, dim=-1).cpu().numpy()
         return probs, torch.stack(alphas).mean(dim=0).cpu().numpy()
+
+
+def ensemble_with_teachers(
+    p_student: np.ndarray,
+    alpha: np.ndarray,
+    t0_logits: np.ndarray,
+    tema_logits: np.ndarray,
+    teacher_temp: float = 1.20,
+    student_weight: float = 0.25,
+    t0_weights: tuple[float, float] = (0.45, 0.30),
+    tema_weights: tuple[float, float] = (0.30, 0.45),
+) -> np.ndarray:
+    """P = w_s P_student + w_t0(alpha) P_t0 + w_tema(alpha) P_tema, trọng số chuẩn hoá về tổng 1 (bản gốc).
+
+    alpha -> 0: Fold0 0.45, EMA 0.30; alpha -> 1: Fold0 0.30, EMA 0.45; student luôn 0.25."""
+    p_t0 = F.softmax(torch.from_numpy(t0_logits).float() / teacher_temp, dim=-1).numpy()
+    p_tema = F.softmax(torch.from_numpy(tema_logits).float() / teacher_temp, dim=-1).numpy()
+    w_t0 = (1.0 - alpha) * t0_weights[0] + alpha * t0_weights[1]
+    w_tema = (1.0 - alpha) * tema_weights[0] + alpha * tema_weights[1]
+    total = student_weight + w_t0 + w_tema
+    return (student_weight * p_student + w_t0 * p_t0 + w_tema * p_tema) / total
 
 
 def load_pipeline(student_ckpt: Path | str, device: torch.device, **model_kwargs) -> StudentPipeline:

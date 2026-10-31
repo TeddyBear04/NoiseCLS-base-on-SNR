@@ -28,7 +28,7 @@ class AudioItem(TypedDict, total=False):
     target_idx: Tensor
     snr_db: Tensor
     sample_id: str
-    teacher_logits: Tensor
+    teacher_logits: Tensor  # [K, C]: logit teacher của từng expert SNR
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -115,15 +115,18 @@ def load_teacher_logits(path: str | Path, split: str, rows: list[dict[str, str]]
 
 
 class NHatDataset(Dataset):
-    """n_hat từ bộ đệm, kèm logit teacher (nhiễu sạch) nếu có."""
+    """n_hat từ bộ đệm, kèm logit teacher của từng expert SNR nếu có.
 
-    def __init__(self, base: Mixture36Dataset, nhat_path: str | Path, teacher_logits: np.ndarray | None = None) -> None:
+    `teachers` là danh sách K mảng [N, C], một mảng mỗi expert (low, [mid,] high): một teacher 5 fold nhiễu
+    sạch thì cả K là cùng một mảng; Fold0/EMA thì mỗi expert trỏ tới teacher của nó."""
+
+    def __init__(self, base: Mixture36Dataset, nhat_path: str | Path, teachers: list[np.ndarray] | None = None) -> None:
         self.base = base
-        nhat_path = Path(nhat_path)
-        self.array, self.cache_index = cache_rows(nhat_path, base.rows)
-        self.teacher = teacher_logits
-        if teacher_logits is not None and len(teacher_logits) != len(base):
-            raise ValueError(f"logit teacher {len(teacher_logits)} hàng != {len(base)} hàng manifest")
+        self.array, self.cache_index = cache_rows(Path(nhat_path), base.rows)
+        self.teachers = teachers
+        for k, logits in enumerate(teachers or []):
+            if len(logits) != len(base):
+                raise ValueError(f"logit teacher expert {k}: {len(logits)} hàng != {len(base)} hàng manifest")
 
     def __len__(self) -> int:
         return len(self.base)
@@ -131,8 +134,8 @@ class NHatDataset(Dataset):
     def __getitem__(self, index: int) -> AudioItem:
         item = self.base[index]
         item["waveform"] = torch.from_numpy(self.array[self.cache_index[index]].copy()).float()
-        if self.teacher is not None:
-            item["teacher_logits"] = torch.from_numpy(self.teacher[index].copy())
+        if self.teachers is not None:
+            item["teacher_logits"] = torch.from_numpy(np.stack([np.asarray(t[index], dtype=np.float32) for t in self.teachers]))
         return item
 
 

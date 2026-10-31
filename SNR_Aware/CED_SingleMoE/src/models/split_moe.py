@@ -13,15 +13,14 @@ Architecture Flow:
        -> Blocks 0 to 9 (Shared Blocks): Pre-LN with 2D GREP BiasAttention
     4. Self-Contained Spectral-Token Router:
        -> CLS token h_9 [B, 192] from Block 9
-       -> Nén 192 -> 16 + Concat với f_spec -> R^22 -> MLP 22 -> 32 -> 2 -> Softmax -> alpha in (0, 1)
+       -> Nén 192 -> 16 + Concat với f_spec -> R^22 -> MLP 22 -> 32 -> K -> Softmax -> gates g (K expert: low, [mid,] high)
     5. Deep MoE Blocks 10 & 11 (SplitMoEFFN):
-       -> FFN_shared (weight 0.5) + FFN_low (0.5 * (1 - alpha)) + FFN_high (0.5 * alpha)
+       -> 0.5 * FFN_shared + 0.5 * sum_k g_k * FFN_k
        -> Identity warm-start initialization (exactly equal to baseline CED-Tiny at step 0)
-    6. Dual Classifier Head:
+    6. Một head mỗi expert:
        -> CLS token h_final [B, 192] after Block 11 + LayerNorm
-       -> Head_low: Linear(192, 36)
-       -> Head_high: Linear(192, 36)
-       -> Final Logits: z = (1 - alpha) * z_low + alpha * z_high
+       -> Head_k: Linear(192, 36) cho k in (low, [mid,] high)
+       -> Final Logits: z = sum_k g_k * z_k
 
 References:
     - V-MoE: Riquelme et al., "Scaling Vision with Sparse Mixture of Experts",
@@ -51,45 +50,26 @@ from src.router import SelfContainedSpectralTokenRouter
 
 class SplitMoEFFN(nn.Module):
     """
-    Split-FFN with 1 Shared Expert + 2 Routed Experts (Low-SNR & High-SNR).
+    Split-FFN: 1 shared expert + K routed expert theo SNR (ffn_low, [ffn_mid,] ffn_high).
 
-    Mathematical Formulation:
-        y = 0.5 * FFN_shared(x) + 0.5 * [(1 - alpha) * FFN_low(x) + alpha * FFN_high(x)]
+        y = 0.5 * FFN_shared(x) + 0.5 * sum_k g_k * FFN_k(x),   sum_k g_k = 1
 
-    Total routing weight:
-        0.5 + 0.5 * (1 - alpha + alpha) = 1.0 (Strictly normalized convex combination)
-
-    Identity Warm-Start Initialization:
-        When ffn_shared, ffn_low, and ffn_high are initialized with exact copies of base_mlp,
-        at step 0:
-            y = 0.5 * M(x) + 0.5 * [(1 - alpha) * M(x) + alpha * M(x)]
-              = 0.5 * M(x) + 0.5 * M(x) = M(x)
-        The output is MATHEMATICALLY IDENTICAL to the baseline CED-Tiny MLP for ANY alpha in (0, 1).
+    Khởi tạo: mọi FFN là bản sao MLP gốc M, nên y = 0.5 M(x) + 0.5 M(x) = M(x) với mọi g, tức đúng bằng
+    CED-Tiny gốc ở bước 0.
     """
-    def __init__(self, base_mlp: nn.Module) -> None:
+    def __init__(self, base_mlp: nn.Module, expert_names: tuple[str, ...] = ("low", "high")) -> None:
         super().__init__()
+        self.expert_names = expert_names
         self.ffn_shared = copy.deepcopy(base_mlp)
-        self.ffn_low = copy.deepcopy(base_mlp)
-        self.ffn_high = copy.deepcopy(base_mlp)
+        for name in expert_names:
+            setattr(self, f"ffn_{name}", copy.deepcopy(base_mlp))
 
-    def forward(self, x: Tensor, alpha: Tensor) -> Tensor:
-        """
-        Args:
-            x: [B, Tokens, C] (e.g. [B, 97, 192])
-            alpha: [B, 1] or [B, 1, 1] soft routing weight
-        Returns:
-            out: [B, Tokens, C]
-        """
-        if alpha.ndim == 2:
-            alpha = alpha.unsqueeze(1)  # [B, 1, 1]
-
-        out_shared = self.ffn_shared(x)
-        out_low = self.ffn_low(x)
-        out_high = self.ffn_high(x)
-
-        # Normalized convex combination
-        routed_out = (1.0 - alpha) * out_low + alpha * out_high
-        return 0.5 * out_shared + 0.5 * routed_out
+    def forward(self, x: Tensor, gates: Tensor) -> Tensor:
+        """x: [B, Tokens, C]; gates: [B, K] (tổng bằng 1)."""
+        routed = sum(
+            gates[:, k, None, None] * getattr(self, f"ffn_{name}")(x) for k, name in enumerate(self.expert_names)
+        )
+        return 0.5 * self.ffn_shared(x) + 0.5 * routed
 
 
 class CEDSingleMoESplitFFN(nn.Module):
@@ -97,8 +77,8 @@ class CEDSingleMoESplitFFN(nn.Module):
     Complete Single-Backbone CED-Tiny MoE Architecture (~6.62M parameters).
 
     - Blocks 0 to 9: 100% shared standard Transformer blocks with 2D GREP BiasAttention.
-    - Blocks 10 & 11: Split-FFN containing 1 Shared Expert + 2 Routed Experts (Low & High).
-    - Classifier: Dual-Head (Head_low and Head_high) blended via alpha.
+    - Blocks 10 & 11: Split-FFN containing 1 Shared Expert + K Routed Experts (low, [mid,] high).
+    - Classifier: một head mỗi expert, trộn theo gates.
     - Self-Contained Spectral-Token Router: Uses physical features from AcousticFeatureExtractor
       and intermediate CLS token representation from Block 9.
     """
@@ -110,9 +90,11 @@ class CEDSingleMoESplitFFN(nn.Module):
         split_blocks: tuple[int, ...] = (10, 11),
         dropout: float = 0.0,
         load_pretrained: bool = False,
+        expert_names: tuple[str, ...] = ("low", "high"),
     ) -> None:
         super().__init__()
         self.split_blocks = split_blocks
+        self.expert_names = tuple(expert_names)
         self.num_classes = num_classes
 
         # 1. Frontend Audio Processors
@@ -139,29 +121,32 @@ class CEDSingleMoESplitFFN(nn.Module):
             token_dim=192,
             token_proj_dim=16,
             hidden_dim=32,
+            num_experts=len(self.expert_names),
         )
 
         # 4. Replace MLPs in deep blocks (10 & 11) with SplitMoEFFN
         self.moe_blocks: dict[int, SplitMoEFFN] = {}
         for block_idx in self.split_blocks:
             original_mlp = self.vit_base.vit.blocks[block_idx].mlp
-            moe_mlp = SplitMoEFFN(original_mlp)
+            moe_mlp = SplitMoEFFN(original_mlp, self.expert_names)
             self.vit_base.vit.blocks[block_idx].mlp = moe_mlp
             self.moe_blocks[block_idx] = moe_mlp
 
-        # 5. Dual Classifier Heads (initialized from pretrained base head)
+        # 5. Một head mỗi expert (khởi tạo từ head của mô hình nền)
         original_head = self.vit_base.vit.head
-        self.head_low = copy.deepcopy(original_head)
-        self.head_high = copy.deepcopy(original_head)
+        for name in self.expert_names:
+            setattr(self, f"head_{name}", copy.deepcopy(original_head))
 
     def forward(
         self,
         waveform: Tensor,
         return_dict: bool = False,
+        oracle_gates: Tensor | None = None,
+        oracle_mask: Tensor | None = None,
     ) -> dict[str, Tensor] | Tensor:
         """
         End-to-End Forward Pass:
-            Waveform -> Features & Mel -> Blocks 0..9 -> Router alpha -> Blocks 10..11 -> Dual Head
+            Waveform -> Features & Mel -> Blocks 0..9 -> Router gates -> Blocks 10..11 -> head mỗi expert
         """
         # Step 1: RMS Energy Normalization (target_rms = 0.07925)
         wave_norm = rms_normalize(waveform)
@@ -192,37 +177,41 @@ class CEDSingleMoESplitFFN(nn.Module):
         # Extract Block 9 CLS token representation for router
         block9_token = x[:, 0]  # [B, 192]
 
-        # Step 6: Self-Contained Router predicts dynamic soft weight alpha in (0, 1)
+        # Step 6: Router nội tại -> gates [B, K]; alpha = gate của expert high
         alpha, gates = self.router(spectral_feat, block9_token)
+        # Gate dùng cho expert: mẫu có oracle_mask lấy oracle_gates (khoảng SNR thật, chỉ khi train / chẩn đoán),
+        # còn lại lấy gate của router. "gates" trả về luôn là của router (cho loss router).
+        gates_used = gates
+        if oracle_gates is not None:
+            mask = torch.ones_like(gates[:, 0], dtype=torch.bool) if oracle_mask is None else oracle_mask
+            gates_used = torch.where(mask[:, None], oracle_gates.to(gates.dtype), gates)
 
         # Step 7: Execute Deep MoE Blocks 10 & 11
         for i in self.split_blocks:
             block = vit.blocks[i]
             # Attention with 2D GREP
             x = x + block.drop_path1(block.ls1(block.attn(block.norm1(x))))
-            # MoE Split-FFN modulated by alpha
+            # MoE Split-FFN trộn theo gates
             moe_mlp = block.mlp
             normed_x = block.norm2(x)
-            mlp_out = moe_mlp(normed_x, alpha)
+            mlp_out = moe_mlp(normed_x, gates_used)
             x = x + block.drop_path2(block.ls2(mlp_out))
 
         # Step 8: Final LayerNorm and Dual Head Aggregation
         x = vit.norm(x)
         cls_final = x[:, 0]  # [B, 192]
 
-        logits_low = self.head_low(cls_final)   # [B, 36]
-        logits_high = self.head_high(cls_final) # [B, 36]
-
-        # Continuous soft fusion: z = (1 - alpha) * z_low + alpha * z_high
-        logits_fused = (1.0 - alpha) * logits_low + alpha * logits_high
+        # Một head mỗi expert, trộn theo gates: z = sum_k g_k * z_k
+        logits_experts = torch.stack([getattr(self, f"head_{name}")(cls_final) for name in self.expert_names], dim=1)
+        logits_fused = (gates_used.unsqueeze(-1) * logits_experts).sum(dim=1)  # [B, 36]
 
         if return_dict:
             return {
                 "logits": logits_fused,
-                "logits_low": logits_low,
-                "logits_high": logits_high,
+                "logits_experts": logits_experts,  # [B, K, 36]
                 "alpha": alpha,
                 "gates": gates,
+                "gates_used": gates_used,
                 "spectral_feat": spectral_feat,
                 "block9_token": block9_token,
             }
