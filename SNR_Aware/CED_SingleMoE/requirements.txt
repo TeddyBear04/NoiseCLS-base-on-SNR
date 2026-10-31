@@ -1,0 +1,8 @@
+torch>=2.0.0
+torchaudio
+timm>=0.9.0
+numpy>=1.22.0
+scikit-learn>=1.0.0
+pyyaml>=6.0
+huggingface-hub>=0.19.0
+safetensors>=0.3.0

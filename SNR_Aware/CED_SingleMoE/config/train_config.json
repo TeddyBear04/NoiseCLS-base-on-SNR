@@ -1,0 +1,64 @@
+{
+  "experiment": {
+    "name": "ced_singlemoe_v2",
+    "seed": 42,
+    "num_classes": 36
+  },
+  "paths": {
+    "data_root": "/marimo/dataset_v2/mix-dataset-v2",
+    "nhat_dir": "/marimo/nhat_cache",
+    "nhat_pattern": "frcrn_{split}.npy",
+    "output_dir": "output/ced_singlemoe_v2",
+    "_note": "nhat_dir: n_hat = FRCRN(mixture) fp32 do scripts/frcrn_cache.py của FRCRN_KD_MoE tạo (frcrn_{split}.npy + .json sample_id, FRCRN model/frcrn_best.pt), trên 36_labels nên val có 6480 clip; v2 lấy 3064 clip theo sample_id. Split validation = thư mục eval của v2. teacher_logits: logit OOF của teacher BEATs 5 fold trên nhiễu sạch, đóng gói {train|validation: {mix_id, logits36}}.",
+    "teacher_logits": "/marimo/teacher/beats_teacher_logits_clean.pt"
+  },
+  "hf": {
+    "dataset_repo": "phitruong0606/mix-dataset-v2",
+    "dataset_files": [
+      "labels.txt",
+      "cache-nhat.zip",
+      "mix-dataset-v2.zip"
+    ],
+    "teacher_repo": "Keshio1/frcrn-kdmoe-teacher",
+    "teacher_file": "beats_teacher_logits_clean.pt"
+  },
+  "model": {
+    "freq_bins": 64,
+    "frames": 398,
+    "split_blocks": [
+      10,
+      11
+    ],
+    "dropout": 0.0,
+    "load_pretrained": true
+  },
+  "loss": {
+    "lambda_kd": 0.65,
+    "lambda_route": 0.2,
+    "kd_temperature": 2.0,
+    "kd_fused_weight": 0.65,
+    "kd_expert_weight": 0.35,
+    "label_smoothing": 0.05,
+    "snr_center_db": 15.0,
+    "snr_tau": 2.5
+  },
+  "train": {
+    "epochs": 15,
+    "batch_size": 64,
+    "num_workers": 4,
+    "lr_backbone": 4e-05,
+    "lr_experts": 0.00012,
+    "lr_router": 0.0002,
+    "weight_decay": 0.05,
+    "warmup_epochs": 2,
+    "grad_clip": 1.0,
+    "mixup_alpha": 0.4,
+    "mixup_prob": 0.8,
+    "amp_dtype": "bfloat16"
+  },
+  "smoke": {
+    "max_samples": 64,
+    "epochs": 1,
+    "batch_size": 16
+  }
+}
