@@ -60,3 +60,19 @@ def test_head_blending_follows_gates(sample_waveform):
     fused = (out["gates"].unsqueeze(-1) * out["logits_experts"]).sum(dim=1)
     assert torch.allclose(out["logits"], fused, atol=1e-5)
     assert torch.allclose(out["alpha"], out["gates"][:, -1:])
+
+
+def test_router_input_raw_keeps_level_but_rms_does_not(sample_waveform):
+    """router_input='raw': log-RMS của router theo biên độ n_hat (gợi ý SNR); 'rms' (bản gốc): log-RMS là hằng số."""
+    quiet = sample_waveform * 0.01
+    for router_input, level_kept in (("raw", True), ("rms", False)):
+        model = CEDSingleMoESplitFFN(num_classes=36, expert_names=("low", "mid", "high"), router_input=router_input).eval()
+        with torch.no_grad():
+            loud_out, quiet_out = model(sample_waveform, return_dict=True), model(quiet, return_dict=True)
+        diff = (loud_out["spectral_feat"][:, 0] - quiet_out["spectral_feat"][:, 0]).abs()
+        assert bool((diff > 1.0).all()) == level_kept, router_input
+        # Đặc trưng không phụ thuộc biên độ (crest, kurtosis, flatness, tỉ lệ dải) giữ nguyên
+        assert torch.allclose(loud_out["spectral_feat"][:, 1:], quiet_out["spectral_feat"][:, 1:], atol=1e-3)
+        # Nhánh mel vẫn chuẩn hoá RMS: CLS sau block 9 không đổi theo biên độ
+        assert torch.allclose(loud_out["block9_token"], quiet_out["block9_token"], atol=1e-3)
+    assert isinstance(model.router.feature_norm, nn.Identity)

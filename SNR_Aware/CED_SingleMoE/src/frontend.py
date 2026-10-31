@@ -233,8 +233,10 @@ class AcousticFeatureExtractor(nn.Module):
         These 6 metrics directly quantify physical distortion and speech leakage artifacts
         without requiring clean ground-truth speech or Oracle SNR!
     """
-    def __init__(self, n_fft: int = 512, hop_length: int = 160) -> None:
+    def __init__(self, n_fft: int = 512, hop_length: int = 160, log_heavy_tails: bool = False) -> None:
         super().__init__()
+        # Crest factor (p99 ~50) và kurtosis (p99 ~200) có đuôi dài: lấy log để router thấy được cả vùng giá trị nhỏ.
+        self.log_heavy_tails = log_heavy_tails
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.register_buffer("window", torch.hann_window(n_fft))
@@ -295,6 +297,8 @@ class AcousticFeatureExtractor(nn.Module):
         ratio_low_speech = torch.log(band_low / band_speech).unsqueeze(-1)    # [B, 1]
         ratio_high_speech = torch.log(band_high / band_speech).unsqueeze(-1)  # [B, 1]
 
+        if self.log_heavy_tails:
+            crest_factor, kurtosis = torch.log(crest_factor + eps), torch.log(kurtosis + eps)
         features = torch.cat(
             [log_rms, crest_factor, kurtosis, flatness, ratio_low_speech, ratio_high_speech],
             dim=-1,

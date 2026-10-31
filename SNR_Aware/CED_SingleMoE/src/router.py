@@ -57,9 +57,13 @@ class SelfContainedSpectralTokenRouter(nn.Module):
         token_proj_dim: int = 16,
         hidden_dim: int = 32,
         num_experts: int = 2,
+        feature_norm: bool = False,
     ) -> None:
         super().__init__()
         self.num_experts = num_experts
+        # 6 đặc trưng có thang rất khác nhau (kurtosis tới ~200, flatness ~0.07): chuẩn hoá từng chiều trước MLP
+        # để không đặc trưng nào lấn át. Tắt ở bản gốc (run 1) để giữ nguyên state_dict.
+        self.feature_norm = nn.BatchNorm1d(spectral_dim) if feature_norm else nn.Identity()
 
         # Branch 1: Token projection layer (192 -> 16)
         self.token_proj = nn.Sequential(
@@ -78,6 +82,7 @@ class SelfContainedSpectralTokenRouter(nn.Module):
 
     def forward(self, spectral_feat: Tensor, intermediate_token: Tensor) -> tuple[Tensor, Tensor]:
         token_h = self.token_proj(intermediate_token)  # [B, 16]
+        spectral_feat = self.feature_norm(spectral_feat.float()).to(token_h.dtype)
         gates = F.softmax(self.mlp(torch.cat([spectral_feat, token_h], dim=-1)), dim=-1)  # [B, K]
         return gates[:, -1:], gates
 

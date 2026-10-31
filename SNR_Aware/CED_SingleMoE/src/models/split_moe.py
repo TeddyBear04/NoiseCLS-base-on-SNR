@@ -91,8 +91,14 @@ class CEDSingleMoESplitFFN(nn.Module):
         dropout: float = 0.0,
         load_pretrained: bool = False,
         expert_names: tuple[str, ...] = ("low", "high"),
+        router_input: str = "rms",
     ) -> None:
         super().__init__()
+        # "rms": như bản gốc, 6 đặc trưng tính trên n_hat đã chuẩn hoá RMS (log-RMS thành hằng số, mất mức năng lượng).
+        # "raw": tính trên n_hat thô (RMS n_hat tương quan -0.83 với SNR), log crest/kurtosis, BatchNorm trước router.
+        if router_input not in ("rms", "raw"):
+            raise ValueError(f"router_input không hợp lệ: {router_input}")
+        self.router_input = router_input
         self.split_blocks = split_blocks
         self.expert_names = tuple(expert_names)
         self.num_classes = num_classes
@@ -100,7 +106,7 @@ class CEDSingleMoESplitFFN(nn.Module):
         # 1. Frontend Audio Processors
         self.frontend = LogMel(n_mels=freq_bins, num_frames=frames)
         self.spec_augment = SpecAugment()
-        self.acoustic_extractor = AcousticFeatureExtractor()
+        self.acoustic_extractor = AcousticFeatureExtractor(log_heavy_tails=router_input == "raw")
 
         # 2. Backbone Base Model (Pre-LN ViT with 2D GREP)
         self.vit_base = ViTSBias(
@@ -122,6 +128,7 @@ class CEDSingleMoESplitFFN(nn.Module):
             token_proj_dim=16,
             hidden_dim=32,
             num_experts=len(self.expert_names),
+            feature_norm=router_input == "raw",
         )
 
         # 4. Replace MLPs in deep blocks (10 & 11) with SplitMoEFFN
@@ -151,8 +158,10 @@ class CEDSingleMoESplitFFN(nn.Module):
         # Step 1: RMS Energy Normalization (target_rms = 0.07925)
         wave_norm = rms_normalize(waveform)
 
-        # Step 2: Extract 6 physical/spectral features from normalized waveform
-        spectral_feat = self.acoustic_extractor(wave_norm)  # [B, 6]
+        # Step 2: 6 đặc trưng âm học cho router; "raw" giữ mức năng lượng của n_hat (gợi ý SNR mạnh nhất)
+        with torch.autocast(waveform.device.type, enabled=False):
+            source = waveform.float() if self.router_input == "raw" else wave_norm.float()
+            spectral_feat = self.acoustic_extractor(source)  # [B, 6]
 
         # Step 3: Compute Log-Mel Spectrogram & SpecAugment
         with torch.autocast(waveform.device.type, enabled=False):

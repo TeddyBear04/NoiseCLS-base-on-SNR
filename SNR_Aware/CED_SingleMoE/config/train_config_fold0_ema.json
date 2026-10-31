@@ -40,7 +40,9 @@
       "low",
       "mid",
       "high"
-    ]
+    ],
+    "router_input": "raw",
+    "_note": "router_input: 'rms' như bản gốc (6 đặc trưng tính trên n_hat đã chuẩn hoá RMS -> log-RMS là hằng số); 'raw' tính trên n_hat thô (RMS n_hat tương quan -0.83 với SNR, riêng nó đoán đúng khoảng SNR 71% trên val), log crest/kurtosis, BatchNorm trước router. Nhánh mel vẫn chuẩn hoá RMS."
   },
   "routing": {
     "band_labels": "hard",
