@@ -75,7 +75,8 @@ def build_dataset(cfg: dict[str, Any], split: str, with_teacher: bool, max_sampl
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     with open(path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+        # Hợp mọi cột theo thứ tự gặp: dòng "overall" có thêm "auc" mà dòng theo SNR không có.
+        writer = csv.DictWriter(f, fieldnames=list(dict.fromkeys(k for row in rows for k in row)))
         writer.writeheader()
         writer.writerows(rows)
 
