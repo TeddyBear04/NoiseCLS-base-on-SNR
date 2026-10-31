@@ -33,15 +33,16 @@ def apply_mixup_with_teachers(
     snr_db: Tensor,
     teacher_logits: Tensor,
     band: Tensor,
+    route_band: Tensor,
     alpha: float = 0.4,
     prob: float = 0.8,
     temp: float = 2.0,
-) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
     """Mixup nhất quán trên waveform, nhãn, SNR, khoảng SNR one-hot [B, K] và phân phối mềm của teacher từng
     expert [B, K, C] (Beyer et al., CVPR 2022)."""
     p_teacher = F.softmax(teacher_logits / temp, dim=-1)
     if np.random.rand() > prob or alpha <= 0.0:
-        return waveform, target, snr_db, p_teacher, band
+        return waveform, target, snr_db, p_teacher, band, route_band
 
     perm = torch.randperm(waveform.shape[0], device=waveform.device)
     lam = float(np.random.beta(alpha, alpha))
@@ -49,7 +50,7 @@ def apply_mixup_with_teachers(
     def mix(x: Tensor) -> Tensor:
         return lam * x + (1.0 - lam) * x[perm]
 
-    return mix(waveform), mix(target), mix(snr_db), mix(p_teacher), mix(band)
+    return mix(waveform), mix(target), mix(snr_db), mix(p_teacher), mix(band), mix(route_band)
 
 
 class KDTrainer:
@@ -81,6 +82,7 @@ class KDTrainer:
         snr_edges_db: tuple[float, ...] = (15.0,),
         snr_tau: float = 2.5,
         band_labels: str = "soft",
+        route_source: str = "router",
         oracle_prob_start: float = 0.0,
         oracle_prob_end: float = 0.0,
         grad_clip: float = 1.0,
@@ -104,6 +106,9 @@ class KDTrainer:
         self.snr_edges_db = tuple(snr_edges_db)
         self.snr_tau = snr_tau
         self.band_labels = band_labels
+        if route_source not in ("router", "frcrn_snr"):
+            raise ValueError(f"routing.source không hợp lệ: {route_source}")
+        self.route_source = route_source
         self.oracle_prob_start = oracle_prob_start
         self.oracle_prob_end = oracle_prob_end
         self.grad_clip = grad_clip
@@ -159,6 +164,11 @@ class KDTrainer:
             groups.append({"params": list(self.model.parameters()), "lr": lr_backbone, "weight_decay": weight_decay})
         return groups
 
+    def frcrn_gates(self, batch: dict[str, Any], num_experts: int) -> Tensor:
+        """One-hot khoảng SNR của SNR ước lượng từ FRCRN [B, K]."""
+        snr_est = batch["snr_est"].to(self.device, non_blocking=True)
+        return F.one_hot(snr_band_index(snr_est, self.snr_edges_db), num_experts).float()
+
     def oracle_probability(self, epoch: int) -> float:
         """Xác suất dùng gate oracle ở epoch này: tuyến tính từ oracle_prob_start (epoch đầu) tới oracle_prob_end (epoch cuối)."""
         frac = epoch / max(1, self.epochs - 1)
@@ -176,10 +186,12 @@ class KDTrainer:
             target = batch["target"].to(self.device, non_blocking=True)
             snr_db = batch["snr_db"].to(self.device, non_blocking=True)
             teacher_log = batch["teacher_logits"].to(self.device, non_blocking=True)  # [B, K, C]
-            band = F.one_hot(snr_band_index(snr_db, self.snr_edges_db), teacher_log.shape[1]).float()
+            num_experts = teacher_log.shape[1]
+            band = F.one_hot(snr_band_index(snr_db, self.snr_edges_db), num_experts).float()
+            route_band = self.frcrn_gates(batch, num_experts) if self.route_source == "frcrn_snr" else band
 
-            wave_m, target_m, snr_m, p_teacher, band_m = apply_mixup_with_teachers(
-                wave, target, snr_db, teacher_log, band,
+            wave_m, target_m, snr_m, p_teacher, band_m, route_band_m = apply_mixup_with_teachers(
+                wave, target, snr_db, teacher_log, band, route_band,
                 alpha=self.mixup_alpha, prob=self.mixup_prob, temp=self.temp,
             )
 
@@ -199,13 +211,18 @@ class KDTrainer:
             # eps giảm tuyến tính qua các epoch, còn lại dùng gate của router như lúc suy luận.
             eps = self.oracle_probability(epoch)
             oracle_mask = torch.rand(wave_m.shape[0], device=self.device) < eps if eps > 0.0 else None
+            oracle_gates = w_band
+            if self.route_source == "frcrn_snr":
+                # Cách của FRCRN_KD_MoE: expert route one-hot theo khoảng của SNR ước lượng từ FRCRN, cả train lẫn
+                # suy luận; router học không quyết định gì.
+                oracle_gates, oracle_mask = route_band_m, torch.ones_like(snr_m, dtype=torch.bool)
             # Đích KD của logit trộn: teacher của mỗi expert theo trọng số khoảng SNR
             p_fused = (w_band.unsqueeze(-1) * p_teacher).sum(dim=1)
 
             self.optimizer.zero_grad()
             with torch.autocast(self.device.type, dtype=self.amp_type, enabled=self.use_amp):
                 out = self.model(wave_m, return_dict=True,
-                                 oracle_gates=w_band if oracle_mask is not None else None, oracle_mask=oracle_mask)
+                                 oracle_gates=oracle_gates if oracle_mask is not None else None, oracle_mask=oracle_mask)
                 logits_fused = out["logits"]
 
                 # 1. Supervised Task Cross-Entropy
@@ -256,10 +273,13 @@ class KDTrainer:
             target_idx = batch["target_idx"].numpy()
             snr_val = batch["snr_db"].numpy()
 
+            route = None
+            if self.route_source == "frcrn_snr":
+                route = self.frcrn_gates(batch, len(self.model.expert_names))
             with torch.autocast(self.device.type, dtype=self.amp_type, enabled=self.use_amp):
-                out = self.model(wave, return_dict=True)
+                out = self.model(wave, return_dict=True, oracle_gates=route)
                 logits = out["logits"]
-                gates = out["gates"].float()
+                gates = out["gates_used"].float()
 
             probs = F.softmax(logits, dim=-1).cpu().numpy()
             all_preds.append(probs)

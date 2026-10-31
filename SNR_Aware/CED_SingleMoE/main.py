@@ -105,7 +105,20 @@ def expert_teachers(cfg: dict[str, Any], logits: dict[str, np.ndarray]) -> list[
 def build_dataset(cfg: dict[str, Any], split: str, with_teacher: bool, max_samples: int | None = None) -> NHatDataset:
     base = Mixture36Dataset(resolve(cfg, "data_root"), split, max_samples)
     teachers = expert_teachers(cfg, teacher_logits(cfg, split, base.rows)) if with_teacher else None
-    return NHatDataset(base, nhat_path(cfg, split), teachers)
+    return NHatDataset(base, nhat_path(cfg, split), teachers, with_snr_est=frcrn_routing(cfg))
+
+
+def frcrn_routing(cfg: dict[str, Any]) -> bool:
+    return cfg["routing"].get("source", "router") == "frcrn_snr"
+
+
+def frcrn_gates(cfg: dict[str, Any], snr_est: torch.Tensor) -> torch.Tensor:
+    """One-hot khoảng SNR của SNR ước lượng từ FRCRN [B, K] (cách route của FRCRN_KD_MoE)."""
+    import torch.nn.functional as F
+
+    from src.router import snr_band_index
+
+    return F.one_hot(snr_band_index(snr_est, tuple(cfg["loss"]["snr_edges_db"])), len(cfg["model"]["experts"])).float()
 
 
 def labels_of(dataset: NHatDataset) -> np.ndarray:
@@ -200,7 +213,8 @@ def run_train(cfg: dict[str, Any], smoke: bool) -> None:
         lambda_route=loss["lambda_route"], kd_temperature=loss["kd_temperature"],
         kd_fused_weight=loss["kd_fused_weight"], kd_expert_weight=loss["kd_expert_weight"],
         snr_edges_db=tuple(loss["snr_edges_db"]), snr_tau=loss["snr_tau"], grad_clip=t["grad_clip"],
-        band_labels=cfg["routing"]["band_labels"], oracle_prob_start=cfg["routing"]["oracle_prob_start"],
+        band_labels=cfg["routing"]["band_labels"], route_source=cfg["routing"].get("source", "router"),
+        oracle_prob_start=cfg["routing"]["oracle_prob_start"],
         oracle_prob_end=cfg["routing"]["oracle_prob_end"],
         num_classes=cfg["experiment"]["num_classes"], amp_dtype=t["amp_dtype"], out_dir=out_dir,
     )
@@ -243,7 +257,7 @@ def cmd_eval(cfg: dict[str, Any]) -> None:
     dataset = build_dataset(cfg, "validation", False)
     probs, alphas, targets, snrs = [], [], [], []
     for batch in build_dataloader(dataset, cfg["train"]["batch_size"], False, 0):
-        p, a = pipe.predict_tta(batch["waveform"])
+        p, a = pipe.predict_tta(batch["waveform"], frcrn_gates(cfg, batch["snr_est"]) if frcrn_routing(cfg) else None)
         probs.append(p)
         alphas.append(a)
         targets.append(batch["target_idx"].numpy())
@@ -285,8 +299,8 @@ def cmd_diag(cfg: dict[str, Any]) -> None:
     for batch in build_dataloader(dataset, 256, False, cfg["train"]["num_workers"]):
         wave, snr = batch["waveform"].to(device), batch["snr_db"].to(device)
         for m in modes:
-            if m == "router":
-                oracle = None
+            if m == "router":  # routing thật lúc suy luận: router học, hoặc khoảng SNR ước lượng từ FRCRN
+                oracle = frcrn_gates(cfg, batch["snr_est"]).to(device) if frcrn_routing(cfg) else None
             elif m == "oracle":
                 oracle = F.one_hot(snr_band_index(snr, edges), len(names)).float()
             else:
@@ -295,7 +309,7 @@ def cmd_diag(cfg: dict[str, Any]) -> None:
                 out = model(wave, return_dict=True, oracle_gates=oracle)
             preds[m].append(out["logits"].float().argmax(1).cpu().numpy())
             if m == "router":
-                gates.append(out["gates"].float().cpu().numpy())
+                gates.append(out["gates_used"].float().cpu().numpy())
         labels.append(batch["target_idx"].numpy())
         snrs.append(batch["snr_db"].numpy())
     y, s, g = np.concatenate(labels), np.concatenate(snrs), np.concatenate(gates)

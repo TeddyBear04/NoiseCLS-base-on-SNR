@@ -29,6 +29,7 @@ class AudioItem(TypedDict, total=False):
     snr_db: Tensor
     sample_id: str
     teacher_logits: Tensor  # [K, C]: logit teacher của từng expert SNR
+    snr_est: Tensor  # SNR ước lượng từ FRCRN (dB), cho routing.source = frcrn_snr
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -120,10 +121,25 @@ class NHatDataset(Dataset):
     `teachers` là danh sách K mảng [N, C], một mảng mỗi expert (low, [mid,] high): một teacher 5 fold nhiễu
     sạch thì cả K là cùng một mảng; Fold0/EMA thì mỗi expert trỏ tới teacher của nó."""
 
-    def __init__(self, base: Mixture36Dataset, nhat_path: str | Path, teachers: list[np.ndarray] | None = None) -> None:
+    def __init__(
+        self,
+        base: Mixture36Dataset,
+        nhat_path: str | Path,
+        teachers: list[np.ndarray] | None = None,
+        with_snr_est: bool = False,
+    ) -> None:
         self.base = base
-        self.array, self.cache_index = cache_rows(Path(nhat_path), base.rows)
+        nhat_path = Path(nhat_path)
+        self.array, self.cache_index = cache_rows(nhat_path, base.rows)
         self.teachers = teachers
+        # SNR ước lượng 10 log10(P(mixture - n_hat) / P(n_hat)) ở mức gốc (scripts/frcrn_cache.py của FRCRN_KD_MoE),
+        # file <cache>.snr.npy cùng thứ tự hàng với bộ đệm n_hat.
+        self.snr_est = None
+        if with_snr_est:
+            snr_path = nhat_path.with_suffix(".snr.npy")
+            if not snr_path.is_file():
+                raise FileNotFoundError(f"thiếu SNR ước lượng từ FRCRN: {snr_path}")
+            self.snr_est = np.load(snr_path)
         for k, logits in enumerate(teachers or []):
             if len(logits) != len(base):
                 raise ValueError(f"logit teacher expert {k}: {len(logits)} hàng != {len(base)} hàng manifest")
@@ -134,6 +150,8 @@ class NHatDataset(Dataset):
     def __getitem__(self, index: int) -> AudioItem:
         item = self.base[index]
         item["waveform"] = torch.from_numpy(self.array[self.cache_index[index]].copy()).float()
+        if self.snr_est is not None:
+            item["snr_est"] = torch.tensor(float(self.snr_est[self.cache_index[index]]), dtype=torch.float32)
         if self.teachers is not None:
             item["teacher_logits"] = torch.from_numpy(np.stack([np.asarray(t[index], dtype=np.float32) for t in self.teachers]))
         return item

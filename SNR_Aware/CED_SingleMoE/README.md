@@ -19,6 +19,10 @@ Routing (`routing`): bản gốc dùng gate mềm của router cả lúc train. 
 không chuyên môn hoá: FFN low/high chỉ lệch ~2 %, ép toàn bộ sang expert low cho đúng accuracy của cả model, router chỉ
 đạt alpha 0.41 ở 20 dB. Bản 3 expert route cứng theo khoảng SNR thật lúc train (Hash Layers, Roller et al., NeurIPS 2021)
 với xác suất giảm tuyến tính 1 -> 0 qua các epoch (Scheduled Sampling, Bengio et al., NeurIPS 2015); suy luận chỉ dùng router.
+Router học (`routing.source: router`, `model.router_input: raw`): 6 đặc trưng tính trên n_hat thô (bản gốc tính sau chuẩn hoá
+RMS nên log-RMS là hằng số; RMS n_hat thô tương quan -0.83 với SNR), log crest/kurtosis, BatchNorm.
+`routing.source: frcrn_snr` (cách của FRCRN_KD_MoE): route one-hot theo khoảng của SNR ước lượng
+10 log10(P(mixture - n_hat) / P(n_hat)) ở mức gốc (`frcrn_{split}.snr.npy`), cả train lẫn suy luận.
 
 Teacher (`teacher.mode`):
 - `clean5fold`: BEATs 5 fold fine-tune trên nhiễu sạch, logit out-of-fold (`Keshio1/frcrn-kdmoe-teacher`), ghép theo
@@ -40,7 +44,8 @@ python -u main.py diag   --config config/train_config.json   # ép từng expert
 ```
 
 Config: `train_config.json` (run 1, 2 expert, teacher nhiễu sạch), `train_config_3exp.json` (3 expert, route oracle có lịch),
-`train_config_fold0_ema.json` (như trên, teacher Fold0/EMA; chạy `logits` trước). Dữ liệu tải bằng notebook molab.
+`train_config_fold0_ema.json` (như trên, teacher Fold0/EMA; chạy `logits` trước); bản `_frcrnsnr` của hai config sau
+route theo SNR ước lượng từ FRCRN (cần `frcrn_{split}.snr.npy` từ `build_frcrn_snr` của FRCRN_KD_MoE). Dữ liệu tải bằng notebook molab.
 
 Kết quả (chỉ validation) nằm ở `output_dir`: `lich_su.csv`, `val_theo_snr.csv`, `val_tta_theo_snr.csv`,
 `val_chan_doan_expert.csv`, `thong_so.csv`, `best_model.pt`.

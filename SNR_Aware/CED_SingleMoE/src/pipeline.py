@@ -34,15 +34,16 @@ class StudentPipeline:
         self.temperature = temperature
 
     @torch.no_grad()
-    def predict_tta(self, wave: Tensor) -> tuple[np.ndarray, np.ndarray]:
-        """Xác suất [B, 36] và alpha [B, 1] trung bình qua 3 lần dịch."""
+    def predict_tta(self, wave: Tensor, gates: Tensor | None = None) -> tuple[np.ndarray, np.ndarray]:
+        """Xác suất [B, 36] và alpha [B, 1] trung bình qua 3 lần dịch; `gates` (vd. theo SNR FRCRN) thay router."""
         wave = wave.to(self.device)
         logits, alphas = [], []
         for shift in SHIFTS:
             with torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
-                out = self.model(shift_wave(wave, shift), return_dict=True)
+                out = self.model(shift_wave(wave, shift), return_dict=True,
+                                 oracle_gates=None if gates is None else gates.to(self.device))
             logits.append(out["logits"].float())
-            alphas.append(out["alpha"].float())
+            alphas.append(out["gates_used"][:, -1:].float())
         mean_logits = torch.stack(logits).mean(dim=0)
         probs = F.softmax(mean_logits / self.temperature, dim=-1).cpu().numpy()
         return probs, torch.stack(alphas).mean(dim=0).cpu().numpy()
