@@ -91,3 +91,28 @@ def test_grep_bias_attention_mechanism():
     # Block 1 uses the shared table
     out1 = block1_attn(x)
     assert out1.shape == (2, 97, 192)
+
+
+def test_overlapping_patches_grid_and_forward(sample_waveform):
+    """Patch 16 x 16 bước thời gian 8 (chồng 50 %): lưới 4 x 48 = 192 token, bias GREP và pos_embed khớp lưới."""
+    from src.models.split_moe import CEDSingleMoESplitFFN
+
+    model = CEDSingleMoESplitFFN(num_classes=36, patch_stride=(16, 8)).eval()
+    vit_base = model.vit_base
+    assert (vit_base.freq_patches, vit_base.time_patches) == (4, 48)
+    assert vit_base.vit.pos_embed.shape[1] == 1 + 4 * 48
+    assert vit_base.vit.patch_embed.proj.stride == (16, 8)
+    assert vit_base.vit.blocks[0].attn.time_rel_bias.num_embeddings == 2 * 48 - 1
+    with torch.no_grad():
+        out = model(sample_waveform, return_dict=True)
+    assert out["logits"].shape == (2, 36)
+    assert not torch.isnan(out["logits"]).any()
+
+
+def test_sample_positions_matches_grid_at_integer_positions():
+    from src.models.vit_grep import _sample_positions
+
+    table = torch.randn(192, 10)
+    assert torch.allclose(_sample_positions(table, torch.arange(10).float()), table)
+    half = _sample_positions(table, torch.tensor([0.5]))
+    assert torch.allclose(half[:, 0], 0.5 * (table[:, 0] + table[:, 1]))

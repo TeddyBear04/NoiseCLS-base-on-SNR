@@ -92,6 +92,7 @@ class CEDSingleMoESplitFFN(nn.Module):
         load_pretrained: bool = False,
         expert_names: tuple[str, ...] = ("low", "high"),
         router_input: str = "rms",
+        patch_stride: tuple[int, int] = (16, 16),
     ) -> None:
         super().__init__()
         # "rms": như bản gốc, 6 đặc trưng tính trên n_hat đã chuẩn hoá RMS (log-RMS thành hằng số, mất mức năng lượng).
@@ -117,6 +118,7 @@ class CEDSingleMoESplitFFN(nn.Module):
             dropout=dropout,
             use_bias=True,
             time_major=False,
+            patch_stride=tuple(patch_stride),
         )
         if load_pretrained:
             load_ced_tiny(self.vit_base)

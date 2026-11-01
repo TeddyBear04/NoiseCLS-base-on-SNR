@@ -168,9 +168,11 @@ class ViTSBias(nn.Module):
         bias_init: str = "zero",
         use_bias: bool = True,
         time_major: bool = False,
+        patch_stride: tuple[int, int] = (16, 16),
     ) -> None:
         super().__init__()
         self.use_bias = use_bias
+        self.patch_stride = tuple(patch_stride)
         self.time_major = time_major
         self.vit = timm.create_model(
             arch,
@@ -183,9 +185,20 @@ class ViTSBias(nn.Module):
             attn_drop_rate=attn_dropout,
             drop_path_rate=drop_path,
         )
-        self.freq_patches = freq_bins // 16  # 64 // 16 = 4
-        self.time_patches = frames // 16     # 398 // 16 = 24
+        # Patch 16 x 16 với bước (stride_f, stride_t): bước < 16 là patch chồng lấn (AST, Gong et al. 2021: 16 x 16
+        # bước 10; Xiao et al., NeurIPS 2021: stem chồng lấn giúp ViT học ổn định hơn). Bước 16 = CED gốc (4 x 24).
+        stride_f, stride_t = self.patch_stride
+        self.freq_patches = (freq_bins - 16) // stride_f + 1  # bước 16: 4
+        self.time_patches = (frames - 16) // stride_t + 1     # bước 16: 24, bước 8: 48
         self.frames = frames
+        if self.patch_stride != (16, 16):
+            patch_embed = self.vit.patch_embed
+            patch_embed.proj.stride = self.patch_stride
+            patch_embed.grid_size = (self.freq_patches, self.time_patches)
+            patch_embed.num_patches = self.freq_patches * self.time_patches
+            embed_dim = self.vit.pos_embed.shape[-1]
+            self.vit.pos_embed = nn.Parameter(torch.zeros(1, 1 + patch_embed.num_patches, embed_dim))
+            nn.init.trunc_normal_(self.vit.pos_embed, std=0.02)
         self.shared = SharedBias()
 
         # Replace standard attention with 2D GREP BiasAttention
@@ -219,6 +232,15 @@ class ViTSBias(nn.Module):
         return vit.forward_head(x)
 
 
+def _sample_positions(table: Tensor, positions: Tensor) -> Tensor:
+    """Nội suy tuyến tính bảng embedding [C, N] tại các vị trí thực (đơn vị: ô của lưới gốc)."""
+    positions = positions.clamp(0, table.shape[1] - 1).to(table.dtype)
+    low = positions.floor().long()
+    high = (low + 1).clamp(max=table.shape[1] - 1)
+    frac = positions - low.to(table.dtype)
+    return table[:, low] * (1 - frac) + table[:, high] * frac
+
+
 def load_ced_tiny(model: ViTSBias, repo: str = CED_REPO, path: str | None = None) -> dict[str, int]:
     """
     Initialize model weights from the official AudioSet pre-trained CED-Tiny checkpoint.
@@ -244,11 +266,17 @@ def load_ced_tiny(model: ViTSBias, repo: str = CED_REPO, path: str | None = None
     result = vit.load_state_dict(mapped, strict=False)
 
     if (CED_PREFIX + "freq_pos_embed") in state and (CED_PREFIX + "time_pos_embed") in state:
-        freq = state[CED_PREFIX + "freq_pos_embed"][0, :, :, 0]
-        time = state[CED_PREFIX + "time_pos_embed"][0, :, 0, :]
-        if freq.shape[1] != model.freq_patches:
-            freq = F.interpolate(freq[None], size=model.freq_patches, mode="linear", align_corners=False)[0]
-        time = time[:, : model.time_patches]
+        freq = state[CED_PREFIX + "freq_pos_embed"][0, :, :, 0]  # [C, F_ced]
+        time = state[CED_PREFIX + "time_pos_embed"][0, :, 0, :]  # [C, T_ced], lưới bước 16
+        stride_f, stride_t = model.patch_stride
+        if model.patch_stride == (16, 16):
+            if freq.shape[1] != model.freq_patches:
+                freq = F.interpolate(freq[None], size=model.freq_patches, mode="linear", align_corners=False)[0]
+            time = time[:, : model.time_patches]
+        else:
+            # Patch chồng lấn: token thứ i bắt đầu ở i * stride, tức vị trí i * stride / 16 trên lưới CED
+            freq = _sample_positions(freq, torch.arange(model.freq_patches) * stride_f / 16)
+            time = _sample_positions(time, torch.arange(model.time_patches) * stride_t / 16)
         if time.shape[1] >= model.time_patches:
             grid = freq[:, :, None] + time[:, None, :]
             pos = grid.permute(1, 2, 0).reshape(1, model.freq_patches * model.time_patches, -1)
