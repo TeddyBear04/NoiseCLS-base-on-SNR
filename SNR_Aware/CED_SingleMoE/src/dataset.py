@@ -30,6 +30,8 @@ class AudioItem(TypedDict, total=False):
     sample_id: str
     teacher_logits: Tensor  # [K, C]: logit teacher của từng expert SNR
     snr_est: Tensor  # SNR ước lượng từ FRCRN (dB), cho routing.source = frcrn_snr
+    teacher_feat: Tensor  # [số lớp, D] vector gộp từng lớp teacher BEATs (GFD-Cosine)
+    teacher_feat_mask: Tensor  # 1 = clip có đặc trưng teacher
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -115,6 +117,19 @@ def load_teacher_logits(path: str | Path, split: str, rows: list[dict[str, str]]
     return np.asarray(packed["logits36"], dtype=np.float32)[[index[row["sample_id"]] for row in rows]]
 
 
+def load_teacher_features(path: str | Path, rows: list[dict[str, str]]) -> tuple[np.ndarray, np.ndarray]:
+    """Hàng của file vector gộp teacher ứng với từng hàng manifest, ghép theo sample_id ở <tên>.ids.json.
+
+    File do `teacher_crossfit.py features` của FRCRN_KD_MoE xuất: teacher_hints_l{l}_g1x1.npy [N, 1, 1, 768]
+    (mean token lớp l, hint_pool_grid [1, 1]) hoặc teacher_pooled.npy [N, 768]; mỗi clip train lấy fold teacher
+    không thấy nó (như logit OOF). Trả (hàng của file, mask): clip thiếu đặc trưng có hàng -1 và mask 0."""
+    path = Path(path)
+    ids = json.loads(path.with_suffix(".ids.json").read_text(encoding="utf-8"))
+    index = {sample_id: i for i, sample_id in enumerate(ids)}
+    position = np.array([index.get(row["sample_id"], -1) for row in rows], dtype=np.int64)
+    return position, (position >= 0).astype(np.float32)
+
+
 class NHatDataset(Dataset):
     """n_hat từ bộ đệm, kèm logit teacher của từng expert SNR nếu có.
 
@@ -127,8 +142,17 @@ class NHatDataset(Dataset):
         nhat_path: str | Path,
         teachers: list[np.ndarray] | None = None,
         with_snr_est: bool = False,
+        teacher_features: list[str | Path] | None = None,
     ) -> None:
         self.base = base
+        # GFD-Cosine: một file vector gộp teacher mỗi lớp (memmap mở lười trong từng worker), hàng + mask theo manifest
+        self.feat_paths = [Path(p) for p in teacher_features or []]
+        self.feat_arrays = None
+        self.feat_position, self.feat_mask = [], np.ones(len(base), dtype=np.float32)
+        for path in self.feat_paths:
+            position, mask = load_teacher_features(path, base.rows)
+            self.feat_position.append(position)
+            self.feat_mask = self.feat_mask * mask
         nhat_path = Path(nhat_path)
         self.array, self.cache_index = cache_rows(nhat_path, base.rows)
         self.teachers = teachers
@@ -154,6 +178,16 @@ class NHatDataset(Dataset):
             item["snr_est"] = torch.tensor(float(self.snr_est[self.cache_index[index]]), dtype=torch.float32)
         if self.teachers is not None:
             item["teacher_logits"] = torch.from_numpy(np.stack([np.asarray(t[index], dtype=np.float32) for t in self.teachers]))
+        if self.feat_paths:
+            if self.feat_arrays is None:
+                self.feat_arrays = [np.load(path, mmap_mode="r") for path in self.feat_paths]
+            feats = []
+            for array, position in zip(self.feat_arrays, self.feat_position):
+                row = position[index]
+                dim = int(np.prod(array.shape[1:]))
+                feats.append(np.asarray(array[row], dtype=np.float32).reshape(dim) if row >= 0 else np.zeros(dim, np.float32))
+            item["teacher_feat"] = torch.from_numpy(np.stack(feats))  # [số lớp, D]
+            item["teacher_feat_mask"] = torch.tensor(self.feat_mask[index])
         return item
 
 

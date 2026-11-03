@@ -103,10 +103,19 @@ def expert_teachers(cfg: dict[str, Any], logits: dict[str, np.ndarray]) -> list[
     return [logits[mapping[name]] for name in cfg["model"]["experts"]]
 
 
+def feature_kd_on(cfg: dict[str, Any]) -> bool:
+    fkd = cfg.get("feature_kd", {})
+    return bool(fkd.get("enabled")) and float(fkd.get("weight", 0.0)) > 0.0
+
+
 def build_dataset(cfg: dict[str, Any], split: str, with_teacher: bool, max_samples: int | None = None) -> NHatDataset:
     base = Mixture36Dataset(resolve(cfg, "data_root"), split, max_samples)
     teachers = expert_teachers(cfg, teacher_logits(cfg, split, base.rows)) if with_teacher else None
-    return NHatDataset(base, nhat_path(cfg, split), teachers, with_snr_est=frcrn_routing(cfg))
+    # GFD-Cosine chỉ là loss lúc train: đặc trưng teacher chỉ xuất cho tập train (fold out-of-fold)
+    features = None
+    if with_teacher and split == "train" and feature_kd_on(cfg):
+        features = [as_path(tap["teacher_features"]) for tap in cfg["feature_kd"]["taps"]]
+    return NHatDataset(base, nhat_path(cfg, split), teachers, with_snr_est=frcrn_routing(cfg), teacher_features=features)
 
 
 def frcrn_routing(cfg: dict[str, Any]) -> bool:
@@ -146,6 +155,13 @@ def cmd_check(cfg: dict[str, Any]) -> None:
         labels = labels_of(dataset)
         accs = {name: float((np.asarray(lg).argmax(1) == labels).mean()) for name, lg in teacher_logits(cfg, split, dataset.base.rows).items()}
         print(f"{split}: {len(dataset)} clip | n_hat {nhat_path(cfg, split).name} ok | acc teacher {accs}")
+        for path, position in zip(dataset.feat_paths, dataset.feat_position):
+            feats = np.load(path, mmap_mode="r")
+            rows = position[position >= 0]
+            sample = np.asarray(feats[np.sort(rows[:: max(1, len(rows) // 2000)])], dtype=np.float32).reshape(-1, 768)
+            unit = sample / np.linalg.norm(sample, axis=1, keepdims=True)
+            print(f"  đặc trưng teacher {path.name} {feats.shape}: có cho {int((position >= 0).sum())}/{len(dataset)} clip"
+                  f" | cos trung bình giữa các clip {float((unit @ unit.T).mean()):.3f}")
 
 
 @torch.no_grad()
@@ -218,6 +234,7 @@ def run_train(cfg: dict[str, Any], smoke: bool) -> None:
         oracle_prob_start=cfg["routing"]["oracle_prob_start"],
         oracle_prob_end=cfg["routing"]["oracle_prob_end"],
         num_classes=cfg["experiment"]["num_classes"], amp_dtype=t["amp_dtype"], out_dir=out_dir,
+        feature_kd=cfg.get("feature_kd") if feature_kd_on(cfg) else None,
     )
 
     history, best_snr = [], {}
@@ -240,7 +257,7 @@ def run_train(cfg: dict[str, Any], smoke: bool) -> None:
 
     write_csv(out_dir / "lich_su.csv", history)
     write_csv(out_dir / "val_theo_snr.csv", [{"snr": k, **v} for k, v in {**best_snr, "overall": trainer.best_results}.items()])
-    sections = ("experiment", "teacher", "model", "routing", "loss", "train")
+    sections = tuple(sec for sec in ("experiment", "teacher", "model", "routing", "loss", "feature_kd", "train") if sec in cfg)
     params = [{"muc": f"{sec}.{k}", "gia_tri": json.dumps(v)} for sec in sections for k, v in cfg[sec].items()]
     write_csv(out_dir / "thong_so.csv", params + [{"muc": "commit", "gia_tri": git_commit()}])
     print(f"best val top1 {trainer.best_top1_acc:.4f} -> {out_dir}", flush=True)
@@ -332,12 +349,31 @@ def cmd_diag(cfg: dict[str, Any]) -> None:
     print(f"dự đoán của expert {names[0]} và {names[-1]} trùng nhau: {(first == last).mean():.3f}")
 
 
+def apply_override(cfg: dict[str, Any], item: str) -> None:
+    """`a.b=v`: đặt cfg["a"]["b"] = json(v) (chuỗi không phải JSON giữ nguyên); khoá phải có sẵn để tránh gõ nhầm."""
+    key, _, raw = item.partition("=")
+    *parents, leaf = key.split(".")
+    node = cfg
+    for name in parents:
+        node = node[name]
+    if leaf not in node:
+        raise KeyError(f"--set {key}: không có trong config")
+    try:
+        node[leaf] = json.loads(raw)
+    except json.JSONDecodeError:
+        node[leaf] = raw
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("stage", choices=["check", "logits", "smoke", "train", "eval", "diag"])
     parser.add_argument("--config", default=str(ROOT / "config" / "train_config.json"))
+    parser.add_argument("--set", action="append", default=[], metavar="MỤC=GIÁ_TRỊ",
+                        help="ghi đè config, vd. --set feature_kd.weight=1.0 --set paths.output_dir=output/x (giá trị JSON)")
     args = parser.parse_args()
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
+    for item in args.set:
+        apply_override(cfg, item)
     stages = {
         "check": cmd_check, "logits": cmd_logits, "eval": cmd_eval, "diag": cmd_diag,
         "smoke": lambda c: run_train(c, True), "train": lambda c: run_train(c, False),

@@ -182,8 +182,10 @@ class CEDSingleMoESplitFFN(nn.Module):
         self.vit_base.shared.value = None
 
         # Step 5: Execute Shared Blocks 0 through 9
+        pooled_blocks = []  # mean token patch (bỏ CLS) sau mỗi block, cho GFD-Cosine nhiều lớp
         for i in range(10):
             x = vit.blocks[i](x)
+            pooled_blocks.append(x[:, 1:].mean(dim=1))
 
         # Extract Block 9 CLS token representation for router
         block9_token = x[:, 0]  # [B, 192]
@@ -207,6 +209,7 @@ class CEDSingleMoESplitFFN(nn.Module):
             normed_x = block.norm2(x)
             mlp_out = moe_mlp(normed_x, gates_used)
             x = x + block.drop_path2(block.ls2(mlp_out))
+            pooled_blocks.append(x[:, 1:].mean(dim=1))
 
         # Step 8: Final LayerNorm and Dual Head Aggregation
         x = vit.norm(x)
@@ -225,6 +228,9 @@ class CEDSingleMoESplitFFN(nn.Module):
                 "gates_used": gates_used,
                 "spectral_feat": spectral_feat,
                 "block9_token": block9_token,
+                # Mean các token patch (bỏ CLS) sau LayerNorm cuối: biểu diễn toàn clip cho GFD-Cosine
+                "pooled_tokens": x[:, 1:].mean(dim=1),  # [B, 192]
+                "pooled_blocks": pooled_blocks,  # 12 x [B, 192]: phần tử i = sau block i + 1 (chưa LayerNorm cuối)
             }
         return logits_fused
 

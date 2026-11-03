@@ -37,12 +37,15 @@ def apply_mixup_with_teachers(
     alpha: float = 0.4,
     prob: float = 0.8,
     temp: float = 2.0,
-) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
-    """Mixup nhất quán trên waveform, nhãn, SNR, khoảng SNR one-hot [B, K] và phân phối mềm của teacher từng
-    expert [B, K, C] (Beyer et al., CVPR 2022)."""
+    teacher_feat: Tensor | None = None,
+    feat_mask: Tensor | None = None,
+) -> tuple[Tensor, ...]:
+    """Mixup nhất quán trên waveform, nhãn, SNR, khoảng SNR one-hot [B, K], phân phối mềm của teacher từng
+    expert [B, K, C] (Beyer et al., CVPR 2022) và vector gộp của teacher [B, D] (trộn tuyến tính trước chuẩn hoá L2,
+    như đích logit; mask = cả hai clip đều có đặc trưng)."""
     p_teacher = F.softmax(teacher_logits / temp, dim=-1)
     if np.random.rand() > prob or alpha <= 0.0:
-        return waveform, target, snr_db, p_teacher, band, route_band
+        return waveform, target, snr_db, p_teacher, band, route_band, teacher_feat, feat_mask
 
     perm = torch.randperm(waveform.shape[0], device=waveform.device)
     lam = float(np.random.beta(alpha, alpha))
@@ -50,7 +53,13 @@ def apply_mixup_with_teachers(
     def mix(x: Tensor) -> Tensor:
         return lam * x + (1.0 - lam) * x[perm]
 
-    return mix(waveform), mix(target), mix(snr_db), mix(p_teacher), mix(band), mix(route_band)
+    if teacher_feat is not None:
+        teacher_feat, feat_mask = mix(teacher_feat), feat_mask * feat_mask[perm]
+    return mix(waveform), mix(target), mix(snr_db), mix(p_teacher), mix(band), mix(route_band), teacher_feat, feat_mask
+
+
+def grad_norm(grads: tuple[Tensor | None, ...]) -> Tensor:
+    return torch.sqrt(sum((g.float() ** 2).sum() for g in grads if g is not None))
 
 
 class KDTrainer:
@@ -89,8 +98,21 @@ class KDTrainer:
         num_classes: int = 36,
         amp_dtype: str = "bfloat16",
         out_dir: str | Path = "checkpoints",
+        feature_kd: dict[str, Any] | None = None,
     ) -> None:
         self.model = model.to(device)
+        # GFD-Cosine (src/feature_kd.py): projector chỉ sống trong trainer, không lưu vào best_model.pt
+        fkd = feature_kd or {}
+        self.feat_weight = float(fkd.get("weight", 0.0)) if fkd.get("enabled") else 0.0
+        self.grad_ratio_every = int(fkd.get("grad_ratio_every", 0))
+        self.feat_kd = None
+        if self.feat_weight > 0.0:
+            from src.feature_kd import GlobalCosineFeatureKD
+
+            # mỗi tap: block student (1..12; 12 = sau LayerNorm cuối) <- một file vector gộp của một lớp teacher
+            self.feat_blocks = [int(tap["student_block"]) for tap in fkd["taps"]]
+            self.feat_kd = GlobalCosineFeatureKD(fkd.get("student_dim", 192), fkd.get("teacher_dim", 768),
+                                                 num_taps=len(self.feat_blocks)).to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
@@ -121,6 +143,9 @@ class KDTrainer:
 
         # Parameter groups with differential learning rates
         param_groups = self._build_param_groups(lr_backbone, lr_experts, lr_router, weight_decay)
+        if self.feat_kd is not None:
+            param_groups.append({"params": list(self.feat_kd.parameters()),
+                                 "lr": float(fkd.get("lr", lr_experts)), "weight_decay": weight_decay})
         self.optimizer = torch.optim.AdamW(param_groups)
 
         total_steps = epochs * len(train_loader) if len(train_loader) > 0 else 1
@@ -152,6 +177,7 @@ class KDTrainer:
             else:
                 backbone_params.append(param)
 
+        self.backbone_params = backbone_params  # cho grad_ratio của GFD-Cosine
         groups = []
         if backbone_params:
             groups.append({"params": backbone_params, "lr": lr_backbone, "weight_decay": weight_decay})
@@ -176,7 +202,10 @@ class KDTrainer:
 
     def train_epoch(self, epoch: int) -> dict[str, float]:
         self.model.train()
-        total_loss, total_ce, total_kd, total_route = 0.0, 0.0, 0.0, 0.0
+        if self.feat_kd is not None:
+            self.feat_kd.train()
+        total_loss, total_ce, total_kd, total_route, total_feat = 0.0, 0.0, 0.0, 0.0, 0.0
+        grad_ratios: list[float] = []
         num_batches = len(self.train_loader)
         if num_batches == 0:
             return {"loss": 0.0, "loss_ce": 0.0, "loss_kd": 0.0, "loss_route": 0.0}
@@ -190,9 +219,14 @@ class KDTrainer:
             band = F.one_hot(snr_band_index(snr_db, self.snr_edges_db), num_experts).float()
             route_band = self.frcrn_gates(batch, num_experts) if self.route_source == "frcrn_snr" else band
 
-            wave_m, target_m, snr_m, p_teacher, band_m, route_band_m = apply_mixup_with_teachers(
+            t_feat = feat_mask = None
+            if self.feat_kd is not None:
+                t_feat = batch["teacher_feat"].to(self.device, non_blocking=True)
+                feat_mask = batch["teacher_feat_mask"].to(self.device, non_blocking=True)
+            wave_m, target_m, snr_m, p_teacher, band_m, route_band_m, t_feat_m, feat_mask_m = apply_mixup_with_teachers(
                 wave, target, snr_db, teacher_log, band, route_band,
                 alpha=self.mixup_alpha, prob=self.mixup_prob, temp=self.temp,
+                teacher_feat=t_feat, feat_mask=feat_mask,
             )
 
             # Label smoothing regularizer
@@ -246,8 +280,28 @@ class KDTrainer:
                 # Total Multi-Task Objective
                 loss = (1.0 - self.lambda_kd) * loss_ce + self.lambda_kd * loss_kd + self.lambda_route * loss_route.to(loss_ce.dtype)
 
+                # 5. GFD-Cosine: L_total = L_existing + lambda * mean(1 - cos(proj(s), t)), tính fp32
+                loss_feat = None
+                if self.feat_kd is not None:
+                    with torch.autocast(self.device.type, enabled=False):
+                        students = [out["pooled_tokens"] if b == 12 else out["pooled_blocks"][b - 1] for b in self.feat_blocks]
+                        loss_feat = self.feat_kd(students, t_feat_m, feat_mask_m)
+
+            if loss_feat is not None and self.grad_ratio_every and batch_idx % self.grad_ratio_every == 0:
+                # |grad(lambda L_feat)| / |grad(L_existing)| trên backbone: loss phụ có thực sự kéo backbone không
+                g_feat = torch.autograd.grad(self.feat_weight * loss_feat, self.backbone_params,
+                                             retain_graph=True, allow_unused=True)
+                g_rest = torch.autograd.grad(loss, self.backbone_params, retain_graph=True, allow_unused=True)
+                grad_ratios.append(float(grad_norm(g_feat) / grad_norm(g_rest).clamp_min(1e-12)))
+            if loss_feat is not None:
+                loss = loss + self.feat_weight * loss_feat
+                total_feat += float(loss_feat.item())
+
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_clip)
+            clip_params = list(self.model.parameters())
+            if self.feat_kd is not None:
+                clip_params += list(self.feat_kd.parameters())
+            torch.nn.utils.clip_grad_norm_(clip_params, max_norm=self.grad_clip)
             self.optimizer.step()
             self.scheduler.step()
 
@@ -256,12 +310,17 @@ class KDTrainer:
             total_kd += float(loss_kd.item())
             total_route += float(loss_route.item())
 
-        return {
+        result = {
             "loss": total_loss / num_batches,
             "loss_ce": total_ce / num_batches,
             "loss_kd": total_kd / num_batches,
             "loss_route": total_route / num_batches,
         }
+        if self.feat_kd is not None:
+            result["loss_feat"] = total_feat / num_batches
+            if grad_ratios:
+                result["grad_ratio_feat"] = float(np.mean(grad_ratios))
+        return result
 
     @torch.no_grad()
     def evaluate(self) -> dict[str, Any]:

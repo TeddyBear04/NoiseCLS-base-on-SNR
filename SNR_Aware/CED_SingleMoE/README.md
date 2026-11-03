@@ -33,6 +33,15 @@ Teacher (`teacher.mode`):
 Loss: `(1-0.65) CE + 0.65 KD + 0.20 route`, KD = 0.65 KD logit trộn (đích = teacher các expert theo khoảng SNR)
 + 0.35 KD theo expert (expert k học teacher của nó, trọng số khoảng SNR), T = 2; route = CE(gates, nhãn khoảng SNR).
 
+GFD-Cosine (`feature_kd`, `src/feature_kd.py`, config `train_config_overlap_gfd.json` = patch chồng lấn + loss này):
+`L = L_hiện_tại + weight * mean(1 - cos(LayerNorm(W s), t))`, s = mean token patch sau LayerNorm cuối CED (192),
+t = mean token lớp l BEATs teacher 5 fold nghe nhiễu sạch (768, fold out-of-fold như logit); `taps` ghép block b của CED với lớp l (GFD-5: 6/9/12, mỗi cặp một projector, lấy trung bình). Gộp toàn clip nên không cần
+khớp số token. Projector Linear(192, 768) + LayerNorm chỉ ở trainer, không vào `best_model.pt`. Gần PEFD (Chen et al.,
+NeurIPS 2022: đặc trưng lớp cuối, projector phía student, 25 x (2 - 2 cos) ~ weight 50). Mixup trộn t cùng hoán vị.
+`lich_su.csv` có `loss_feat` và `grad_ratio_feat` = |grad(weight L_feat)| / |grad(L_hiện_tại)| trên backbone.
+t xuất bằng FRCRN_KD_MoE: `teacher_crossfit.py features --config config/unified/teacher_pooled_gfd.json`
+(fold HF chép thành `output/teacher_unified/fold{f}.pt`, cần dataset 36_labels có nhiễu sạch) -> `teacher_hints_l{6,9,12}_g1x1.npy` + `.ids.json`.
+
 ## Chạy (molab)
 
 ```bash
@@ -41,6 +50,9 @@ python -u main.py smoke  --config config/train_config.json
 nohup python -u main.py train --config config/train_config.json > train.log 2>&1 &
 python -u main.py eval   --config config/train_config.json   # student TTA +-50 ms trên val
 python -u main.py diag   --config config/train_config.json   # ép từng expert theo SNR: expert có chuyên môn hoá không
+# quét trọng số GFD-Cosine (giá trị JSON, khoá phải có sẵn trong config):
+python -u main.py train --config config/train_config_overlap_gfd.json \
+    --set feature_kd.weight=1.0 --set paths.output_dir=output/ced_singlemoe_v2_overlap_gfd_w1
 ```
 
 Config: `train_config.json` (run 1, 2 expert, teacher nhiễu sạch), `train_config_3exp.json` (3 expert, route oracle có lịch),
