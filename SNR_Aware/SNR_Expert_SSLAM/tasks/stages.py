@@ -57,6 +57,29 @@ def band_rows(rows: list, config: dict) -> list:
     return [row for row in rows if low <= float(row["target_snr_db"]) <= high]
 
 
+def validation_rows_of(corpus: Corpus, config: dict, split: str) -> list:
+    """Rows of `split`, minus the leaked clips when that split is the validation one.
+
+    `dataset.validation_exclude_noise_ytids` names a file of noise_ytid values that
+    sit in AudioSet's labelled train set. BEATs (AS2M fine-tuned) has already seen
+    those clips with their labels, so they would flatter every backbone pretrained
+    on AudioSet; dropping them leaves the 3,064 unseen validation clips (of 6,480).
+    """
+    rows = corpus.by_split[split]
+    path = config["dataset"].get("validation_exclude_noise_ytids")
+    if not path or split != config["dataset"]["validation_split"]:
+        return rows
+    leaked = {line.strip() for line in (HERE / path).read_text(encoding="utf-8").splitlines()
+              if line.strip() and not line.startswith("#")}
+    kept = [row for row in rows if row["noise_ytid"] not in leaked]
+    print(f"validation: {len(kept)} of {len(rows)} clips kept "
+          f"({len(rows) - len(kept)} with a noise_ytid in AudioSet train dropped)", flush=True)
+    expected = config["dataset"].get("validation_expected_count")
+    if expected and len(kept) != expected and not config["runtime"]["smoke_test"]:
+        raise ValueError(f"validation has {len(kept)} clips after the filter, expected {expected}")
+    return kept
+
+
 def train_band_rows(rows: list, config: dict) -> list:
     """Keep only the band's rows for TRAINING when `evaluation.train_band_only` is set.
 
@@ -149,13 +172,23 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
                                       settings["workers"], False, device)
 
     use_snr = model.film is not None
-    best = split_metrics(collect(model, validation_loader, device, use_snr),
-                         corpus.labels, band)
-    best_state = snapshot(model)
+    # Selection rule. Default (older configs): macro-F1, must beat the best by 1e-4,
+    # and the untrained epoch-0 model is a candidate. `select_metric: accuracy`,
+    # `select_min_delta: 0`, `select_include_epoch0: false` give "highest validation
+    # accuracy over the trained epochs, the earlier epoch kept on ties".
+    select_metric = settings.get("select_metric", "macro_f1")
+    min_delta = settings.get("select_min_delta", 1e-4)
+    if settings.get("select_include_epoch0", True):
+        best = split_metrics(collect(model, validation_loader, device, use_snr),
+                             corpus.labels, band)
+        best_state = snapshot(model)
+        print(f"epoch=0 val_band_acc={best['band']['accuracy']:.4f} "
+              f"val_full_acc={best['full']['accuracy']:.4f}", flush=True)
+    else:
+        best, best_state = None, None
     best_epoch = 0
-    print(f"selecting on the '{select_on}' slice", flush=True)
-    print(f"epoch=0 val_band_acc={best['band']['accuracy']:.4f} "
-          f"val_full_acc={best['full']['accuracy']:.4f}", flush=True)
+    print(f"selecting on the '{select_on}' slice by {select_metric} "
+          f"(min_delta={min_delta}, epoch0={best is not None})", flush=True)
 
     epochs = 1 if config["runtime"]["smoke_test"] else settings["finetune_epochs"]
     scheduler = None
@@ -229,10 +262,12 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
         shown = " ".join(f"{k}={v/seen:.4f}" for k, v in sums.items())
         print(f"epoch={epoch} {shown} val_band_acc={entry['val_band_accuracy']:.4f} "
               f"val_band_f1={entry['val_band_macro_f1']:.4f} "
+              f"val_full_acc={entry['val_full_accuracy']:.4f} "
               f"film_dev={entry['film_deviation']:.3f} "
               f"({entry['seconds']:.0f}s)", flush=True)
 
-        if current[select_on]["macro_f1"] > best[select_on]["macro_f1"] + 1e-4:
+        if best is None or (current[select_on][select_metric]
+                            > best[select_on][select_metric] + min_delta):
             best, stale, best_epoch = current, 0, epoch
             best_state = snapshot(model)
         else:
@@ -258,7 +293,7 @@ def command_teacher36(config: dict) -> None:
     corpus = Corpus(config, column=config["teacher"]["source_column"])
     audit = corpus.audit()
     train_rows = train_band_rows(corpus.by_split[config["dataset"]["train_split"]], config)
-    validation_rows = band_rows(corpus.by_split[config["dataset"]["validation_split"]], config)
+    validation_rows = band_rows(validation_rows_of(corpus, config, config["dataset"]["validation_split"]), config)
     if runtime["smoke_test"]:
         train_rows = smoke_subset(train_rows, runtime["smoke_train_rows"],
                                   config["experiment"]["seed"])
@@ -377,7 +412,7 @@ def command_student36(config: dict) -> None:
     paired = config["teacher"]["source_column"] if (use_kd or use_crd) else None
     corpus = Corpus(config, column=settings["source_column"], paired_column=paired)
     train_rows = train_band_rows(corpus.by_split[config["dataset"]["train_split"]], config)
-    validation_rows = band_rows(corpus.by_split[config["dataset"]["validation_split"]], config)
+    validation_rows = band_rows(validation_rows_of(corpus, config, config["dataset"]["validation_split"]), config)
     if runtime["smoke_test"]:
         train_rows = smoke_subset(train_rows, runtime["smoke_train_rows"],
                                   config["experiment"]["seed"])
@@ -564,7 +599,7 @@ def command_test36(config: dict) -> None:
                         settings["attention"]["enabled"])
     model.load_state_dict(saved["state"], strict=False)
 
-    test_rows = band_rows(corpus.by_split[config["dataset"]["test_split"]], config)
+    test_rows = band_rows(validation_rows_of(corpus, config, config["dataset"]["test_split"]), config)
     loader = corpus.loader(test_rows, settings["validation_batch_size"],
                            settings["workers"], False, device)
     out = collect(model, loader, device, use_snr=model.film is not None)
