@@ -21,7 +21,7 @@ from pathlib import Path
 import torch
 from torch import Tensor, nn
 
-from expert_lib import roll_waveform, spec_augment
+from expert_lib import roll_waveform, spec_augment, spec_augment_masks
 
 _VENDOR = Path(__file__).resolve().parents[2] / "BEATs_Experts" / "models"
 
@@ -92,6 +92,11 @@ class BEATsEncoder(nn.Module):
         fbank = self.model.preprocess(waveform)
         if augment and self.augment.get("spec_ratio", 0) > 0:
             fbank = spec_augment(fbank, self.augment["spec_ratio"], self.generator)
+        if augment and (self.augment.get("freq_masks", 0) or self.augment.get("time_masks", 0)):
+            fbank = spec_augment_masks(fbank, self.augment.get("freq_masks", 0),
+                                       self.augment.get("freq_width", 0),
+                                       self.augment.get("time_masks", 0),
+                                       self.augment.get("time_width", 0), self.generator)
 
         features = self.model.patch_embedding(fbank.unsqueeze(1))
         features = features.reshape(features.shape[0], features.shape[1], -1)

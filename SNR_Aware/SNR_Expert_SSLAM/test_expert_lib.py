@@ -374,3 +374,27 @@ if __name__ == "__main__":
             traceback.print_exc()
     print(f"\n{len(tests) - failed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
+
+def test_warmup_cosine_floor_keeps_min_ratio_at_the_end():
+    from expert_lib import warmup_cosine
+    assert abs(warmup_cosine(100, 100, 10, min_ratio=0.01) - 0.01) < 1e-9
+    assert abs(warmup_cosine(10, 100, 10, min_ratio=0.01) - 1.0) < 1e-9
+    assert abs(warmup_cosine(0, 100, 10, min_ratio=0.01) - 0.1) < 1e-9
+
+
+def test_spec_augment_masks_count_and_width_bounds():
+    from expert_lib import spec_augment_masks
+    x = torch.ones(64, 400, 128)
+    out = spec_augment_masks(x, 2, 16, 2, 24, torch.Generator().manual_seed(0))
+    assert torch.equal(x, torch.ones(64, 400, 128))          # input untouched
+    zero = out == 0
+    freq_masked = zero.all(dim=1).sum(dim=1)                   # whole bins zeroed
+    time_masked = zero.all(dim=2).sum(dim=1)                   # whole frames zeroed
+    assert int(freq_masked.max()) <= 2 * 15 and int(time_masked.max()) <= 2 * 23
+    assert int(freq_masked.sum()) > 0 and int(time_masked.sum()) > 0
+
+
+def test_spec_augment_masks_zero_counts_is_identity():
+    from expert_lib import spec_augment_masks
+    x = torch.randn(4, 50, 16)
+    assert torch.equal(spec_augment_masks(x, 0, 16, 0, 24, torch.Generator().manual_seed(0)), x)

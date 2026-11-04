@@ -233,6 +233,36 @@ def spec_augment(fbank: Tensor, ratio: float, generator: torch.Generator) -> Ten
     return out
 
 
+def spec_augment_masks(fbank: Tensor, freq_masks: int, freq_width: int,
+                       time_masks: int, time_width: int,
+                       generator: torch.Generator) -> Tensor:
+    """SpecAugment by mask count (MLNC Review-3 `src/frontend.py`): `freq_masks`
+    bands of width U[0, freq_width) and `time_masks` spans of width U[0, time_width),
+    start U[0, size) clipped so the mask stays inside, filled with 0.
+
+    fbank: [B, frames, bins], already normalised (0 = dataset mean).
+    """
+    if freq_masks <= 0 and time_masks <= 0:
+        return fbank
+    out = fbank.clone()
+    batch, frames, bins = out.shape
+    for count, width, size, axis in ((freq_masks, freq_width, bins, 2),
+                                     (time_masks, time_width, frames, 1)):
+        for _ in range(count):
+            widths = torch.randint(0, min(width, size), (batch,), generator=generator)
+            starts = torch.randint(0, size, (batch,), generator=generator)
+            for i in range(batch):
+                w = int(widths[i])
+                if w == 0:
+                    continue
+                s = min(int(starts[i]), size - w)
+                if axis == 1:
+                    out[i, s:s + w, :] = 0
+                else:
+                    out[i, :, s:s + w] = 0
+    return out
+
+
 def roll_waveform(waveform: Tensor, generator: torch.Generator) -> Tensor:
     """Circular time shift by a random offset per clip (the paper's roll augmentation)."""
     length = waveform.shape[-1]
@@ -241,14 +271,14 @@ def roll_waveform(waveform: Tensor, generator: torch.Generator) -> Tensor:
                         for clip, s in zip(waveform, shifts)])
 
 
-def warmup_cosine(step: int, total: int, warmup: int) -> float:
-    """LR multiplier: linear warmup to 1, then cosine decay to 0 at `total`."""
+def warmup_cosine(step: int, total: int, warmup: int, min_ratio: float = 0.0) -> float:
+    """LR multiplier: linear warmup to 1, then cosine decay to `min_ratio` at `total`."""
     if total <= 0:
         return 1.0
     if warmup > 0 and step < warmup:
         return (step + 1) / warmup
     progress = min(1.0, (step - warmup) / max(1, total - warmup))
-    return 0.5 * (1.0 + math.cos(math.pi * progress))
+    return min_ratio + (1.0 - min_ratio) * 0.5 * (1.0 + math.cos(math.pi * progress))
 
 
 def layer_decay_scales(num_blocks: int, decay: float) -> list[float]:

@@ -196,10 +196,13 @@ def run_epochs(model, config, section, corpus, train_rows, validation_rows,
         updates = epochs * math.ceil(len(train_loader) / settings["accumulation_steps"])
         warmup = int(settings.get("warmup_fraction", 0.1) * updates)
         scheduler = torch.optim.lr_scheduler.LambdaLR(
-            optimizer, lambda step: warmup_cosine(step, updates, warmup))
+            optimizer, lambda step: warmup_cosine(step, updates, warmup,
+                                                  settings.get("min_lr_ratio", 0.0)))
     print(f"optimizer: groups={len(groups)} weight_decay={settings.get('weight_decay', 1e-4)} "
           f"layer_decay={settings.get('layer_decay', 1.0)} "
           f"schedule={settings.get('lr_schedule', 'constant')} "
+          f"min_lr_ratio={settings.get('min_lr_ratio', 0.0)} "
+          f"label_smoothing={settings.get('label_smoothing', 0.0)} "
           f"augment={model.encoder.augment or 'none'}", flush=True)
     # SAM (Foret et al., ICLR 2021): each update takes its gradient at w + eps instead
     # of w. The micro-batches of the accumulation window are kept so that second
@@ -304,7 +307,8 @@ def command_teacher36(config: dict) -> None:
     model = build_model(config, device, film_enabled=False,
                         trainable_blocks=config["teacher"]["trainable_blocks"],
                         backbone=teacher_backbone(config))
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(
+        label_smoothing=config["teacher"].get("label_smoothing", 0.0))
 
     def step(batch):
         audio = batch["audio"].to(device, non_blocking=True)
@@ -465,7 +469,8 @@ def command_student36(config: dict) -> None:
 
         with autocast(device):
             logits, pooled, patches = model(audio, snr_in)
-            ce = nn.functional.cross_entropy(logits, target)
+            ce = nn.functional.cross_entropy(
+                logits, target, label_smoothing=settings.get("label_smoothing", 0.0))
             loss = loss_config["r_ce"] * ce
             parts = {"ce": ce.detach()}
             if model.pool is not None:
