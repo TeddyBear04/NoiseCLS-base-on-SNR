@@ -217,6 +217,8 @@ def run_train(cfg: dict[str, Any], smoke: bool) -> None:
         t.update(epochs=s["epochs"], batch_size=s["batch_size"], num_workers=0)
         max_samples = s["max_samples"]
         out_dir = out_dir / "smoke"
+    if loss.get("kd_style", "splitffn") == "kdmoe" and cfg["teacher"]["mode"] != "clean5fold":
+        raise ValueError("loss.kd_style kdmoe (KD-MoE: một teacher trên logit cuối) cần teacher.mode clean5fold")
     out_dir.mkdir(parents=True, exist_ok=True)
     seed_all(cfg["experiment"]["seed"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -241,6 +243,9 @@ def run_train(cfg: dict[str, Any], smoke: bool) -> None:
         num_classes=cfg["experiment"]["num_classes"], amp_dtype=t["amp_dtype"], out_dir=out_dir,
         feature_kd=cfg.get("feature_kd") if feature_kd_on(cfg) else None,
         lr_head=t.get("lr_head"),
+        kd_style=loss.get("kd_style", "splitffn"),
+        ce_weight=float(loss.get("ce_weight", 1.0)),
+        kd_weight=float(loss.get("kd_weight", 1.0)),
     )
 
     history, best_snr, best_pred = [], {}, []

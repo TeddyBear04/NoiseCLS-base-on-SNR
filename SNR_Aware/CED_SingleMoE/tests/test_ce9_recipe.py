@@ -118,3 +118,26 @@ def test_mgd_config_and_last_tokens(sample_waveform):
     with torch.no_grad():
         out = model(sample_waveform, return_dict=True)
     assert out["last_tokens"].shape == (2, 4 * 48, 192)
+
+
+def test_kdmoe_style_kd_matches_hinton_kl_and_configs():
+    """kd_style kdmoe: loss = CE + T^2 KL(softmax(t/T) || softmax(s/T)) như logits_kl của FRCRN_KD_MoE (T 4)."""
+    import torch
+    import torch.nn.functional as F
+
+    for name, base, mgd in (("train_config_overlap_ce9_kdmoe_mgd.json", "train_config_overlap_ce9_mgd.json", True),
+                            ("train_config_overlap_ce9_kdmoe.json", "train_config_overlap_ce9.json", False)):
+        a = json.loads((CONFIG / base).read_text(encoding="utf-8"))
+        b = json.loads((CONFIG / name).read_text(encoding="utf-8"))
+        loss = b["loss"]
+        assert (loss["kd_style"], loss["kd_temperature"], loss["kd_weight"], loss["ce_weight"], loss["label_smoothing"]) == ("kdmoe", 4.0, 1.0, 1.0, 0.0)
+        assert loss["lambda_route"] == a["loss"]["lambda_route"] and b["teacher"]["mode"] == "clean5fold"
+        for section in ("teacher", "model", "routing", "train"):
+            assert a[section] == b[section], section
+        assert bool(b.get("feature_kd", {}).get("enabled")) == mgd and b.get("feature_kd") == a.get("feature_kd")
+    torch.manual_seed(0)
+    s, t, T = torch.randn(5, 36), torch.randn(5, 36) * 3, 4.0
+    p_t = F.softmax(t / T, dim=-1)
+    ours = (T ** 2) * (p_t * (p_t.clamp_min(1e-8).log() - F.log_softmax(s / T, dim=-1))).sum(-1).mean()
+    ref = (T ** 2) * F.kl_div(F.log_softmax(s / T, dim=-1), p_t, reduction="batchmean")
+    assert torch.allclose(ours, ref, atol=1e-5)

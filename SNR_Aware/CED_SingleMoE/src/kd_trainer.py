@@ -100,7 +100,16 @@ class KDTrainer:
         out_dir: str | Path = "checkpoints",
         feature_kd: dict[str, Any] | None = None,
         lr_head: float | None = None,
+        kd_style: str = "splitffn",
+        ce_weight: float = 1.0,
+        kd_weight: float = 1.0,
     ) -> None:
+        # kd_style "splitffn" (bản gốc): (1 - lambda_kd) CE + lambda_kd [w_fused KD(trộn) + w_expert KD(theo expert)], CE chéo T^2.
+        # kd_style "kdmoe" (như FRCRN_KD_MoE KDMoELoss, kd_target logits): ce_weight CE + kd_weight T^2 KL(p_t || p_s) trên logit
+        # cuối, một teacher, không KD theo expert, không trọng số SNR, tính fp32; route loss của SplitFFN giữ nguyên.
+        if kd_style not in ("splitffn", "kdmoe"):
+            raise ValueError(f"kd_style phải là splitffn hoặc kdmoe, nhận {kd_style!r}")
+        self.kd_style, self.ce_weight, self.kd_weight = kd_style, ce_weight, kd_weight
         self.model = model.to(device)
         # lr_head (recipe ce9, MLNC vuong_mix_dataset_v2): chia lr theo nguồn khởi tạo thay vì theo vai trò -
         # tham số nạp từ CED-Tiny (kể cả FFN chia ở block 10-11) lấy lr_backbone, mọi module mới lấy lr_head.
@@ -289,26 +298,37 @@ class KDTrainer:
                                  oracle_gates=oracle_gates if oracle_mask is not None else None, oracle_mask=oracle_mask)
                 logits_fused = out["logits"]
 
-                # 1. Supervised Task Cross-Entropy
-                loss_ce = -(target_smooth * F.log_softmax(logits_fused, dim=-1)).sum(dim=-1).mean()
+                if self.kd_style == "kdmoe":
+                    # Như FRCRN_KD_MoE: CE (F.cross_entropy) + T^2 KL(softmax(t/T) || softmax(s/T)) (logits_kl, Hinton 2015)
+                    with torch.autocast(self.device.type, enabled=False):
+                        loss_ce = -(target_smooth * F.log_softmax(logits_fused.float(), dim=-1)).sum(dim=-1).mean()
+                        p_t = p_teacher[:, 0].float()  # clean5fold: mọi expert cùng một teacher (main.py kiểm)
+                        log_p_s = F.log_softmax(logits_fused.float() / self.temp, dim=-1)
+                        loss_kd = (self.temp ** 2) * (p_t * (p_t.clamp_min(1e-8).log() - log_p_s)).sum(dim=-1).mean()
+                else:
+                    # 1. Supervised Task Cross-Entropy
+                    loss_ce = -(target_smooth * F.log_softmax(logits_fused, dim=-1)).sum(dim=-1).mean()
 
-                # 2. KD trên logit đã trộn (T^2 scaling)
-                log_p_fused_kd = F.log_softmax(logits_fused / self.temp, dim=-1)
-                loss_kd_fused = -(p_fused * log_p_fused_kd).sum(dim=-1).mean() * (self.temp ** 2)
+                    # 2. KD trên logit đã trộn (T^2 scaling)
+                    log_p_fused_kd = F.log_softmax(logits_fused / self.temp, dim=-1)
+                    loss_kd_fused = -(p_fused * log_p_fused_kd).sum(dim=-1).mean() * (self.temp ** 2)
 
-                # 3. Expert KD: expert k học teacher của nó, trọng số theo khoảng SNR
-                log_p_experts = F.log_softmax(out["logits_experts"] / self.temp, dim=-1)  # [B, K, C]
-                loss_per_expert = -(p_teacher * log_p_experts).sum(dim=-1) * (self.temp ** 2)  # [B, K]
-                loss_kd_experts = (w_band * loss_per_expert).sum(dim=-1).mean()
+                    # 3. Expert KD: expert k học teacher của nó, trọng số theo khoảng SNR
+                    log_p_experts = F.log_softmax(out["logits_experts"] / self.temp, dim=-1)  # [B, K, C]
+                    loss_per_expert = -(p_teacher * log_p_experts).sum(dim=-1) * (self.temp ** 2)  # [B, K]
+                    loss_kd_experts = (w_band * loss_per_expert).sum(dim=-1).mean()
 
-                loss_kd = self.kd_fused_weight * loss_kd_fused + self.kd_expert_weight * loss_kd_experts
+                    loss_kd = self.kd_fused_weight * loss_kd_fused + self.kd_expert_weight * loss_kd_experts
 
                 # 4. Router: CE giữa gates của router và nhãn khoảng SNR (soft, K = 2: đúng BCE(alpha, w) của bản gốc)
                 with torch.autocast(self.device.type, enabled=False):
                     loss_route = router_loss(out["gates"], w_band)
 
                 # Total Multi-Task Objective
-                loss = (1.0 - self.lambda_kd) * loss_ce + self.lambda_kd * loss_kd + self.lambda_route * loss_route.to(loss_ce.dtype)
+                if self.kd_style == "kdmoe":
+                    loss = self.ce_weight * loss_ce + self.kd_weight * loss_kd + self.lambda_route * loss_route.float()
+                else:
+                    loss = (1.0 - self.lambda_kd) * loss_ce + self.lambda_kd * loss_kd + self.lambda_route * loss_route.to(loss_ce.dtype)
 
                 # 5. GFD-Cosine: L_total = L_existing + lambda * mean(1 - cos(proj(s), t)), tính fp32
                 loss_feat = None
