@@ -160,7 +160,10 @@ def cmd_check(cfg: dict[str, Any]) -> None:
         for path, position in zip(dataset.feat_paths, dataset.feat_position):
             feats = np.load(path, mmap_mode="r")
             rows = position[position >= 0]
-            sample = np.asarray(feats[np.sort(rows[:: max(1, len(rows) // 2000)])], dtype=np.float32).reshape(-1, 768)
+            picked = np.asarray(feats[np.sort(rows[:: max(1, len(rows) // 2000)])], dtype=np.float32)
+            # mỗi clip một vector: file lưới token (MGD, [N, 25, 4, 768]) lấy trung bình token, không thì ma trận cos
+            # (clip x token)^2 cỡ 2e5 x 2e5 làm tràn bộ nhớ
+            sample = picked.reshape(len(picked), -1, 768).mean(axis=1)
             unit = sample / np.linalg.norm(sample, axis=1, keepdims=True)
             print(f"  đặc trưng teacher {path.name} {feats.shape}: có cho {int((position >= 0).sum())}/{len(dataset)} clip"
                   f" | cos trung bình giữa các clip {float((unit @ unit.T).mean()):.3f}")
