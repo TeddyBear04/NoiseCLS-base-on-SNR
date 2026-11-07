@@ -8,6 +8,7 @@
 # Chia hai máy (mỗi máy tuần tự, không chạy song song trên một GPU):
 #   ROLE=a: teacher -> run3_kd_crd -> run8_attn_kd_crd
 #   ROLE=b: run1_baseline -> run7_attn -> (chờ teacher) -> run3c_kd_only -> run3b_crd_only
+#   ROLE=a4 / b4: chỉ 4 run không attention - a4: teacher -> run3c_kd_only -> run3b_crd_only -> run3_kd_crd; b4: run1_baseline
 #   Máy b chờ file <outputs.dir>/teacher_noise_best.pt.ok: chép teacher_noise_best.pt từ máy a sang
 #   cùng đường dẫn rồi ghi sha256 vào file .ok - để bốn run KD/CRD dùng CHUNG một teacher.
 #   Báo cáo chung: gom student_*_{predictions.npz,test.json,history.json,params.json} của
@@ -93,8 +94,16 @@ case $ROLE in
     log "teacher có mặt: $(cat $T.ok)"
     train_eval run3c_kd_only
     train_eval run3b_crd_only ;;
+  a4)  # 4 run không attention trên một máy, dùng chung teacher của máy này: teacher -> KD logit -> CRD -> KD + CRD
+    teacher_part
+    for run in run3c_kd_only run3b_crd_only run3_kd_crd; do train_eval $run; done ;;
+  b4)  # baseline CE (không cần teacher)
+    step smoke_ce_student $PY -u main.py student36 --config $SM --run run1_baseline
+    step smoke_ce_val     $PY -u main.py test36    --config $SM --run run1_baseline --eval-split validation
+    log SMOKE_CE_OK
+    train_eval run1_baseline ;;
   report)
     rm -f "$W/done/report_val"; report ;;
-  *) echo "ROLE phải là all|a|b|report"; exit 1 ;;
+  *) echo "ROLE phải là all|a|b|a4|b4|report"; exit 1 ;;
 esac
 log "ROLE_DONE $ROLE"
