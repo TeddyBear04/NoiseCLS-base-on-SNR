@@ -141,3 +141,14 @@ def test_kdmoe_style_kd_matches_hinton_kl_and_configs():
     ours = (T ** 2) * (p_t * (p_t.clamp_min(1e-8).log() - F.log_softmax(s / T, dim=-1))).sum(-1).mean()
     ref = (T ** 2) * F.kl_div(F.log_softmax(s / T, dim=-1), p_t, reduction="batchmean")
     assert torch.allclose(ours, ref, atol=1e-5)
+
+
+def test_lr1e5_configs_only_lower_the_learning_rates():
+    for base, low in (("train_config_overlap_ce9.json", "train_config_overlap_ce9_lr1e5.json"),
+                      ("train_config_overlap_ce9_mini.json", "train_config_overlap_ce9_mini_lr1e5.json")):
+        a = json.loads((CONFIG / base).read_text(encoding="utf-8"))
+        b = json.loads((CONFIG / low).read_text(encoding="utf-8"))
+        assert (b["train"].pop("lr_backbone"), b["train"].pop("lr_head")) == (1e-5, 1e-4)
+        b["train"].pop("_note_lr"); a["train"].pop("lr_backbone"); a["train"].pop("lr_head")
+        for section in ("teacher", "model", "routing", "loss", "train"):
+            assert a[section] == b[section], section
