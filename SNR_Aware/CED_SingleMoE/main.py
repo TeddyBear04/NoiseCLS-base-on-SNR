@@ -248,7 +248,7 @@ def run_train(cfg: dict[str, Any], smoke: bool) -> None:
         kd_weight=float(loss.get("kd_weight", 1.0)),
     )
 
-    history, best_snr, best_pred = [], {}, []
+    history, best_snr, best_pred, since_best = [], {}, [], 0
     for epoch in range(t["epochs"]):
         train_res = trainer.train_epoch(epoch)
         val_res = trainer.evaluate()
@@ -270,6 +270,12 @@ def run_train(cfg: dict[str, Any], smoke: bool) -> None:
             best_pred = [{"sample_id": row["sample_id"], "snr_db": float(s), "label": int(y), "pred": int(q), "epoch": epoch + 1}
                          for row, s, y, q in zip(val_set.base.rows, p["snr"], p["target"], p["pred"])]
         trainer.save_checkpoint(out_dir / "last.pt", is_best=is_best)
+        # Early stop (train.patience, 0 = tắt): dừng khi val top-1 không tăng (strict >) suốt `patience` epoch liên tiếp.
+        # Lịch lr vẫn tính theo train.epochs nên dừng sớm = cắt ngang cosine, không co lịch lại.
+        since_best = 0 if is_best else since_best + 1
+        if int(t.get("patience", 0)) > 0 and since_best >= int(t["patience"]):
+            print(f"early stop: {since_best} epoch không cải thiện (patience {t['patience']}), dừng sau epoch {epoch + 1}", flush=True)
+            break
 
     write_csv(out_dir / "lich_su.csv", history)
     write_csv(out_dir / "val_du_doan_best.csv", best_pred)  # dự đoán val (không TTA) của epoch tốt nhất

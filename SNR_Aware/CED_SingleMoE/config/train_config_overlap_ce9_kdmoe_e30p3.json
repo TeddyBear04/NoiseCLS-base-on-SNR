@@ -1,0 +1,93 @@
+{
+  "experiment": {
+    "name": "ced_singlemoe_v2_overlap_ce9_kdmoe_e30p3",
+    "seed": 2026,
+    "num_classes": 36
+  },
+  "paths": {
+    "data_root": "/marimo/dataset_v2/mix-dataset-v2",
+    "nhat_dir": "/marimo/nhat_cache",
+    "nhat_pattern": "frcrn_{split}.npy",
+    "output_dir": "output/ced_singlemoe_v2_overlap_ce9_kdmoe_e30p3",
+    "_note": "nhat_dir: n_hat = FRCRN(mixture) fp32 do scripts/frcrn_cache.py của FRCRN_KD_MoE tạo (frcrn_{split}.npy + .json sample_id, FRCRN model/frcrn_best.pt), trên 36_labels nên val có 6480 clip; v2 lấy 3064 clip theo sample_id. Split validation = thư mục eval của v2."
+  },
+  "teacher": {
+    "mode": "clean5fold",
+    "logits": "/marimo/teacher/beats_teacher_logits_clean.pt",
+    "_note": "logit OOF của teacher BEATs 5 fold fine-tune trên nhiễu sạch, đóng gói {train|validation: {mix_id, logits36}}; mọi expert học cùng teacher."
+  },
+  "model": {
+    "freq_bins": 64,
+    "frames": 398,
+    "split_blocks": [
+      10,
+      11
+    ],
+    "dropout": 0.0,
+    "load_pretrained": true,
+    "experts": [
+      "low",
+      "high"
+    ],
+    "router_input": "rms",
+    "_note": "router_input: 'rms' như bản gốc (6 đặc trưng tính trên n_hat đã chuẩn hoá RMS -> log-RMS là hằng số); 'raw' tính trên n_hat thô (RMS n_hat tương quan -0.83 với SNR, riêng nó đoán đúng khoảng SNR 71% trên val), log crest/kurtosis, BatchNorm trước router. Nhánh mel vẫn chuẩn hoá RMS.",
+    "patch_stride": [
+      16,
+      8
+    ],
+    "_note_patch": "patch_stride [16, 8]: patch 16 x 16 chồng 50 % theo thời gian (4 x 48 = 192 token thay 96), thay cho TTA dịch +-50 ms. AST (Gong et al., Interspeech 2021) dùng bước 10; Xiao et al., NeurIPS 2021: stem chồng lấn giúp ViT. Pos embed CED nội suy theo vị trí i*8/16. Còn lại giống run 1 (train_config.json).",
+    "specaug": {
+      "freq_masks": 0,
+      "freq_width": 8,
+      "time_masks": 0,
+      "time_width": 24
+    }
+  },
+  "routing": {
+    "source": "router",
+    "band_labels": "soft",
+    "oracle_prob_start": 0.0,
+    "oracle_prob_end": 0.0,
+    "_note": "Như bản gốc: nhãn router mềm, expert luôn dùng gate của router (run 1)."
+  },
+  "loss": {
+    "lambda_kd": 0.65,
+    "lambda_route": 0.2,
+    "kd_temperature": 4.0,
+    "kd_fused_weight": 0.65,
+    "kd_expert_weight": 0.35,
+    "label_smoothing": 0.0,
+    "snr_tau": 2.5,
+    "snr_edges_db": [
+      15.0
+    ],
+    "_note": "snr_edges_db: ngưỡng chia khoảng SNR cho router/expert (nhãn mềm, độ dốc snr_tau). [15] = 2 expert như bản gốc.",
+    "kd_style": "kdmoe",
+    "kd_weight": 1.0,
+    "ce_weight": 1.0,
+    "_note_kd_style": "KD logit nhu FRCRN_KD_MoE train_ced_tiny_ce9_5_logit_mgd.json + kdmoe_ced_tiny_meanpool_ce9_mgd.yaml (kd_target logits): loss = 1.0 CE + 1.0 T^2 KL(softmax(t/4) || softmax(s/4)) tren logit cuoi (logits_kl, Hinton 2015), T 4, mot teacher BEATs 5 fold, khong KD theo expert, khong trong so SNR, label smoothing 0, fp32. Route loss 0.2 cua SplitFFN giu nguyen (can cho router; front/cons cua KD-MoE gan voi NoiseHead/MaskGate, SplitFFN khong co). lambda_kd / kd_fused_weight / kd_expert_weight bo qua. user 2026-11-07."
+  },
+  "train": {
+    "epochs": 30,
+    "batch_size": 64,
+    "num_workers": 4,
+    "lr_backbone": 3e-05,
+    "lr_experts": 0.00012,
+    "lr_router": 0.0002,
+    "weight_decay": 0.01,
+    "warmup_epochs": 2,
+    "grad_clip": 1.0,
+    "mixup_alpha": 0.4,
+    "mixup_prob": 0.0,
+    "amp_dtype": "bfloat16",
+    "lr_head": 0.0003,
+    "_note": "Recipe ce9 (MLNC vuong_mix_dataset_v2_20261102 imp/mix_dataset_v2/config/ce9_original_run.json, muc ced_tiny; user 2026-11-07): 15 epoch khong early stop, batch 64, AdamW wd 0.01, lr backbone 3e-5 / head 3e-4 chia theo nguon khoi tao (tham so nap tu CED-Tiny ke ca FFN chia block 10-11 -> 3e-5; head expert, router, acoustic_extractor, CLS, bias GREP -> 3e-4), warm-up 2 epoch roi cosine ve 0, khong label smoothing / mixup / SpecAugment / EMA, chon val acc (hoa giu epoch som), seed 2026. Phuong phap SplitFFN (router, expert, KD 2 teacher-loss, route loss) giu nguyen nhu config goc. Sao tu train_config_overlap.json; lr_experts/lr_router bo qua khi co lr_head.",
+    "patience": 3,
+    "_note_epochs": "Nhu train_config_overlap_ce9_kdmoe.json, epochs 15 -> 30 (cosine keo dai, warm-up van 2 epoch) + early stop patience 3 tren val top-1. user 2026-11-07: lr 1e-5 -> 45 epoch (= 15 x 3e-5/1e-5), lr 3e-5 -> 30."
+  },
+  "smoke": {
+    "max_samples": 64,
+    "epochs": 1,
+    "batch_size": 16
+  }
+}

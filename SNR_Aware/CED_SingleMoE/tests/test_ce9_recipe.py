@@ -152,3 +152,24 @@ def test_lr1e5_configs_only_lower_the_learning_rates():
         b["train"].pop("_note_lr"); a["train"].pop("lr_backbone"); a["train"].pop("lr_head")
         for section in ("teacher", "model", "routing", "loss", "train"):
             assert a[section] == b[section], section
+
+
+def test_long_schedule_configs_and_early_stop_rule():
+    for base, new, ep in (("train_config_overlap_ce9_lr1e5.json", "train_config_overlap_ce9_lr1e5_e45p3.json", 45),
+                          ("train_config_overlap_ce9_kdmoe.json", "train_config_overlap_ce9_kdmoe_e30p3.json", 30),
+                          ("train_config_ce9.json", "train_config_ce9_e30p3.json", 30)):
+        a = json.loads((CONFIG / base).read_text(encoding="utf-8"))
+        b = json.loads((CONFIG / new).read_text(encoding="utf-8"))
+        assert (b["train"].pop("epochs"), b["train"].pop("patience")) == (ep, 3)
+        b["train"].pop("_note_epochs"); a["train"].pop("epochs")
+        for section in ("teacher", "model", "routing", "loss", "train"):
+            assert a[section] == b[section], (new, section)
+    # quy tắc dừng: val top-1 tăng strict mới reset bộ đếm
+    curve, best, since, stopped = [0.50, 0.55, 0.56, 0.56, 0.555, 0.559, 0.57], 0.0, 0, None
+    for epoch, acc in enumerate(curve, 1):
+        since = 0 if acc > best else since + 1
+        best = max(best, acc)
+        if since >= 3:
+            stopped = epoch
+            break
+    assert stopped == 6
