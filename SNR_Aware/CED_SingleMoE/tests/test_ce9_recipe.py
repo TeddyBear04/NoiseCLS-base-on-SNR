@@ -155,13 +155,16 @@ def test_lr1e5_configs_only_lower_the_learning_rates():
 
 
 def test_long_schedule_configs_and_early_stop_rule():
-    for base, new, ep in (("train_config_overlap_ce9_lr1e5.json", "train_config_overlap_ce9_lr1e5_e45p3.json", 45),
-                          ("train_config_overlap_ce9_kdmoe.json", "train_config_overlap_ce9_kdmoe_e30p3.json", 30),
-                          ("train_config_ce9.json", "train_config_ce9_e30p3.json", 30)):
+    for base, new in (("train_config_overlap_ce9_lr1e5.json", "train_config_overlap_ce9_lr1e5_e45p3.json"),
+                      ("train_config_overlap_ce9_kdmoe.json", "train_config_overlap_ce9_kdmoe_lr1e5_e45p3.json"),
+                      ("train_config_ce9.json", "train_config_ce9_lr1e5_e45p3.json")):
         a = json.loads((CONFIG / base).read_text(encoding="utf-8"))
         b = json.loads((CONFIG / new).read_text(encoding="utf-8"))
-        assert (b["train"].pop("epochs"), b["train"].pop("patience")) == (ep, 3)
-        b["train"].pop("_note_epochs"); a["train"].pop("epochs")
+        assert (b["train"].pop("epochs"), b["train"].pop("patience")) == (45, 3)
+        assert (b["train"].pop("lr_backbone"), b["train"].pop("lr_head")) == (1e-5, 1e-4)
+        b["train"].pop("_note_epochs"); b["train"].pop("_note_lr", None)
+        for key in ("epochs", "lr_backbone", "lr_head", "_note_lr"):
+            a["train"].pop(key, None)
         for section in ("teacher", "model", "routing", "loss", "train"):
             assert a[section] == b[section], (new, section)
     # quy tắc dừng: val top-1 tăng strict mới reset bộ đếm
