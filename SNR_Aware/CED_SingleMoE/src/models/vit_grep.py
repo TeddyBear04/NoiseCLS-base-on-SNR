@@ -33,6 +33,13 @@ from torch import Tensor
 GATE_HIDDEN = 8
 CED_REPO = "mispeech/ced-tiny"
 CED_PREFIX = "encoder."
+# Cỡ CED (Dinkel et al., ICASSP 2024): cùng 12 block, head_dim 64, patch 16 x 16; chỉ khác chiều rộng.
+# (repo HF, revision, embed_dim, num_heads); tiny giữ revision None như các run trước, mini/small ghim như MLNC ce9.
+CED_VARIANTS = {
+    "tiny": (CED_REPO, None, 192, 3),
+    "mini": ("mispeech/ced-mini", "26c3ebcae85d4330f4fc26763f029539a3afcda0", 256, 4),
+    "small": ("mispeech/ced-small", "06bb40c5ec089e96867ebc5246be02441f4a71e4", 384, 6),
+}
 
 
 class SharedBias:
@@ -169,8 +176,13 @@ class ViTSBias(nn.Module):
         use_bias: bool = True,
         time_major: bool = False,
         patch_stride: tuple[int, int] = (16, 16),
+        ced_variant: str = "tiny",
     ) -> None:
         super().__init__()
+        if ced_variant not in CED_VARIANTS:
+            raise ValueError(f"ced_variant phải thuộc {sorted(CED_VARIANTS)}, nhận {ced_variant!r}")
+        self.ced_variant = ced_variant
+        _, _, embed_dim, num_heads = CED_VARIANTS[ced_variant]
         self.use_bias = use_bias
         self.patch_stride = tuple(patch_stride)
         self.time_major = time_major
@@ -184,7 +196,10 @@ class ViTSBias(nn.Module):
             proj_drop_rate=dropout,
             attn_drop_rate=attn_dropout,
             drop_path_rate=drop_path,
+            embed_dim=embed_dim,  # deit_tiny = 192 / 3 head; mini, small ghi đè chiều rộng, giữ 12 block
+            num_heads=num_heads,
         )
+        self.embed_dim = embed_dim
         # Patch 16 x 16 với bước (stride_f, stride_t): bước < 16 là patch chồng lấn (AST, Gong et al. 2021: 16 x 16
         # bước 10; Xiao et al., NeurIPS 2021: stem chồng lấn giúp ViT học ổn định hơn). Bước 16 = CED gốc (4 x 24).
         stride_f, stride_t = self.patch_stride
@@ -241,15 +256,17 @@ def _sample_positions(table: Tensor, positions: Tensor) -> Tensor:
     return table[:, low] * (1 - frac) + table[:, high] * frac
 
 
-def load_ced_tiny(model: ViTSBias, repo: str = CED_REPO, path: str | None = None) -> dict[str, int]:
+def load_ced_tiny(model: ViTSBias, repo: str | None = None, path: str | None = None) -> dict[str, int]:
     """
-    Initialize model weights from the official AudioSet pre-trained CED-Tiny checkpoint.
+    Initialize model weights from the official AudioSet pre-trained CED checkpoint of `model.ced_variant`
+    (tên giữ load_ced_tiny cho tương thích; tiny / mini / small theo CED_VARIANTS).
     """
     from huggingface_hub import hf_hub_download
     from safetensors.torch import load_file
 
+    default_repo, revision, _, _ = CED_VARIANTS[getattr(model, "ced_variant", "tiny")]
     # Không nuốt lỗi tải: trọng số ngẫu nhiên âm thầm làm cả lần chạy vô nghĩa.
-    local = path or hf_hub_download(repo, "model.safetensors")
+    local = path or hf_hub_download(repo or default_repo, "model.safetensors", revision=None if repo else revision)
     state = load_file(local)
 
     vit = model.vit
@@ -262,7 +279,10 @@ def load_ced_tiny(model: ViTSBias, repo: str = CED_REPO, path: str | None = None
         }
     )
     own = vit.state_dict()
+    wanted = len(mapped)
     mapped = {k: v for k, v in mapped.items() if k in own and own[k].shape == v.shape}
+    if len(mapped) != wanted:  # sai cỡ (vd. checkpoint mini cho backbone tiny) thì dừng, không âm thầm bỏ khoá
+        raise ValueError(f"chỉ khớp {len(mapped)}/{wanted} tensor CED: ced_variant không đúng checkpoint")
     result = vit.load_state_dict(mapped, strict=False)
 
     if (CED_PREFIX + "freq_pos_embed") in state and (CED_PREFIX + "time_pos_embed") in state:

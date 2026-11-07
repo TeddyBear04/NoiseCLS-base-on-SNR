@@ -95,6 +95,7 @@ class CEDSingleMoESplitFFN(nn.Module):
         router_input: str = "rms",
         patch_stride: tuple[int, int] = (16, 16),
         specaug: dict[str, int] | None = None,
+        ced_variant: str = "tiny",
     ) -> None:
         super().__init__()
         # "rms": như bản gốc, 6 đặc trưng tính trên n_hat đã chuẩn hoá RMS (log-RMS thành hằng số, mất mức năng lượng).
@@ -122,7 +123,9 @@ class CEDSingleMoESplitFFN(nn.Module):
             use_bias=True,
             time_major=False,
             patch_stride=tuple(patch_stride),
+            ced_variant=ced_variant,
         )
+        self.ced_variant = ced_variant
         # Tên tham số (trong self.vit_base.vit) nạp từ checkpoint CED-Tiny; FFN chia ở block 10-11 là bản sao của
         # MLP đã nạp nên cũng tính là pretrained (xem pretrained_parameter_names).
         self._loaded_vit_keys: frozenset[str] = frozenset()
@@ -132,7 +135,7 @@ class CEDSingleMoESplitFFN(nn.Module):
         # 3. Self-Contained Spectral-Token Router
         self.router = SelfContainedSpectralTokenRouter(
             spectral_dim=6,
-            token_dim=192,
+            token_dim=self.vit_base.embed_dim,  # 192 tiny / 256 mini / 384 small
             token_proj_dim=16,
             hidden_dim=32,
             num_experts=len(self.expert_names),
@@ -231,6 +234,7 @@ class CEDSingleMoESplitFFN(nn.Module):
             pooled_blocks.append(x[:, 1:].mean(dim=1))
 
         # Step 8: Final LayerNorm and Dual Head Aggregation
+        last_tokens = x[:, 1:]  # token patch sau block 11, trước LayerNorm cuối (đích MGD), thứ tự f-major
         x = vit.norm(x)
         cls_final = x[:, 0]  # [B, 192]
 
@@ -249,7 +253,8 @@ class CEDSingleMoESplitFFN(nn.Module):
                 "block9_token": block9_token,
                 # Mean các token patch (bỏ CLS) sau LayerNorm cuối: biểu diễn toàn clip cho GFD-Cosine
                 "pooled_tokens": x[:, 1:].mean(dim=1),  # [B, 192]
-                "pooled_blocks": pooled_blocks,  # 12 x [B, 192]: phần tử i = sau block i + 1 (chưa LayerNorm cuối)
+                "pooled_blocks": pooled_blocks,  # 12 x [B, C]: phần tử i = sau block i + 1 (chưa LayerNorm cuối)
+                "last_tokens": last_tokens,  # [B, F' * T', C]; lưới (freq_patches, time_patches) của vit_base
             }
         return logits_fused
 

@@ -110,12 +110,26 @@ class KDTrainer:
         self.feat_weight = float(fkd.get("weight", 0.0)) if fkd.get("enabled") else 0.0
         self.grad_ratio_every = int(fkd.get("grad_ratio_every", 0))
         self.feat_kd = None
-        if self.feat_weight > 0.0:
+        # feature_kd.method: "gfd" (mặc định, GFD-Cosine) | "mgd" (MGD trên token block cuối, một tap lưới (25, 4))
+        self.feat_method = fkd.get("method", "gfd")
+        if self.feat_method not in ("gfd", "mgd"):
+            raise ValueError(f"feature_kd.method phải là gfd hoặc mgd, nhận {self.feat_method!r}")
+        if self.feat_weight > 0.0 and self.feat_method == "mgd":
+            from src.feature_kd import MaskedGenerativeFeatureKD
+
+            if len(fkd["taps"]) != 1:
+                raise ValueError("MGD dùng đúng một tap (token block cuối <- token lớp 12 teacher)")
+            self.feat_blocks = [int(fkd["taps"][0]["student_block"])]
+            self.feat_grid = (model.vit_base.freq_patches, model.vit_base.time_patches)
+            self.feat_kd = MaskedGenerativeFeatureKD(model.vit_base.embed_dim, fkd.get("teacher_dim", 768),
+                                                     float(fkd.get("mask_ratio", 0.5)),
+                                                     tuple(fkd.get("teacher_grid", (25, 4)))).to(device)
+        elif self.feat_weight > 0.0:
             from src.feature_kd import GlobalCosineFeatureKD
 
             # mỗi tap: block student (1..12; 12 = sau LayerNorm cuối) <- một file vector gộp của một lớp teacher
             self.feat_blocks = [int(tap["student_block"]) for tap in fkd["taps"]]
-            self.feat_kd = GlobalCosineFeatureKD(fkd.get("student_dim", 192), fkd.get("teacher_dim", 768),
+            self.feat_kd = GlobalCosineFeatureKD(fkd.get("student_dim", model.vit_base.embed_dim), fkd.get("teacher_dim", 768),
                                                  num_taps=len(self.feat_blocks)).to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -149,7 +163,8 @@ class KDTrainer:
         param_groups = self._build_param_groups(lr_backbone, lr_experts, lr_router, weight_decay)
         if self.feat_kd is not None:
             param_groups.append({"params": list(self.feat_kd.parameters()),
-                                 "lr": float(fkd.get("lr", lr_experts)), "weight_decay": weight_decay})
+                                 "lr": float(fkd.get("lr", lr_head if lr_head is not None else lr_experts)),
+                                 "weight_decay": weight_decay})  # ce9: module mới lấy lr_head
         self.optimizer = torch.optim.AdamW(param_groups)
 
         total_steps = epochs * len(train_loader) if len(train_loader) > 0 else 1
@@ -299,8 +314,11 @@ class KDTrainer:
                 loss_feat = None
                 if self.feat_kd is not None:
                     with torch.autocast(self.device.type, enabled=False):
-                        students = [out["pooled_tokens"] if b == 12 else out["pooled_blocks"][b - 1] for b in self.feat_blocks]
-                        loss_feat = self.feat_kd(students, t_feat_m, feat_mask_m)
+                        if self.feat_method == "mgd":
+                            loss_feat = self.feat_kd(out["last_tokens"], self.feat_grid, t_feat_m, feat_mask_m)
+                        else:
+                            students = [out["pooled_tokens"] if b == 12 else out["pooled_blocks"][b - 1] for b in self.feat_blocks]
+                            loss_feat = self.feat_kd(students, t_feat_m, feat_mask_m)
 
             if loss_feat is not None and self.grad_ratio_every and batch_idx % self.grad_ratio_every == 0:
                 # |grad(lambda L_feat)| / |grad(L_existing)| trên backbone: loss phụ có thực sự kéo backbone không

@@ -62,3 +62,59 @@ def test_ce9_configs_change_only_the_recipe():
             assert a[section] == b[section], section
         assert {k: v for k, v in a["loss"].items() if k != "label_smoothing"} == {k: v for k, v in b["loss"].items() if k != "label_smoothing"}
         assert {k: v for k, v in a["model"].items() if k != "specaug"} == {k: v for k, v in b["model"].items() if k != "specaug"}
+
+
+def test_ced_mini_variant_widths_and_forward(sample_waveform):
+    """ced_variant mini: 256 chiều / 4 head (head_dim 64 như tiny), router và head theo chiều rộng mới."""
+    import torch
+
+    model = CEDSingleMoESplitFFN(num_classes=36, ced_variant="mini", patch_stride=(16, 8)).eval()
+    vit = model.vit_base.vit
+    assert model.vit_base.embed_dim == 256 and vit.pos_embed.shape == (1, 1 + 4 * 48, 256)
+    assert vit.blocks[0].attn.num_heads == 4 and vit.blocks[0].attn.head_dim == 64
+    assert model.head_low.in_features == 256 and model.vit_base.vit.blocks[10].mlp.ffn_low.fc1.out_features == 1024
+    with torch.no_grad():
+        out = model(sample_waveform, return_dict=True)
+    assert out["logits"].shape == (2, 36)
+
+
+def test_mini_config_only_changes_variant():
+    a = json.loads((CONFIG / "train_config_overlap_ce9.json").read_text(encoding="utf-8"))
+    b = json.loads((CONFIG / "train_config_overlap_ce9_mini.json").read_text(encoding="utf-8"))
+    assert b["model"].pop("ced_variant") == "mini"
+    b["model"].pop("_note_variant")
+    for section in ("teacher", "model", "routing", "loss", "train"):
+        assert a[section] == b[section], section
+
+
+def test_mgd_feature_kd_shapes_mask_and_grid():
+    """MGD: token student lưới (4, 48) f-major, teacher (25, 4, 768) làm phẳng -> loss hữu hạn, có gradient, clip thiếu bị loại."""
+    import torch
+
+    from src.feature_kd import MaskedGenerativeFeatureKD
+
+    torch.manual_seed(0)
+    mgd = MaskedGenerativeFeatureKD(192, 768, 0.5, (25, 4))
+    tokens = torch.randn(3, 4 * 48, 192, requires_grad=True)
+    teacher = torch.randn(3, 1, 25 * 4 * 768)
+    loss = mgd(tokens, (4, 48), teacher, torch.tensor([1.0, 1.0, 0.0]))
+    loss.backward()
+    assert torch.isfinite(loss) and tokens.grad[:2].abs().sum() > 0 and tokens.grad[2].abs().sum() == 0
+    # teacher cùng lưới student thì pool là đồng nhất: teacher = 0 và student = 0 -> chỉ còn bias của khối sinh
+    zero = mgd(torch.zeros(1, 4 * 25, 192), (4, 25), torch.zeros(1, 1, 25 * 4 * 768))
+    assert zero >= 0
+
+
+def test_mgd_config_and_last_tokens(sample_waveform):
+    import torch
+
+    cfg = json.loads((CONFIG / "train_config_overlap_ce9_mgd.json").read_text(encoding="utf-8"))
+    base = json.loads((CONFIG / "train_config_overlap_ce9.json").read_text(encoding="utf-8"))
+    fkd = cfg["feature_kd"]
+    assert (fkd["method"], fkd["weight"], fkd["mask_ratio"], fkd["teacher_grid"]) == ("mgd", 7e-05, 0.5, [25, 4])
+    for section in ("teacher", "model", "routing", "loss", "train"):
+        assert cfg[section] == base[section], section
+    model = CEDSingleMoESplitFFN(num_classes=36, patch_stride=(16, 8)).eval()
+    with torch.no_grad():
+        out = model(sample_waveform, return_dict=True)
+    assert out["last_tokens"].shape == (2, 4 * 48, 192)

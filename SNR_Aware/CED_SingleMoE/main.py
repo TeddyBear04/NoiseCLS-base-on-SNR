@@ -83,6 +83,7 @@ def build_model(cfg: dict[str, Any]) -> CEDSingleMoESplitFFN:
         router_input=m["router_input"],
         patch_stride=tuple(m.get("patch_stride", (16, 16))),
         specaug=m.get("specaug"),
+        ced_variant=m.get("ced_variant", "tiny"),
     )
 
 
@@ -280,7 +281,8 @@ def cmd_eval(cfg: dict[str, Any]) -> None:
     pipe = load_pipeline(out_dir / "best_model.pt", device, num_classes=cfg["experiment"]["num_classes"],
                          freq_bins=m["freq_bins"], frames=m["frames"], split_blocks=tuple(m["split_blocks"]),
                          expert_names=tuple(m["experts"]), router_input=m["router_input"],
-                         patch_stride=tuple(m.get("patch_stride", (16, 16))))
+                         patch_stride=tuple(m.get("patch_stride", (16, 16))),
+                         ced_variant=m.get("ced_variant", "tiny"))
     dataset = build_dataset(cfg, "validation", False)
     probs, alphas, targets, snrs = [], [], [], []
     for batch in build_dataloader(dataset, cfg["train"]["batch_size"], False, 0):
