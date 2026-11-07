@@ -99,8 +99,12 @@ class KDTrainer:
         amp_dtype: str = "bfloat16",
         out_dir: str | Path = "checkpoints",
         feature_kd: dict[str, Any] | None = None,
+        lr_head: float | None = None,
     ) -> None:
         self.model = model.to(device)
+        # lr_head (recipe ce9, MLNC vuong_mix_dataset_v2): chia lr theo nguồn khởi tạo thay vì theo vai trò -
+        # tham số nạp từ CED-Tiny (kể cả FFN chia ở block 10-11) lấy lr_backbone, mọi module mới lấy lr_head.
+        self.lr_head = lr_head
         # GFD-Cosine (src/feature_kd.py): projector chỉ sống trong trainer, không lưu vào best_model.pt
         fkd = feature_kd or {}
         self.feat_weight = float(fkd.get("weight", 0.0)) if fkd.get("enabled") else 0.0
@@ -166,6 +170,17 @@ class KDTrainer:
         self, lr_backbone: float, lr_experts: float, lr_router: float, weight_decay: float
     ) -> list[dict[str, Any]]:
         backbone_params, expert_params, router_params = [], [], []
+
+        if self.lr_head is not None:
+            pretrained = self.model.pretrained_parameter_names()
+            if not pretrained:
+                raise ValueError("lr_head cần model nạp CED-Tiny (model.load_pretrained true)")
+            for name, param in self.model.named_parameters():
+                if param.requires_grad:
+                    (backbone_params if name in pretrained else expert_params).append(param)
+            self.backbone_params = backbone_params
+            return [{"params": backbone_params, "lr": lr_backbone, "weight_decay": weight_decay},
+                    {"params": expert_params, "lr": self.lr_head, "weight_decay": weight_decay}]
 
         for name, param in self.model.named_parameters():
             if not param.requires_grad:
@@ -355,6 +370,13 @@ class KDTrainer:
         gates = np.concatenate(all_gates, axis=0)
 
         results = compute_snr_breakdown(preds, targets, snrs)
+        # precision/recall macro + dự đoán từng clip (thứ tự val_loader = thứ tự manifest) cho báo cáo và McNemar
+        from sklearn.metrics import precision_recall_fscore_support
+
+        pred_idx = preds.argmax(axis=1)
+        prec, rec, f1, _ = precision_recall_fscore_support(targets, pred_idx, average="macro", zero_division=0)
+        results["overall"].update(precision_macro=float(prec), recall_macro=float(rec), macro_f1=float(f1))
+        results["predictions"] = {"pred": pred_idx, "target": targets, "snr": snrs}
         results["mean_gates"] = gates.mean(axis=0).tolist()
         band = snr_band_index(torch.from_numpy(snrs), self.snr_edges_db).numpy()
         results["router_band_acc"] = float((gates.argmax(axis=1) == band).mean())

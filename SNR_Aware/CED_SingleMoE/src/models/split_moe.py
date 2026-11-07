@@ -36,6 +36,7 @@ References:
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
 import torch
@@ -93,6 +94,7 @@ class CEDSingleMoESplitFFN(nn.Module):
         expert_names: tuple[str, ...] = ("low", "high"),
         router_input: str = "rms",
         patch_stride: tuple[int, int] = (16, 16),
+        specaug: dict[str, int] | None = None,
     ) -> None:
         super().__init__()
         # "rms": như bản gốc, 6 đặc trưng tính trên n_hat đã chuẩn hoá RMS (log-RMS thành hằng số, mất mức năng lượng).
@@ -106,7 +108,8 @@ class CEDSingleMoESplitFFN(nn.Module):
 
         # 1. Frontend Audio Processors
         self.frontend = LogMel(n_mels=freq_bins, num_frames=frames)
-        self.spec_augment = SpecAugment()
+        # specaug None = mặc định của bản gốc (2 mask tần số <=8 + 2 mask thời gian <=24); recipe ce9 truyền toàn 0
+        self.spec_augment = SpecAugment(**specaug) if specaug is not None else SpecAugment()
         self.acoustic_extractor = AcousticFeatureExtractor(log_heavy_tails=router_input == "raw")
 
         # 2. Backbone Base Model (Pre-LN ViT with 2D GREP)
@@ -120,8 +123,11 @@ class CEDSingleMoESplitFFN(nn.Module):
             time_major=False,
             patch_stride=tuple(patch_stride),
         )
+        # Tên tham số (trong self.vit_base.vit) nạp từ checkpoint CED-Tiny; FFN chia ở block 10-11 là bản sao của
+        # MLP đã nạp nên cũng tính là pretrained (xem pretrained_parameter_names).
+        self._loaded_vit_keys: frozenset[str] = frozenset()
         if load_pretrained:
-            load_ced_tiny(self.vit_base)
+            self._loaded_vit_keys = frozenset(load_ced_tiny(self.vit_base)["loaded_keys"])
 
         # 3. Self-Contained Spectral-Token Router
         self.router = SelfContainedSpectralTokenRouter(
@@ -145,6 +151,19 @@ class CEDSingleMoESplitFFN(nn.Module):
         original_head = self.vit_base.vit.head
         for name in self.expert_names:
             setattr(self, f"head_{name}", copy.deepcopy(original_head))
+
+    def pretrained_parameter_names(self) -> set[str]:
+        """Tên tham số (theo named_parameters) khởi tạo từ checkpoint CED-Tiny, gồm cả FFN shared/expert của block chia
+        (bản sao MLP đã nạp). Phần còn lại là module mới: head từng expert, router, acoustic_extractor, CLS, bias GREP."""
+        prefix = "vit_base.vit."
+        names = set()
+        for name, _ in self.named_parameters():
+            if not name.startswith(prefix):
+                continue
+            key = re.sub(r"\.mlp\.ffn_[a-z]+\.", ".mlp.", name[len(prefix):])
+            if key in self._loaded_vit_keys:
+                names.add(name)
+        return names
 
     def forward(
         self,

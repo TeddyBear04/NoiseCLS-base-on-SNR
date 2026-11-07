@@ -82,6 +82,7 @@ def build_model(cfg: dict[str, Any]) -> CEDSingleMoESplitFFN:
         expert_names=tuple(m["experts"]),
         router_input=m["router_input"],
         patch_stride=tuple(m.get("patch_stride", (16, 16))),
+        specaug=m.get("specaug"),
     )
 
 
@@ -235,16 +236,19 @@ def run_train(cfg: dict[str, Any], smoke: bool) -> None:
         oracle_prob_end=cfg["routing"]["oracle_prob_end"],
         num_classes=cfg["experiment"]["num_classes"], amp_dtype=t["amp_dtype"], out_dir=out_dir,
         feature_kd=cfg.get("feature_kd") if feature_kd_on(cfg) else None,
+        lr_head=t.get("lr_head"),
     )
 
-    history, best_snr = [], {}
+    history, best_snr, best_pred = [], {}, []
     for epoch in range(t["epochs"]):
         train_res = trainer.train_epoch(epoch)
         val_res = trainer.evaluate()
         overall = val_res["overall"]
         history.append({
             "epoch": epoch + 1, **train_res, "val_top1": overall["top1"], "val_map": overall["map"],
-            "val_auc": overall.get("auc", float("nan")), "router_band_acc": val_res["router_band_acc"],
+            "val_auc": overall.get("auc", float("nan")), "val_precision_macro": overall["precision_macro"],
+            "val_recall_macro": overall["recall_macro"], "val_macro_f1": overall["macro_f1"],
+            "router_band_acc": val_res["router_band_acc"],
             "oracle_prob": trainer.oracle_probability(epoch),
             **{f"gate_{name}": g for name, g in zip(cfg["model"]["experts"], val_res["mean_gates"])},
         })
@@ -253,9 +257,13 @@ def run_train(cfg: dict[str, Any], smoke: bool) -> None:
         if is_best:
             trainer.best_top1_acc, trainer.best_results = overall["top1"], overall
             best_snr = {k: v for k, v in val_res.items() if k.endswith("dB")}
+            p = val_res["predictions"]
+            best_pred = [{"sample_id": row["sample_id"], "snr_db": float(s), "label": int(y), "pred": int(q), "epoch": epoch + 1}
+                         for row, s, y, q in zip(val_set.base.rows, p["snr"], p["target"], p["pred"])]
         trainer.save_checkpoint(out_dir / "last.pt", is_best=is_best)
 
     write_csv(out_dir / "lich_su.csv", history)
+    write_csv(out_dir / "val_du_doan_best.csv", best_pred)  # dự đoán val (không TTA) của epoch tốt nhất
     write_csv(out_dir / "val_theo_snr.csv", [{"snr": k, **v} for k, v in {**best_snr, "overall": trainer.best_results}.items()])
     sections = tuple(sec for sec in ("experiment", "teacher", "model", "routing", "loss", "feature_kd", "train") if sec in cfg)
     params = [{"muc": f"{sec}.{k}", "gia_tri": json.dumps(v)} for sec in sections for k, v in cfg[sec].items()]

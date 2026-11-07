@@ -282,4 +282,6 @@ def load_ced_tiny(model: ViTSBias, repo: str = CED_REPO, path: str | None = None
             pos = grid.permute(1, 2, 0).reshape(1, model.freq_patches * model.time_patches, -1)
             vit.pos_embed.data[:, 1:] = pos.to(vit.pos_embed.dtype)
 
-    return {"loaded_tensors": len(mapped), "total_tensors": len(own), "missing": len(result.missing_keys)}
+    loaded = sorted(mapped) + (["pos_embed"] if "pos_embed" in own and (CED_PREFIX + "freq_pos_embed") in state else [])
+    return {"loaded_tensors": len(mapped), "total_tensors": len(own), "missing": len(result.missing_keys),
+            "loaded_keys": loaded}
