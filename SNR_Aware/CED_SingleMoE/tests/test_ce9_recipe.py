@@ -176,3 +176,14 @@ def test_long_schedule_configs_and_early_stop_rule():
             stopped = epoch
             break
     assert stopped == 6
+
+
+def test_patience8_configs_only_change_patience():
+    for name in ("train_config_overlap_ce9_lr1e5_e45p3.json", "train_config_overlap_ce9_kdmoe_lr1e5_e45p3.json", "train_config_ce9_lr1e5_e45p3.json"):
+        a = json.loads((CONFIG / name).read_text(encoding="utf-8"))
+        b = json.loads((CONFIG / name.replace("_e45p3", "_e45p8")).read_text(encoding="utf-8"))
+        assert (a["train"]["patience"], b["train"].pop("patience")) == (3, 8)
+        b["train"].pop("_note_patience"); a["train"].pop("patience")
+        for section in ("teacher", "model", "routing", "loss", "train"):
+            assert a[section] == b[section], (name, section)
+        assert b["paths"]["output_dir"] == a["paths"]["output_dir"].replace("_e45p3", "_e45p8")
