@@ -9,6 +9,8 @@
 #   ROLE=a: teacher -> run3_kd_crd -> run8_attn_kd_crd
 #   ROLE=b: run1_baseline -> run7_attn -> (chờ teacher) -> run3c_kd_only -> run3b_crd_only
 #   ROLE=a4 / b4: chỉ 4 run không attention - a4: teacher -> run3c_kd_only -> run3b_crd_only -> run3_kd_crd; b4: run1_baseline
+#   ROLE=a3 / b3: cùng 4 run, chia đều hơn - a3: teacher -> run3c_kd_only -> run3_kd_crd; b3: run1_baseline -> (chờ teacher) -> run3b_crd_only
+#   Bản mask FRCRN: CFG=config/train_config_beats_ce15_rh_frcrn.json (student nghe n_hat từ cache, xem student.input).
 #   Máy b chờ file <outputs.dir>/teacher_noise_best.pt.ok: chép teacher_noise_best.pt từ máy a sang
 #   cùng đường dẫn rồi ghi sha256 vào file .ok - để bốn run KD/CRD dùng CHUNG một teacher.
 #   Báo cáo chung: gom student_*_{predictions.npz,test.json,history.json,params.json} của
@@ -97,6 +99,18 @@ case $ROLE in
   a4)  # 4 run không attention trên một máy, dùng chung teacher của máy này: teacher -> KD logit -> CRD -> KD + CRD
     teacher_part
     for run in run3c_kd_only run3b_crd_only run3_kd_crd; do train_eval $run; done ;;
+  a3)  # 4 run chia hai máy cân hơn: máy a = teacher -> KD logit -> KD + CRD
+    teacher_part
+    for run in run3c_kd_only run3_kd_crd; do train_eval $run; done ;;
+  b3)  # máy b = baseline CE -> (chờ teacher của máy a) -> CRD
+    step smoke_ce_student $PY -u main.py student36 --config $SM --run run1_baseline
+    step smoke_ce_val     $PY -u main.py test36    --config $SM --run run1_baseline --eval-split validation
+    log SMOKE_CE_OK
+    train_eval run1_baseline
+    T=$OUT/teacher_noise_best.pt
+    until [ -f $T.ok ]; do sleep 60; done
+    log "teacher có mặt: $(cat $T.ok)"
+    train_eval run3b_crd_only ;;
   b4)  # baseline CE (không cần teacher)
     step smoke_ce_student $PY -u main.py student36 --config $SM --run run1_baseline
     step smoke_ce_val     $PY -u main.py test36    --config $SM --run run1_baseline --eval-split validation
@@ -104,6 +118,6 @@ case $ROLE in
     train_eval run1_baseline ;;
   report)
     rm -f "$W/done/report_val"; report ;;
-  *) echo "ROLE phải là all|a|b|a4|b4|report"; exit 1 ;;
+  *) echo "ROLE phải là all|a|b|a4|b4|a3|b3|report"; exit 1 ;;
 esac
 log "ROLE_DONE $ROLE"

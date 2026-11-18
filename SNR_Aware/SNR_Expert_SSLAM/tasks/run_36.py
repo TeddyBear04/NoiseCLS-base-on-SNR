@@ -152,15 +152,64 @@ def metrics(logits: torch.Tensor, targets: torch.Tensor, snrs: torch.Tensor,
 # ------------------------------------------------------------------------- dataset
 
 
+class NhatBank:
+    """n_hat = FRCRN(mixture), precomputed in fp32 by FRCRN_KD_MoE's
+    scripts/frcrn_cache.py: `<dir>/frcrn_<split>.npy` [N, samples] plus
+    `frcrn_<split>.json` (sample_id per row). Read by sample_id, memmap opened
+    lazily in each worker. Same cache the FRCRN-masked CED students read, so the
+    BEATs student hears exactly their input."""
+
+    def __init__(self, directory: str | Path, pattern: str = "frcrn_{split}.npy"):
+        self.directory = Path(directory)
+        self.pattern = pattern
+        self.rows: dict[str, dict[str, int]] = {}
+        self.arrays: dict[str, np.ndarray] = {}
+
+    def _path(self, split: str) -> Path:
+        return self.directory / self.pattern.format(split=split)
+
+    def check(self, rows) -> None:
+        """Fail before training when a clip has no n_hat (wrong cache / split)."""
+        missing = [r["sample_id"] for r in rows
+                   if r["sample_id"] not in self._index(r["split"])]
+        if missing:
+            raise KeyError(f"n_hat cache {self.directory}: {len(missing)} clips missing, "
+                           f"e.g. {missing[0]}")
+
+    def _index(self, split: str) -> dict[str, int]:
+        if split not in self.rows:
+            ids = json.loads(self._path(split).with_suffix(".json").read_text(encoding="utf-8"))
+            self.rows[split] = {sample_id: i for i, sample_id in enumerate(ids)}
+        return self.rows[split]
+
+    def read(self, split: str, sample_id: str, samples: int) -> torch.Tensor:
+        if split not in self.arrays:
+            self.arrays[split] = np.load(self._path(split), mmap_mode="r")
+        wave = np.array(self.arrays[split][self._index(split)[sample_id]], dtype=np.float32)
+        if wave.shape[0] != samples:
+            raise ValueError(f"n_hat {sample_id}: {wave.shape[0]} samples, expected {samples}")
+        return torch.from_numpy(wave)
+
+
+def student_nhat_bank(config: dict, column: str) -> NhatBank | None:
+    """`student.input = "nhat"`: the student column (mixture) is replaced by
+    FRCRN's estimated noise n_hat. The teacher column (clean noise) never is."""
+    settings = config["student"]
+    if settings.get("input", "mixture") != "nhat" or column != settings["source_column"]:
+        return None
+    return NhatBank(settings["nhat_dir"], settings.get("nhat_pattern", "frcrn_{split}.npy"))
+
+
 class ClipDataset(Dataset):
     """One audio column plus label, SNR and the manifest row it came from.
 
     Returns both the mixture and the clean noise when `paired` is set, which is
     what lets the frozen teacher run beside the student in the same step.
+    With `nhat` set, the main column is read from the FRCRN n_hat cache instead.
     """
 
     def __init__(self, root: Path, rows, row_index, label_to_index, samples, rate,
-                 column, paired_column=None):
+                 column, paired_column=None, nhat: NhatBank | None = None):
         self.root = Path(root)
         self.rows = rows
         self.row_index = row_index
@@ -169,15 +218,19 @@ class ClipDataset(Dataset):
         self.rate = rate
         self.column = column
         self.paired_column = paired_column
+        self.nhat = nhat
 
     def __len__(self) -> int:
         return len(self.rows)
 
     def __getitem__(self, index: int) -> dict:
         row = self.rows[index]
+        if self.nhat is not None:
+            audio = self.nhat.read(row["split"], row["sample_id"], self.samples)
+        else:
+            audio = load_float_audio(self.root / row[self.column], self.rate, self.samples)
         item = {
-            "audio": load_float_audio(self.root / row[self.column], self.rate,
-                                      self.samples),
+            "audio": audio,
             "target": self.label_to_index[row["label_names"]],
             "snr": int(float(row["target_snr_db"])),
             "row_index": self.row_index[index],
@@ -201,15 +254,20 @@ class Corpus:
         self.rate = dataset["sample_rate"]
         self.column = column
         self.paired_column = paired_column
+        self.nhat = student_nhat_bank(config, column)
+        if self.nhat is not None:
+            print(f"student input: FRCRN n_hat from {self.nhat.directory}", flush=True)
         self.by_split: dict[str, list] = {}
         for row in self.rows:
             self.by_split.setdefault(row["split"], []).append(row)
 
     def loader(self, rows, batch_size, workers, shuffle, device, seed=2026):
+        if self.nhat is not None:
+            self.nhat.check(rows)
         dataset = ClipDataset(self.root, rows,
                               [self.index_of[id(r)] for r in rows],
                               self.label_to_index, self.samples, self.rate,
-                              self.column, self.paired_column)
+                              self.column, self.paired_column, self.nhat)
         return DataLoader(
             dataset, batch_size=batch_size, shuffle=shuffle,
             generator=torch.Generator().manual_seed(seed) if shuffle else None,
