@@ -1,0 +1,80 @@
+# [unified CED-Mini + soft attention + KD/CRD] Bản của kdmoe_ced_crd.yaml chỉ đổi CED-Small -> CED-Mini (9.6M).
+# KD logit T=4 KHÔNG CRD, mean-pool (đối chứng cho MGD).
+# ABLATION: pooling = mean-pool gốc của CED (bỏ soft attention mask A(t,f)), mọi thứ khác như kdmoe_ced_mini_crd.yaml.
+# Giống kdmoe_mn10_crd.yaml (teacher BEATs cross-fit chung, n_hat FRCRN fp32
+# + rms_normalize 0.07925, chọn epoch trên val sạch, 50 epoch / patience 8 / stage 1 8 epoch, router 3 khoảng SNR,
+# loss KD + CRD), chỉ thay student mn10 bằng CED-Mini (ced.py) với pooling soft attention mask A(t,f) (Ilse et al.
+# ICML 2018) và recipe fine-tune của CED trong SNR_Expert_SSLAM (train_config_ced_small_fullsnr.json, theo BEATs
+# ICML 2023 bảng 4 cột AS-20K): lr 1e-4, layer decay 0.3, wd 0.01, warmup 10 %, SpecAugment 0.2, drop_path 0.1,
+# attention lr 1e-3.
+model:
+  rms_normalize: 0.07925
+  encoder: panns_cnn10    # đường encode CNN của KD-MoE; CEDKDMoE thay front-end/encoder/pooling
+  panns_checkpoint: ""
+  use_gate: true
+  gate_eps: 0.05
+  gate_bias_init: 2.0
+  patch_size: 16          # NoiseHead: mỗi token CED (patch 16 x 16) dựng lại 16 x 16 log-mel nhiễu
+  freq_bins: 64
+  num_frames: 400         # 401 frame CED cắt còn 400 -> lưới 4 x 25
+  num_classes: 36
+  route_by: snr           # 3 expert: [-5, 5), [5, 15), [15, 20] dB
+  snr_band_edges: [5.0, 15.0]
+  num_groups: 3
+  expert_hidden: 256
+  router_hidden: 64
+  dropout: 0.1
+  inference_mode: weighted
+  specaug_freq_masks: 1   # spec_ratio 0.2 của CED (SNR_Expert_SSLAM): 1 mặt nạ mỗi trục, rộng tới 20 %
+  specaug_freq_width: 12  # 0.2 x 64 mel
+  specaug_time_masks: 1
+  specaug_time_width: 80  # 0.2 x 400 frame
+
+frontend:
+  sample_rate: 16000
+
+loss:
+  label_smoothing: 0.1
+  kd_temperature: 2.0     # JSON ghi đè 4.0
+  kd_weight: 1.0
+  kd_target: logits
+  kd_weight_by_snr: false
+  route_ce_weight: 1.0
+  front_weight: 1.0
+  front_lam_over: 2.0
+  cons_weight: 0.1
+  crd_weight: 0.0        # không CRD
+  crd_dim: 256            # embed_s 256 -> 256, embed_t 768 -> 256
+  crd_temperature: 0.07
+  crd_negatives: 1024
+
+train:
+  lr: 1.0e-4              # encoder_lr = head_lr của CED (SNR_Expert_SSLAM)
+  weight_decay: 0.01
+  betas: [0.9, 0.999]     # AdamW mặc định như optimizer_for của SNR_Expert_SSLAM
+  warmup_ratio: 0.1
+  min_lr: 1.0e-6
+  grad_clip: 1.0
+  batch_size: 64
+  eval_batch_size: 64
+  epochs: 50
+  patience: 8
+  stage1_epochs: 8
+  ema_decay: 0.999
+  amp: bf16
+  seed: 42
+  resume_every: 1
+
+student:
+  type: ced
+  variant: ced_mini
+  repo_url: https://github.com/RicherMans/CED.git
+  commit: 4b2149d
+  repo_dir: /marimo/ext/CED
+  # bản HF chính chủ của CED-Mini (mispeech, mAP 49.0), như CED-Small dùng bản HF thay Zenodo
+  checkpoint_url: https://huggingface.co/mispeech/ced-mini/resolve/26c3ebcae85d4330f4fc26763f029539a3afcda0/model.safetensors
+  drop_path: 0.1
+  layer_decay: 0.3        # block i: lr x 0.3^(11 - i); block trên cùng + norm cuối lr đầy đủ
+  pooling: mean           # mean-pool gốc của CED; 'attention' = soft attention mask A(t,f)
+  attention_hidden: 128
+  attention_lr_scale: 10.0  # attention lr 1e-3 = 10 x lr

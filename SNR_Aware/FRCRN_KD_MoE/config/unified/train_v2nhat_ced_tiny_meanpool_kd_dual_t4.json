@@ -1,0 +1,33 @@
+{
+  "paths": {
+    "dataset": "../../.agents/mix-dataset-v2",
+    "frcrn_checkpoint": "model/frcrn_best.pt",
+    "frcrn_config": "config/frcrn.yaml",
+    "student_config": "config/unified/kdmoe_ced_tiny_meanpool_kd_dual.yaml",
+    "group_map": "config/group_map.json",
+    "membership": "config/membership.npy",
+    "teacher_cache": "output/teacher_nhat_v2/beats_teacher_logits_nhat_v2.pt",
+    "frcrn_cache_dir": "output/frcrn_cache_fp32",
+    "output": "output/unified/v2nhat_ced_tiny_meanpool_kd_dual_t4",
+    "validation_exclude_noise_ytids": "config/audioset_train_noise_ytids.txt"
+  },
+  "data": {
+    "_note": "Bản v2 của train_ced_tiny_meanpool_kd_t4.json: mixture -> FRCRN -> CED-Tiny, CE + KD logit T=4 từ teacher BEATs nghe n_hat (teacher_nhat_v2.json). v2 không có nhiễu sạch nên load_noise false: không L_front, bỏ stage 1; mọi thứ khác giữ nguyên.",
+    "load_noise": false,
+    "train_split": "train",
+    "validation_split": "validation",
+    "clip_seconds": 4.0,
+    "num_workers": 4,
+    "paired_units_per_batch": 32,
+    "dual_input": true
+  },
+  "runtime": {
+    "device": "auto",
+    "smoke_samples": 32,
+    "seed": 2026
+  },
+  "loss": {
+    "kd_temperature": 4.0
+  },
+  "_note_variant": "Hướng 2: student hai kênh [n_hat, mixture]; mọi thứ khác như KD logit v2 nhat."
+}

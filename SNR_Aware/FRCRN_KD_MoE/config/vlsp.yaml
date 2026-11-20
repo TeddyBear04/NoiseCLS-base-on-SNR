@@ -1,0 +1,6 @@
+# Chia split cho VLSP-100h (bộ này chỉ có file audio, không có split sẵn).
+# Gán split cố định theo hash đường dẫn tương đối của file, nên không đổi giữa các lần chạy.
+split:
+  train: 0.9                # TODO: tỉ lệ tự chọn, chưa xác nhận
+  validation: 0.05          # TODO
+  test: 0.05                # TODO

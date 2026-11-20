@@ -1,0 +1,40 @@
+{
+  "paths": {
+    "dataset": "../../.agents/36_labels",
+    "frcrn_checkpoint": "model/frcrn_best.pt",
+    "frcrn_config": "config/frcrn.yaml",
+    "student_config": "config/unified/kdmoe_ced_tiny_meanpool_gfd_b12.yaml",
+    "group_map": "config/group_map.json",
+    "membership": "config/membership.npy",
+    "teacher_cache": "output/teacher_unified/beats_teacher_logits_clean.pt",
+    "frcrn_cache_dir": "output/frcrn_cache_fp32",
+    "output": "output/unified/ced_tiny_gfd2_b12_w005_t4",
+    "validation_exclude_noise_ytids": "config/audioset_train_noise_ytids.txt",
+    "teacher_review": [
+      "output/teacher_unified/teacher_hints_l12_g1x1.npy"
+    ]
+  },
+  "data": {
+    "train_split": "train",
+    "validation_split": "validation",
+    "clip_seconds": 4.0,
+    "num_workers": 4,
+    "paired_units_per_batch": 32
+  },
+  "runtime": {
+    "device": "auto",
+    "smoke_samples": 32,
+    "seed": 2026
+  },
+  "loss": {
+    "kd_temperature": 4.0,
+    "kd_weight": 1.0
+  },
+  "relationkd": {
+    "fkd_method": "gfd",
+    "fkd_weight": 0.05,
+    "grad_probe_every": 50,
+    "stop_after_epochs": 0,
+    "_note": "GFD-Cosine: L = L_KD-MoE (KD logit T=4 như kd8_1) + fkd_weight * mean_tap (1 - cos(LN(W mean(token block b)), mean(token BEATs L_b))). Teacher = 5 fold HF out-of-fold trên nhiễu sạch, xuất bằng teacher_crossfit.py features --config config/unified/teacher_pooled_gfd.json. Bảng run của user 2026-11-03: GFD-2/3/4 block 12 w 0.05/0.10/0.20, GFD-5 block 6/9/12 w 0.10. grad_probe_every 50 -> grad_ratio aux/CE trên encoder."
+  }
+}

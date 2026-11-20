@@ -1,0 +1,24 @@
+{
+  "paths": {
+    "dataset": "../../.agents/36_labels",
+    "frcrn_checkpoint": "model/frcrn_best.pt",
+    "frcrn_config": "config/frcrn.yaml",
+    "student_config": "config/kdmoe_s.yaml",
+    "group_map": "config/group_map.json",
+    "membership": "config/membership.npy",
+    "output": "output",
+    "teacher_cache": "model/teacher_midexpert.pt"
+  },
+  "data": {
+    "train_split": "train",
+    "validation_split": "validation",
+    "clip_seconds": 4.0,
+    "num_workers": 4,
+    "paired_units_per_batch": 32
+  },
+  "runtime": {
+    "device": "auto",
+    "smoke_samples": 32,
+    "seed": 2026
+  }
+}

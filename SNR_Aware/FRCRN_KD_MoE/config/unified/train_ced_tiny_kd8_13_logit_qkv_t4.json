@@ -1,0 +1,41 @@
+{
+  "paths": {
+    "dataset": "../../.agents/36_labels",
+    "frcrn_checkpoint": "model/frcrn_best.pt",
+    "frcrn_config": "config/frcrn.yaml",
+    "student_config": "config/unified/kdmoe_ced_tiny_meanpool_qkv.yaml",
+    "group_map": "config/group_map.json",
+    "membership": "config/membership.npy",
+    "teacher_cache": "output/teacher_unified/beats_teacher_logits_clean.pt",
+    "frcrn_cache_dir": "output/frcrn_cache_fp32",
+    "output": "output/unified/ced_tiny_kd8_13_logit_qkv_t4",
+    "validation_exclude_noise_ytids": "config/audioset_train_noise_ytids.txt",
+    "teacher_review": [
+      "output/teacher_unified/teacher_qkv_q_l12_g25x4.npy",
+      "output/teacher_unified/teacher_qkv_k_l12_g25x4.npy",
+      "output/teacher_unified/teacher_qkv_v_l12_g25x4.npy"
+    ]
+  },
+  "data": {
+    "train_split": "train",
+    "validation_split": "validation",
+    "clip_seconds": 4.0,
+    "num_workers": 4,
+    "paired_units_per_batch": 32
+  },
+  "runtime": {
+    "device": "auto",
+    "smoke_samples": 32,
+    "seed": 2026
+  },
+  "loss": {
+    "kd_temperature": 4.0
+  },
+  "relationkd": {
+    "fkd_method": "qkv",
+    "fkd_weight": 0.1,
+    "fkd_relation_heads": 8,
+    "grad_probe_every": 50,
+    "stop_after_epochs": 0
+  }
+}

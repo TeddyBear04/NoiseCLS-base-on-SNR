@@ -1,0 +1,39 @@
+{
+  "paths": {
+    "dataset": "../../.agents/36_labels",
+    "frcrn_checkpoint": "model/frcrn_best.pt",
+    "frcrn_config": "config/frcrn.yaml",
+    "student_config": "config/unified/kdmoe_ced_mini_meanpool_ce9_mgd.yaml",
+    "group_map": "config/group_map.json",
+    "membership": "config/membership.npy",
+    "teacher_cache": "output/teacher_unified/beats_teacher_logits_clean.pt",
+    "frcrn_cache_dir": "output/frcrn_cache_fp32",
+    "output": "output/unified/ced_mini_ce9_5_logit_mgd_s1234",
+    "validation_exclude_noise_ytids": "config/audioset_train_noise_ytids.txt",
+    "teacher_hints": "output/teacher_unified/teacher_hints_l12_g25x4.npy"
+  },
+  "data": {
+    "train_split": "train",
+    "validation_split": "validation",
+    "clip_seconds": 4.0,
+    "num_workers": 4,
+    "paired_units_per_batch": 32
+  },
+  "runtime": {
+    "device": "auto",
+    "smoke_samples": 32,
+    "seed": 1234
+  },
+  "loss": {
+    "kd_temperature": 4.0,
+    "kd_weight": 1.0
+  },
+  "relationkd": {
+    "fkd_method": "mgd",
+    "fkd_weight": 7e-05,
+    "fkd_mask_ratio": 0.5,
+    "grad_probe_every": 50,
+    "stop_after_epochs": 0
+  },
+  "_note": "Nhu train_ced_mini_ce9_5_logit_mgd.json (seed 2026), chi doi seed -> 1234 de do do dao dong giua seed."
+}
