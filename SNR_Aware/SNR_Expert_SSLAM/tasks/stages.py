@@ -21,7 +21,7 @@ from torch import nn
 from expert_lib import (
     layer_decay_scales, warmup_cosine,
     CRDLoss, Projection, film_deviation, band_slice_mask, mask_deviation, sample_negatives,
-    align_patch_grid, distill_kl, sam_ascend, sam_descend,
+    align_patch_grid, distill_kl, distill_kl_probs, mixup_draw, sam_ascend, sam_descend,
 )
 from tasks.run_36 import (
     HERE, Classifier, Corpus, autocast, build_model, collect, metrics,
@@ -460,17 +460,35 @@ def command_student36(config: dict) -> None:
     generator = torch.Generator().manual_seed(config["experiment"]["seed"])
     sigma = settings["film"]["snr_jitter_db"] if model.film is not None else 0.0
     patch_level = loss_config["crd_level"] == "patch"
+    # Mixup (student.mixup_prob / mixup_alpha; 0 = off, the recipe default). As in
+    # SplitFFN / Dual-CED: one lambda per batch mixes the student's waveform, the label
+    # (two CE terms), the SNR that FiLM reads, and the teacher's softened distribution.
+    mix_prob = float(settings.get("mixup_prob", 0.0))
+    mix_alpha = float(settings.get("mixup_alpha", 0.0))
+    mix_rng = np.random.default_rng(config["experiment"]["seed"])
+    if mix_prob > 0 and mix_alpha > 0:
+        if use_crd or born_again is not None:
+            raise ValueError("mixup is implemented for CE + logit KD only (no CRD / born-again)")
+        print(f"mixup prob={mix_prob} alpha={mix_alpha}", flush=True)
 
     def step(batch):
         audio = batch["audio"].to(device, non_blocking=True)
         target = batch["target"].to(device, non_blocking=True)
         true_snr = batch["snr"].float().to(device, non_blocking=True)
+        lam = mixup_draw(mix_rng, mix_prob, mix_alpha)
+        if lam is not None:
+            perm = torch.randperm(audio.shape[0], device=device)
+            audio = lam * audio + (1.0 - lam) * audio[perm]
+            true_snr = lam * true_snr + (1.0 - lam) * true_snr[perm]
         snr_in = jitter_snr(true_snr, sigma, generator) if model.film else None
 
         with autocast(device):
             logits, pooled, patches = model(audio, snr_in)
-            ce = nn.functional.cross_entropy(
-                logits, target, label_smoothing=settings.get("label_smoothing", 0.0))
+            smoothing = settings.get("label_smoothing", 0.0)
+            ce = nn.functional.cross_entropy(logits, target, label_smoothing=smoothing)
+            if lam is not None:
+                ce = lam * ce + (1.0 - lam) * nn.functional.cross_entropy(
+                    logits, target[perm], label_smoothing=smoothing)
             loss = loss_config["r_ce"] * ce
             parts = {"ce": ce.detach()}
             if model.pool is not None:
@@ -483,7 +501,14 @@ def command_student36(config: dict) -> None:
                     t_logits, t_pooled, t_patches = teacher(
                         batch["paired"].to(device, non_blocking=True))
 
-            if use_kd:
+            if use_kd and lam is not None:
+                temperature = loss_config["rho_kd"]
+                p_t = nn.functional.softmax(t_logits.float() / temperature, dim=-1)
+                kd = distill_kl_probs(logits.float(), lam * p_t + (1.0 - lam) * p_t[perm],
+                                      temperature)
+                loss = loss + loss_config["a_kd"] * kd
+                parts["kd"] = kd.detach()
+            elif use_kd:
                 kd = distill_kl(logits, t_logits, loss_config["rho_kd"])
                 loss = loss + loss_config["a_kd"] * kd
                 parts["kd"] = kd.detach()

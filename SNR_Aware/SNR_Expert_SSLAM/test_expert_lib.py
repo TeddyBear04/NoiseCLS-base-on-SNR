@@ -398,3 +398,23 @@ def test_spec_augment_masks_zero_counts_is_identity():
     from expert_lib import spec_augment_masks
     x = torch.randn(4, 50, 16)
     assert torch.equal(spec_augment_masks(x, 0, 16, 0, 24, torch.Generator().manual_seed(0)), x)
+
+
+def test_distill_kl_probs_matches_distill_kl_on_unmixed_targets():
+    from expert_lib import distill_kl, distill_kl_probs
+    torch.manual_seed(0)
+    s, t = torch.randn(4, 36), torch.randn(4, 36)
+    p_t = torch.softmax(t / 4.0, dim=-1)
+    assert torch.allclose(distill_kl(s, t, 4.0), distill_kl_probs(s, p_t, 4.0), atol=1e-6)
+
+
+def test_mixup_draw_respects_prob_and_alpha():
+    import numpy as np
+    from expert_lib import mixup_draw
+    rng = np.random.default_rng(2027)
+    assert all(mixup_draw(rng, 0.0, 0.4) is None for _ in range(50))
+    assert all(mixup_draw(rng, 1.0, 0.0) is None for _ in range(50))
+    lams = [mixup_draw(rng, 1.0, 0.4) for _ in range(200)]
+    assert all(lam is not None and 0.0 <= lam <= 1.0 for lam in lams)
+    hits = sum(mixup_draw(rng, 0.4, 0.4) is not None for _ in range(2000))
+    assert 700 < hits < 900

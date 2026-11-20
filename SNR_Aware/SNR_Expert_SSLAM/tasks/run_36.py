@@ -583,6 +583,36 @@ def apply_epochs(config: dict, epochs: int) -> dict:
     return config
 
 
+def _tag(value: float) -> str:
+    return f"{value:g}".replace(".", "p")
+
+
+def apply_layer_decay(config: dict, decay: float) -> dict:
+    """Student layer-wise lr decay (block i: encoder_lr * decay^(11 - i), top block full
+    lr), into `<outputs.dir>_ld<decay>`; the teacher is still read from the base folder."""
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs["dir"] = f"{outputs['dir']}_ld{_tag(decay)}"
+    config["student"]["layer_decay"] = decay
+    print(f"layer_decay={decay} outputs={outputs['dir']} teacher_from={outputs['teacher_dir']}",
+          flush=True)
+    return config
+
+
+def apply_mixup(config: dict, spec: str) -> dict:
+    """Student mixup `P,ALPHA` (probability a batch is mixed, Beta(alpha, alpha)), into
+    `<outputs.dir>_mx<P>a<ALPHA>`; the teacher is still read from the base folder."""
+    prob, alpha = (float(v) for v in spec.split(","))
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs["dir"] = f"{outputs['dir']}_mx{_tag(prob)}a{_tag(alpha)}"
+    config["student"]["mixup_prob"] = prob
+    config["student"]["mixup_alpha"] = alpha
+    print(f"mixup prob={prob} alpha={alpha} outputs={outputs['dir']} "
+          f"teacher_from={outputs['teacher_dir']}", flush=True)
+    return config
+
+
 def apply_full_test(config: dict) -> dict:
     """Score already-trained students on EVERY SNR level, not only the band.
 
@@ -688,9 +718,16 @@ def main() -> None:
     parser.add_argument("--ban-dir",
                         help="Born-Again: the same run's student in this folder becomes a "
                              "second KD teacher on the mixture, into <outputs.dir>_ban.")
+    parser.add_argument("--layer-decay", type=float,
+                        help="Student layer-wise lr decay, into <outputs.dir>_ld<decay>.")
+    parser.add_argument("--mixup", metavar="P,ALPHA",
+                        help="Student mixup probability and Beta alpha, into "
+                             "<outputs.dir>_mx<P>a<ALPHA>.")
     arguments = parser.parse_args()
     if arguments.stage == "teacher36" and (arguments.teacher_dir or arguments.crd_n_data
-                                           or arguments.sam or arguments.ban_dir):
+                                           or arguments.sam or arguments.ban_dir
+                                           or arguments.layer_decay is not None
+                                           or arguments.mixup):
         parser.error("--teacher-dir / --crd-n-data / --sam / --ban-dir change the student only.")
     if arguments.patience is not None and arguments.stage == "teacher36":
         parser.error("--patience changes the student only; the teacher keeps its own.")
@@ -719,6 +756,10 @@ def main() -> None:
         config = apply_born_again(config, arguments.ban_dir)
     if arguments.sam:
         config = apply_sam(config, arguments.sam)
+    if arguments.layer_decay is not None:
+        config = apply_layer_decay(config, arguments.layer_decay)
+    if arguments.mixup:
+        config = apply_mixup(config, arguments.mixup)
     if arguments.epochs is not None:  # --full-test and --seed build on its folder
         config = apply_epochs(config, arguments.epochs)
     if arguments.patience is not None:

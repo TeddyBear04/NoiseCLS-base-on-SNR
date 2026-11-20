@@ -353,3 +353,20 @@ def distill_kl(student_logits: Tensor, teacher_logits: Tensor, temperature: floa
         torch.nn.functional.log_softmax(student_logits / temperature, dim=-1),
         torch.nn.functional.softmax(teacher_logits / temperature, dim=-1),
         reduction="batchmean") * (temperature ** 2)
+
+
+def distill_kl_probs(student_logits: Tensor, teacher_probs: Tensor, temperature: float) -> Tensor:
+    """`distill_kl` with the teacher's softened distribution given directly, so mixup can
+    blend two clips' teacher targets: KL(p_t || softmax(s/T)) * T^2."""
+    return torch.nn.functional.kl_div(
+        torch.nn.functional.log_softmax(student_logits / temperature, dim=-1),
+        teacher_probs, reduction="batchmean") * (temperature ** 2)
+
+
+def mixup_draw(rng, prob: float, alpha: float) -> float | None:
+    """Mixup (Zhang et al., ICLR 2018) for one batch: lambda ~ Beta(alpha, alpha) with
+    probability `prob`, else None (batch left clean). Same rule as SplitFFN / Dual-CED:
+    the batch is mixed only when a uniform draw is <= prob."""
+    if alpha <= 0.0 or prob <= 0.0 or rng.random() > prob:
+        return None
+    return float(rng.beta(alpha, alpha))
