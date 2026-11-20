@@ -13,6 +13,7 @@ References:
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +104,7 @@ class KDTrainer:
         kd_style: str = "splitffn",
         ce_weight: float = 1.0,
         kd_weight: float = 1.0,
+        layer_decay: float = 1.0,
     ) -> None:
         # kd_style "splitffn" (bản gốc): (1 - lambda_kd) CE + lambda_kd [w_fused KD(trộn) + w_expert KD(theo expert)], CE chéo T^2.
         # kd_style "kdmoe" (như FRCRN_KD_MoE KDMoELoss, kd_target logits): ce_weight CE + kd_weight T^2 KL(p_t || p_s) trên logit
@@ -114,6 +116,12 @@ class KDTrainer:
         # lr_head (recipe ce9, MLNC vuong_mix_dataset_v2): chia lr theo nguồn khởi tạo thay vì theo vai trò -
         # tham số nạp từ CED-Tiny (kể cả FFN chia ở block 10-11) lấy lr_backbone, mọi module mới lấy lr_head.
         self.lr_head = lr_head
+        # layer_decay (chỉ với lr_head): block i của CED lấy lr_backbone * layer_decay^(11 - i), block trên cùng lr đầy đủ,
+        # tham số nạp ngoài block (patch/pos embed, norm cuối) giữ lr_backbone - cùng quy tắc với SNR_Expert_SSLAM
+        # (expert_lib.layer_decay_scales) và FRCRN_KD_MoE (ced.py lr_scale). 1.0 = tắt.
+        self.layer_decay = float(layer_decay)
+        if self.layer_decay != 1.0 and lr_head is None:
+            raise ValueError("layer_decay cần train.lr_head (recipe ce9)")
         # GFD-Cosine (src/feature_kd.py): projector chỉ sống trong trainer, không lưu vào best_model.pt
         fkd = feature_kd or {}
         self.feat_weight = float(fkd.get("weight", 0.0)) if fkd.get("enabled") else 0.0
@@ -199,12 +207,22 @@ class KDTrainer:
             pretrained = self.model.pretrained_parameter_names()
             if not pretrained:
                 raise ValueError("lr_head cần model nạp CED-Tiny (model.load_pretrained true)")
+            num_blocks = len(self.model.vit_base.vit.blocks)
+            by_scale: dict[float, list[Tensor]] = {}
             for name, param in self.model.named_parameters():
-                if param.requires_grad:
-                    (backbone_params if name in pretrained else expert_params).append(param)
+                if not param.requires_grad:
+                    continue
+                if name not in pretrained:
+                    expert_params.append(param)
+                    continue
+                backbone_params.append(param)
+                match = re.match(r"vit_base\.vit\.blocks\.(\d+)\.", name)
+                scale = self.layer_decay ** (num_blocks - 1 - int(match.group(1))) if match else 1.0
+                by_scale.setdefault(scale, []).append(param)
             self.backbone_params = backbone_params
-            return [{"params": backbone_params, "lr": lr_backbone, "weight_decay": weight_decay},
-                    {"params": expert_params, "lr": self.lr_head, "weight_decay": weight_decay}]
+            groups = [{"params": params, "lr": lr_backbone * scale, "weight_decay": weight_decay}
+                      for scale, params in sorted(by_scale.items(), reverse=True)]
+            return groups + [{"params": expert_params, "lr": self.lr_head, "weight_decay": weight_decay}]
 
         for name, param in self.model.named_parameters():
             if not param.requires_grad:

@@ -246,6 +246,7 @@ def run_train(cfg: dict[str, Any], smoke: bool) -> None:
         kd_style=loss.get("kd_style", "splitffn"),
         ce_weight=float(loss.get("ce_weight", 1.0)),
         kd_weight=float(loss.get("kd_weight", 1.0)),
+        layer_decay=float(t.get("layer_decay", 1.0)),
     )
 
     history, best_snr, best_pred, since_best = [], {}, [], 0

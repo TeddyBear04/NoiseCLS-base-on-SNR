@@ -35,13 +35,31 @@ def test_pretrained_names_cover_split_ffn_copies_but_not_new_modules():
 def test_lr_head_makes_two_groups_by_initialisation():
     model = _model_with_fake_checkpoint()
     trainer = object.__new__(KDTrainer)
-    trainer.model, trainer.lr_head = model, 3e-4
+    trainer.model, trainer.lr_head, trainer.layer_decay = model, 3e-4, 1.0
     groups = trainer._build_param_groups(3e-5, 1.2e-4, 2e-4, 0.01)
     assert [g["lr"] for g in groups] == [3e-5, 3e-4]
     total = sum(p.numel() for p in model.parameters() if p.requires_grad)
     assert sum(p.numel() for g in groups for p in g["params"]) == total
     head_ids = {id(p) for p in groups[1]["params"]}
     assert id(model.head_low.weight) in head_ids and id(model.vit_base.vit.blocks[10].mlp.ffn_low.fc1.weight) not in head_ids
+
+
+
+def test_layer_decay_scales_blocks_from_the_top():
+    """Ablation 2026-11-20: block i lr_backbone * d^(11 - i); embeddings / final norm keep lr_backbone; heads lr_head."""
+    model = _model_with_fake_checkpoint()
+    trainer = object.__new__(KDTrainer)
+    trainer.model, trainer.lr_head, trainer.layer_decay = model, 3e-4, 0.5
+    groups = trainer._build_param_groups(3e-5, 1.2e-4, 2e-4, 0.01)
+    lr_of = {id(p): g["lr"] for g in groups for p in g["params"]}
+    blocks = model.vit_base.vit.blocks
+    assert abs(lr_of[id(blocks[11].attn.qkv.weight)] - 3e-5) < 1e-15
+    assert abs(lr_of[id(blocks[0].attn.qkv.weight)] - 3e-5 * 0.5 ** 11) < 1e-15
+    assert abs(lr_of[id(blocks[10].mlp.ffn_low.fc1.weight)] - 3e-5 * 0.5) < 1e-15
+    assert abs(lr_of[id(model.vit_base.vit.pos_embed)] - 3e-5) < 1e-15
+    assert lr_of[id(model.head_low.weight)] == 3e-4
+    total = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    assert sum(p.numel() for g in groups for p in g["params"]) == total
 
 
 def test_specaug_zero_is_identity_in_training():
