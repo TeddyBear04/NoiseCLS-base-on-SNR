@@ -1,5 +1,5 @@
 output/
 __pycache__/
 .pytest_cache/
-model/
-pretrained/
+/model/
+/pretrained/
