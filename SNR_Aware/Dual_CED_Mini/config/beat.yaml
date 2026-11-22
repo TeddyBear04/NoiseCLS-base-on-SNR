@@ -1,0 +1,28 @@
+model:
+  input_patch_size: 16
+  embed_dim: 512
+  encoder_embed_dim: 768
+  encoder_layers: 12
+  encoder_attention_heads: 12
+  encoder_ffn_embed_dim: 3072
+  deep_norm: true
+  conv_pos: 128
+  conv_pos_groups: 16
+  relative_position_embedding: true
+  num_buckets: 320
+  max_distance: 800
+  gru_rel_pos: true
+  dropout: 0.0
+  attention_dropout: 0.0
+  activation_dropout: 0.0
+  dropout_input: 0.0
+  predictor_dropout: 0.1
+  num_classes: 36
+
+frontend:
+  sample_rate: 16000
+  num_mel_bins: 128
+  frame_length: 25
+  frame_shift: 10
+  fbank_mean: 15.41663
+  fbank_std: 6.55582

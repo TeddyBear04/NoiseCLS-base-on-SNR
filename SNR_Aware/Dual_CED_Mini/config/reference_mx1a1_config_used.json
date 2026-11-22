@@ -1,0 +1,124 @@
+{
+  "dataset": {
+    "clip_seconds": 4.0,
+    "frcrn_root": "/datasets/frcrn",
+    "labels_file": "labels.txt",
+    "manifest_file": "manifest.csv",
+    "path": "/datasets/mix-dataset-v2",
+    "sample_rate": 16000,
+    "snr_levels_db": [
+      -5,
+      0,
+      5,
+      10,
+      15,
+      20
+    ],
+    "splits": {
+      "test": 3253,
+      "train": 30240,
+      "validation": 3064
+    }
+  },
+  "experiment": {
+    "num_classes": 36,
+    "seed": 2027,
+    "task": "single_label_noise_classification"
+  },
+  "finetuning": {
+    "accumulation_steps": 1,
+    "amp": "bf16",
+    "augment": {
+      "spec_ratio": 0.0
+    },
+    "batch_size": 64,
+    "encoder_lr": 3e-05,
+    "epochs": 15,
+    "gradient_clip_norm": 1.0,
+    "head_lr": 0.0003,
+    "input": "mixture_path",
+    "label_smoothing": 0.0,
+    "layer_decay": 1.0,
+    "lr_schedule": "warmup_cosine",
+    "mixup_alpha": 1.0,
+    "mixup_prob": 1.0,
+    "num_workers": 8,
+    "optimizer": "AdamW",
+    "patience": 5,
+    "router_lr": 0.0003,
+    "selection": "acc",
+    "swa_enabled": false,
+    "swa_top_k": 3,
+    "trainable_blocks": 12,
+    "tta_enabled": false,
+    "validation_batch_size": 64,
+    "warmup_fraction": 0.13333333333333333,
+    "weight_decay": 0.01,
+    "layer_decay_embeddings": false
+  },
+  "frontend": {
+    "f_max": 8000.0,
+    "f_min": 20.0,
+    "hop_length": 160,
+    "n_fft": 512,
+    "n_mels": 64,
+    "num_frames": 398,
+    "sample_rate": 16000,
+    "target_rms": 0.07925,
+    "win_length": 400
+  },
+  "kd": {
+    "enabled": true,
+    "fused_kd_weight": 0.5,
+    "input_rms": 0.07925,
+    "label_smoothing": 0.0,
+    "lambda_kd": 0.65,
+    "snr_transition_center_db": 7.5,
+    "snr_transition_tau_db": 3.0,
+    "specialized_kd_weight": 0.5,
+    "teacher_batch_size": 64,
+    "temperature": 2.0
+  },
+  "recipe": {
+    "default_backbone": "dual_ced_mini",
+    "id": "dual_ced_mini_ablation_ce9_s2027_mx1a1",
+    "label": "Dual-Expert CED-Mini Optimal Dual-Input (FRCRN to Low Expert + Raw Mix to High Expert)"
+  },
+  "router": {
+    "feature_dim": 6,
+    "hidden_dim": 32,
+    "mode": "soft_moe_cosine",
+    "router_loss_weight": 0.2,
+    "temperature_init": 2.0,
+    "token_dim": 256,
+    "token_proj_dim": 16,
+    "transition_center_db": 7.5,
+    "transition_tau": 3.0,
+    "type": "soft_moe_cosine"
+  },
+  "student": {
+    "arch": "ced_mini",
+    "drop_path": 0.05,
+    "dropout": 0.0,
+    "embed_dim": 256,
+    "mlp_ratio": 4.0,
+    "num_classes": 36,
+    "num_heads": 4,
+    "num_layers": 12,
+    "post_ln": false,
+    "pre_ln": true,
+    "pretrained_source": "mispeech/ced-mini",
+    "type": "dual_ced_mini",
+    "use_grep": true
+  },
+  "teacher": {
+    "beat_config": "imp/dual-expert/config/beat.yaml",
+    "checkpoint_low": "/marimo/pretrained/beat-ft/mix_frcrn_ld0p3_best_model.pt",
+    "checkpoint_high": "/marimo/pretrained/beat-ft/mix_original_ld0p8_weights.pt",
+    "waveform_key_low": "waveform_frcrn",
+    "waveform_key_high": "waveform_raw",
+    "enabled_for_training": true,
+    "type": "beats_dual_teachers",
+    "use_in_inference": false
+  }
+}

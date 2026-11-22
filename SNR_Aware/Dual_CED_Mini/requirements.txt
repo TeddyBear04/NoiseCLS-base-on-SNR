@@ -1,0 +1,9 @@
+# torch / torchvision lấy bản có sẵn của máy (lượt gốc: torch 2.11.0+cu130 trên molab RTX PRO 6000)
+# timm==1.0.30 cài riêng với --no-deps (xem run.sh)
+soundfile==0.14.0
+safetensors
+huggingface_hub
+scikit-learn
+pyyaml
+tqdm
+numpy
