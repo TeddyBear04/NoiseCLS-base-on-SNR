@@ -1,0 +1,304 @@
+{
+  "groups": {
+    "E0": [
+      "/m/0f8s22",
+      "/m/0239kh",
+      "/m/0dwtp",
+      "/m/0mbct",
+      "/m/03qtq"
+    ],
+    "E1": [
+      "/m/01bjv",
+      "/m/01m2v",
+      "/m/0fqfqc",
+      "/m/0g6b5",
+      "/m/032s66",
+      "/m/03v3yw",
+      "/m/07r4wb8",
+      "/m/0fx9l",
+      "/m/01lsmm",
+      "/m/07rn7sz",
+      "/m/07qcx4z",
+      "/m/081rb"
+    ],
+    "E2": [
+      "/m/042v_gx",
+      "/m/01wy6",
+      "/m/01s0ps",
+      "/m/0l14j_",
+      "/m/03qjg",
+      "/m/06ncr",
+      "/m/07brj",
+      "/m/07gql",
+      "/m/07y_7"
+    ],
+    "E3": [
+      "/m/028ght",
+      "/m/05tny_",
+      "/m/03q5_w",
+      "/m/01b_21",
+      "/m/02_nn",
+      "/m/025_jnm",
+      "/m/01j3sz",
+      "/m/07qrkrw",
+      "/m/07q6cd_",
+      "/m/07cx4"
+    ]
+  },
+  "mid_to_group": {
+    "/m/042v_gx": 2,
+    "/m/028ght": 3,
+    "/m/05tny_": 3,
+    "/m/03q5_w": 3,
+    "/m/01bjv": 1,
+    "/m/0f8s22": 0,
+    "/m/01wy6": 2,
+    "/m/01m2v": 1,
+    "/m/01b_21": 3,
+    "/m/0239kh": 0,
+    "/m/0fqfqc": 1,
+    "/m/01s0ps": 2,
+    "/m/02_nn": 3,
+    "/m/025_jnm": 3,
+    "/m/0g6b5": 1,
+    "/m/0l14j_": 2,
+    "/m/0dwtp": 0,
+    "/m/0mbct": 0,
+    "/m/032s66": 1,
+    "/m/03qjg": 2,
+    "/m/03qtq": 0,
+    "/m/03v3yw": 1,
+    "/m/07r4wb8": 1,
+    "/m/01j3sz": 3,
+    "/m/07qrkrw": 3,
+    "/m/0fx9l": 1,
+    "/m/06ncr": 2,
+    "/m/01lsmm": 1,
+    "/m/07rn7sz": 1,
+    "/m/07q6cd_": 3,
+    "/m/07brj": 2,
+    "/m/07qcx4z": 1,
+    "/m/07cx4": 3,
+    "/m/07gql": 2,
+    "/m/07y_7": 2,
+    "/m/081rb": 1
+  },
+  "classes": [
+    {
+      "mid": "/m/042v_gx",
+      "name": "Acoustic guitar",
+      "label_index": 0,
+      "group": 2
+    },
+    {
+      "mid": "/m/028ght",
+      "name": "Applause",
+      "label_index": 1,
+      "group": 3
+    },
+    {
+      "mid": "/m/05tny_",
+      "name": "Bark",
+      "label_index": 2,
+      "group": 3
+    },
+    {
+      "mid": "/m/03q5_w",
+      "name": "Burping, eructation",
+      "label_index": 3,
+      "group": 3
+    },
+    {
+      "mid": "/m/01bjv",
+      "name": "Bus",
+      "label_index": 4,
+      "group": 1
+    },
+    {
+      "mid": "/m/0f8s22",
+      "name": "Chime",
+      "label_index": 5,
+      "group": 0
+    },
+    {
+      "mid": "/m/01wy6",
+      "name": "Clarinet",
+      "label_index": 6,
+      "group": 2
+    },
+    {
+      "mid": "/m/01m2v",
+      "name": "Computer keyboard",
+      "label_index": 7,
+      "group": 1
+    },
+    {
+      "mid": "/m/01b_21",
+      "name": "Cough",
+      "label_index": 8,
+      "group": 3
+    },
+    {
+      "mid": "/m/0239kh",
+      "name": "Cowbell",
+      "label_index": 9,
+      "group": 0
+    },
+    {
+      "mid": "/m/0fqfqc",
+      "name": "Drawer open or close",
+      "label_index": 10,
+      "group": 1
+    },
+    {
+      "mid": "/m/01s0ps",
+      "name": "Electric piano",
+      "label_index": 11,
+      "group": 2
+    },
+    {
+      "mid": "/m/02_nn",
+      "name": "Fart",
+      "label_index": 12,
+      "group": 3
+    },
+    {
+      "mid": "/m/025_jnm",
+      "name": "Finger snapping",
+      "label_index": 13,
+      "group": 3
+    },
+    {
+      "mid": "/m/0g6b5",
+      "name": "Fireworks",
+      "label_index": 14,
+      "group": 1
+    },
+    {
+      "mid": "/m/0l14j_",
+      "name": "Flute",
+      "label_index": 15,
+      "group": 2
+    },
+    {
+      "mid": "/m/0dwtp",
+      "name": "Glockenspiel",
+      "label_index": 16,
+      "group": 0
+    },
+    {
+      "mid": "/m/0mbct",
+      "name": "Gong",
+      "label_index": 17,
+      "group": 0
+    },
+    {
+      "mid": "/m/032s66",
+      "name": "Gunshot, gunfire",
+      "label_index": 18,
+      "group": 1
+    },
+    {
+      "mid": "/m/03qjg",
+      "name": "Harmonica",
+      "label_index": 19,
+      "group": 2
+    },
+    {
+      "mid": "/m/03qtq",
+      "name": "Hi-hat",
+      "label_index": 20,
+      "group": 0
+    },
+    {
+      "mid": "/m/03v3yw",
+      "name": "Keys jangling",
+      "label_index": 21,
+      "group": 1
+    },
+    {
+      "mid": "/m/07r4wb8",
+      "name": "Knock",
+      "label_index": 22,
+      "group": 1
+    },
+    {
+      "mid": "/m/01j3sz",
+      "name": "Laughter",
+      "label_index": 23,
+      "group": 3
+    },
+    {
+      "mid": "/m/07qrkrw",
+      "name": "Meow",
+      "label_index": 24,
+      "group": 3
+    },
+    {
+      "mid": "/m/0fx9l",
+      "name": "Microwave oven",
+      "label_index": 25,
+      "group": 1
+    },
+    {
+      "mid": "/m/06ncr",
+      "name": "Saxophone",
+      "label_index": 26,
+      "group": 2
+    },
+    {
+      "mid": "/m/01lsmm",
+      "name": "Scissors",
+      "label_index": 27,
+      "group": 1
+    },
+    {
+      "mid": "/m/07rn7sz",
+      "name": "Shatter",
+      "label_index": 28,
+      "group": 1
+    },
+    {
+      "mid": "/m/07q6cd_",
+      "name": "Squeak",
+      "label_index": 29,
+      "group": 3
+    },
+    {
+      "mid": "/m/07brj",
+      "name": "Tambourine",
+      "label_index": 30,
+      "group": 2
+    },
+    {
+      "mid": "/m/07qcx4z",
+      "name": "Tearing",
+      "label_index": 31,
+      "group": 1
+    },
+    {
+      "mid": "/m/07cx4",
+      "name": "Telephone",
+      "label_index": 32,
+      "group": 3
+    },
+    {
+      "mid": "/m/07gql",
+      "name": "Trumpet",
+      "label_index": 33,
+      "group": 2
+    },
+    {
+      "mid": "/m/07y_7",
+      "name": "Violin, fiddle",
+      "label_index": 34,
+      "group": 2
+    },
+    {
+      "mid": "/m/081rb",
+      "name": "Writing",
+      "label_index": 35,
+      "group": 1
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+beats-pretrain: https://huggingface.co/lpepino/beats_ckpts/resolve/main/BEATs_iter3_plus_AS2M.pt?download=true
+frcrn-pretrain: https://huggingface.co/alibabasglab/FRCRN_SE_16K/resolve/main/last_best_checkpoint.pt
+mixture-36l: 'D:\content\mix-dataset'
+audioset-40l: 'D:\content\AudioSet'
+vlsp-100h: 'D:\content\vlsp-100h'
+kaggle-audioset: truongvp/audioset
+kaggle-mix-dataset: truongvp/36-mixture-data
+kaggle-vlsp: longhoangminh/vlsp-100h

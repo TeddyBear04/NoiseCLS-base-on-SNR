@@ -1,0 +1,52 @@
+muc,gia_tri
+experiment.name,"""ced_singlemoe_v2_overlap_ce9_mini_ablation_s2027"""
+experiment.seed,2027
+experiment.num_classes,36
+teacher.mode,"""clean5fold"""
+teacher.logits,"""/marimo/teacher/beats_teacher_logits_clean.pt"""
+teacher._note,"""logit OOF c\u1ee7a teacher BEATs 5 fold fine-tune tr\u00ean nhi\u1ec5u s\u1ea1ch, \u0111\u00f3ng g\u00f3i {train|validation: {mix_id, logits36}}; m\u1ecdi expert h\u1ecdc c\u00f9ng teacher."""
+model.freq_bins,64
+model.frames,398
+model.split_blocks,"[10, 11]"
+model.dropout,0.0
+model.load_pretrained,true
+model.experts,"[""low"", ""high""]"
+model.router_input,"""rms"""
+model._note,"""router_input: 'rms' nh\u01b0 b\u1ea3n g\u1ed1c (6 \u0111\u1eb7c tr\u01b0ng t\u00ednh tr\u00ean n_hat \u0111\u00e3 chu\u1ea9n ho\u00e1 RMS -> log-RMS l\u00e0 h\u1eb1ng s\u1ed1); 'raw' t\u00ednh tr\u00ean n_hat th\u00f4 (RMS n_hat t\u01b0\u01a1ng quan -0.83 v\u1edbi SNR, ri\u00eang n\u00f3 \u0111o\u00e1n \u0111\u00fang kho\u1ea3ng SNR 71% tr\u00ean val), log crest/kurtosis, BatchNorm tr\u01b0\u1edbc router. Nh\u00e1nh mel v\u1eabn chu\u1ea9n ho\u00e1 RMS."""
+model.patch_stride,"[16, 8]"
+model._note_patch,"""patch_stride [16, 8]: patch 16 x 16 ch\u1ed3ng 50 % theo th\u1eddi gian (4 x 48 = 192 token thay 96), thay cho TTA d\u1ecbch +-50 ms. AST (Gong et al., Interspeech 2021) d\u00f9ng b\u01b0\u1edbc 10; Xiao et al., NeurIPS 2021: stem ch\u1ed3ng l\u1ea5n gi\u00fap ViT. Pos embed CED n\u1ed9i suy theo v\u1ecb tr\u00ed i*8/16. C\u00f2n l\u1ea1i gi\u1ed1ng run 1 (train_config.json)."""
+model.specaug,"{""freq_masks"": 0, ""freq_width"": 8, ""time_masks"": 0, ""time_width"": 24}"
+model.ced_variant,"""mini"""
+model._note_variant,"""ced_variant mini: mispeech/ced-mini rev 26c3ebc (256 chieu, 4 head, 12 block; nhu MLNC ce9 ced_mini). Recipe ce9 cua ced_mini giong ced_tiny (lr 3e-5 / 3e-4, batch 64). Con lai = train_config_overlap_ce9.json."""
+routing.source,"""router"""
+routing.band_labels,"""soft"""
+routing.oracle_prob_start,0.0
+routing.oracle_prob_end,0.0
+routing._note,"""Nh\u01b0 b\u1ea3n g\u1ed1c: nh\u00e3n router m\u1ec1m, expert lu\u00f4n d\u00f9ng gate c\u1ee7a router (run 1)."""
+loss.lambda_kd,0.65
+loss.lambda_route,0.2
+loss.kd_temperature,2.0
+loss.kd_fused_weight,0.65
+loss.kd_expert_weight,0.35
+loss.label_smoothing,0.0
+loss.snr_tau,2.5
+loss.snr_edges_db,[15.0]
+loss._note,"""snr_edges_db: ng\u01b0\u1ee1ng chia kho\u1ea3ng SNR cho router/expert (nh\u00e3n m\u1ec1m, \u0111\u1ed9 d\u1ed1c snr_tau). [15] = 2 expert nh\u01b0 b\u1ea3n g\u1ed1c."""
+train.epochs,15
+train.batch_size,64
+train.num_workers,4
+train.lr_backbone,3e-05
+train.lr_experts,0.00012
+train.lr_router,0.0002
+train.weight_decay,0.01
+train.warmup_epochs,2
+train.grad_clip,1.0
+train.mixup_alpha,0.8
+train.mixup_prob,0.8
+train.amp_dtype,"""bfloat16"""
+train.lr_head,0.0003
+train._note,"""Recipe ce9 (MLNC vuong_mix_dataset_v2_20261102 imp/mix_dataset_v2/config/ce9_original_run.json, muc ced_tiny; user 2026-11-07): 15 epoch khong early stop, batch 64, AdamW wd 0.01, lr backbone 3e-5 / head 3e-4 chia theo nguon khoi tao (tham so nap tu CED-Tiny ke ca FFN chia block 10-11 -> 3e-5; head expert, router, acoustic_extractor, CLS, bias GREP -> 3e-4), warm-up 2 epoch roi cosine ve 0, khong label smoothing / mixup / SpecAugment / EMA, chon val acc (hoa giu epoch som), seed 2026. Phuong phap SplitFFN (router, expert, KD 2 teacher-loss, route loss) giu nguyen nhu config goc. Sao tu train_config_overlap.json; lr_experts/lr_router bo qua khi co lr_head."""
+train.patience,5
+train.layer_decay,1.0
+train._note_ablation,"""Ablation final-report.xlsx (user 2026-11-20): = train_config_overlap_ce9_mini.json, chi doi seed 2027 + early stop patience 5 (15 epoch, val acc). Moi luot doi MOT truc bang --set: train.layer_decay (block i lr x d^(11-i), block tren cung + embedding giu lr_backbone) hoac train.mixup_prob + train.mixup_alpha; kem --set paths.output_dir=output/ablation_s2027/<luot>."""
+commit,6c80ca1

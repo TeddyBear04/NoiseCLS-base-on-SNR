@@ -1,0 +1,21 @@
+model:
+  target: speech
+
+loss:
+  mask_bound: 2.0
+  eps: 1.0e-6
+  mask_eps: 1.0e-8
+
+train:
+  epochs: 40
+  patience: 15
+  lr: 1.0e-4
+  grad_clip: 10.0
+  batch_size: 24
+  eval_batch_size: 64
+  halve_lr_after: 3
+  segment_seconds: 2.0
+  eval_segment_seconds: 4.0
+  snr_levels: [-5, 0, 5, 10, 15, 20]
+  batch_candidates: [24, 32, 48, 64, 96, 128]   # thử tăng dần, dừng khi tràn VRAM rồi lùi về mức liền trước
+  vram_fraction: 0.9        # coi là tràn nếu bộ nhớ đỉnh vượt tỉ lệ này của VRAM
