@@ -10,6 +10,8 @@
 #   với <run> = run3c_kd_only (KD logit), run3b_crd_only (CRD), run3_kd_crd (KD + CRD)
 # Quét λ_KD (KD logit, mixture, recipe ablation seed 2027 / early stop 5): kdw<W> = ce15_rh --run run3c_kd_only
 #   --no-film --kd-weight W --seed 2027 --patience 5, W = 0.1 0.3 0.5 0.7 1.
+# Quét λ_CRD (KD logit giữ 1, mixture, cùng recipe): crdw<W> = ce15_rh --run run3_kd_crd --no-film --crd-weight W
+#   --seed 2027 --patience 5, cùng lưới W.
 # Thứ tự: smoke -> teacher -> KD logit mixture -> quét λ_KD -> KD logit n_hat -> 4 run có CRD (chậm ~320 s/epoch).
 # Chỉ chạy một phần: ONLY="kdw0p1 nhat_run3_kd_crd". Mỗi bước xong ghi $W/done/<bước>; chạy lại bỏ qua bước đã xong.
 # Cần: dataset /marimo/dataset/mix-dataset, cache n_hat /marimo/nhat_cache/frcrn_{train,validation}.npy (+ .json)
@@ -63,9 +65,11 @@ for run in run3c_kd_only run3b_crd_only run3_kd_crd; do
 done
 for w in 0.1 0.3 0.5 0.7 1; do
   JOB[kdw${w/./p}]="$MIX --run run3c_kd_only --no-film --kd-weight $w --seed 2027 --patience 5"
+  JOB[crdw${w/./p}]="$MIX --run run3_kd_crd --no-film --crd-weight $w --seed 2027 --patience 5"
 done
 ORDER="mix_run3c_kd_only kdw0p1 kdw0p3 kdw0p5 kdw0p7 kdw1 nhat_run3c_kd_only
-       mix_run3b_crd_only mix_run3_kd_crd nhat_run3b_crd_only nhat_run3_kd_crd"
+       mix_run3b_crd_only mix_run3_kd_crd nhat_run3b_crd_only nhat_run3_kd_crd
+       crdw0p1 crdw0p3 crdw0p5 crdw0p7 crdw1"
 ORDER=${ONLY:-$ORDER}
 
 step smoke_teacher $PY -u main.py teacher36 --config $W/smoke_mix.json

@@ -640,6 +640,20 @@ def apply_kd_weight(config: dict, weight: float) -> dict:
     return config
 
 
+def apply_crd_weight(config: dict, weight: float) -> dict:
+    """CRD weight b_crd (loss = r_ce CE + a_kd KD + b_crd CRD) instead of the run's 0.8,
+    into `<outputs.dir>_crdw<weight>`; only for runs that already use CRD."""
+    if config["loss"]["b_crd"] <= 0:
+        raise SystemExit(f"--crd-weight needs a run with CRD, not {config['run']}")
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs["dir"] = f"{outputs['dir']}_crdw{_tag(weight)}"
+    config["loss"]["b_crd"] = weight
+    print(f"b_crd={weight} outputs={outputs['dir']} teacher_from={outputs['teacher_dir']}",
+          flush=True)
+    return config
+
+
 def apply_full_test(config: dict) -> dict:
     """Score already-trained students on EVERY SNR level, not only the band.
 
@@ -755,12 +769,15 @@ def main() -> None:
                              "(student36 and test36 alike).")
     parser.add_argument("--kd-weight", type=float,
                         help="Logit-KD weight a_kd of a KD run, into <outputs.dir>_kdw<w>.")
+    parser.add_argument("--crd-weight", type=float,
+                        help="CRD weight b_crd of a CRD run, into <outputs.dir>_crdw<w>.")
     arguments = parser.parse_args()
     if arguments.stage == "teacher36" and (arguments.teacher_dir or arguments.crd_n_data
                                            or arguments.sam or arguments.ban_dir
                                            or arguments.layer_decay is not None
                                            or arguments.mixup or arguments.no_film
-                                           or arguments.kd_weight is not None):
+                                           or arguments.kd_weight is not None
+                                           or arguments.crd_weight is not None):
         parser.error("--teacher-dir / --crd-n-data / --sam / --ban-dir change the student only.")
     if arguments.patience is not None and arguments.stage == "teacher36":
         parser.error("--patience changes the student only; the teacher keeps its own.")
@@ -797,6 +814,8 @@ def main() -> None:
         config = apply_no_film(config)
     if arguments.kd_weight is not None:
         config = apply_kd_weight(config, arguments.kd_weight)
+    if arguments.crd_weight is not None:
+        config = apply_crd_weight(config, arguments.crd_weight)
     if arguments.epochs is not None:  # --full-test and --seed build on its folder
         config = apply_epochs(config, arguments.epochs)
     if arguments.patience is not None:
