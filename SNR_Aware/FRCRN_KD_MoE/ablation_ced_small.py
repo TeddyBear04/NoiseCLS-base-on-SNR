@@ -85,7 +85,7 @@ def build(name: str, out: Path, no_gate: bool) -> dict:
         spec[section][field] = value
         if field in ("crd_weight", "crd_level", "crd_n_data"):  # mục relationkd của JSON ghi đè yaml (relation_settings)
             config.setdefault("relationkd", {})[field] = value
-        elif section == "loss":  # JSON loss ghi đè yaml (online_pipeline.loss_config)
+        elif section == "loss" and field != "crd_proj_dim":  # JSON loss ghi đè yaml (loss_config); crd_proj_dim chỉ ở yaml
             config.setdefault("loss", {})[field] = value
     if name in PATCH_CRD:  # CRD patch đọc token teacher theo lưới, không dùng embedding gộp
         config["paths"].pop("teacher_pooled", None)
