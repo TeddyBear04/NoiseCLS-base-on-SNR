@@ -1,6 +1,13 @@
-"""Ablation layer decay / mixup cho BEATs-CED-Small (final-report.xlsx, user 2026-11-20).
+"""Ablation layer decay / mixup / hệ số KD + chạy lại bảng thành phần cho BEATs-CED-Small (user 2026-11-20, 2026-11-24).
 
-    python -u ablation_ced_small.py <variant> [--smoke]   # base | ld0p3 | ld0p7 | ld0p82 | ld0p92 | mx<P>a<ALPHA> (vd. mx0p4a0p1, mx1a1)
+    python -u ablation_ced_small.py <variant> [--smoke] [--no-gate] [--eval-only]
+      base | ld0p3 | ld0p7 | ld0p82 | ld0p92 | mx<P>a<ALPHA> (vd. mx0p4a0p1, mx1a1) | kd<W> (vd. kd0p1, kd1)
+      c1_ce | c2_logit | c3_mgd | c4_crd | c5_logit_mgd | c6_logit_crd
+
+--no-gate (user 2026-11-24): model.use_gate false - bỏ MaskGate, NoiseHead đọc token thường; ghi vào thư mục *_nogate riêng.
+kd<W>: loss.kd_weight = W (ghi vào cả yaml lẫn JSON, vì JSON loss ghi đè yaml), giữ CE 1, T 4, CRD 0.8; recipe ablation.
+c1..c6: chạy lại nguyên 6 config train_ced_small_ce9sa_<k>.json (seed 2026, 15 epoch, không early stop), không theo recipe
+ablation; dùng với --no-gate -> output/components_ce9sa_nogate/ced_small/<variant>/.
 
 Gốc = biến thể user chọn cho bài (KD logit + CRD, recipe ce9 + SpecAugment):
 config/unified/train_ced_small_ce9sa_6_logit_crd.json + kdmoe_ced_small_meanpool_ce9sa_crd.yaml, chỉ đổi seed 2027 và early
@@ -28,34 +35,51 @@ BASE_JSON = HERE / "config/unified/train_ced_small_ce9sa_6_logit_crd.json"
 BASE_YAML = HERE / "config/unified/kdmoe_ced_small_meanpool_ce9sa_crd.yaml"
 SEED, PATIENCE = 2027, 5
 DATASET = "/marimo/dataset/mix-dataset"
-OUT_ROOT = HERE / "output/ablation_s2027/ced_small"
+COMPONENTS = {name: HERE / f"config/unified/train_ced_small_ce9sa_{name[1:]}.json"
+              for name in ("c1_ce", "c2_logit", "c3_mgd", "c4_crd", "c5_logit_mgd", "c6_logit_crd")}
+
+
+def out_root(name: str, no_gate: bool) -> Path:
+    root = "components_ce9sa" if name in COMPONENTS else "ablation_s2027"
+    return HERE / "output" / (root + ("_nogate" if no_gate else "")) / "ced_small"
 
 
 def overrides(name: str) -> dict:
-    if name == "base":
+    if name == "base" or name in COMPONENTS:
         return {}
     if name.startswith("ld"):
         return {"student.layer_decay": float(name[2:].replace("p", "."))}
     if name.startswith("mx"):
         p, a = name[2:].split("a")
         return {"train.mixup_prob": float(p.replace("p", ".")), "train.mixup_alpha": float(a.replace("p", "."))}
+    if name.startswith("kd"):
+        return {"loss.kd_weight": float(name[2:].replace("p", "."))}
     raise ValueError(name)
 
 
-def build(name: str, out: Path) -> dict:
-    spec = yaml.safe_load(BASE_YAML.read_text(encoding="utf-8"))
-    spec["train"].update({"patience": PATIENCE, "seed": SEED, "epochs": 15, "mixup_prob": 0.0, "mixup_alpha": 0.0})
-    spec["student"]["layer_decay"] = 1.0
+def build(name: str, out: Path, no_gate: bool) -> dict:
+    component = name in COMPONENTS
+    base_json = COMPONENTS.get(name, BASE_JSON)
+    config = json.loads(base_json.read_text(encoding="utf-8"))
+    base_yaml = HERE / config["paths"]["student_config"] if component else BASE_YAML
+    spec = yaml.safe_load(base_yaml.read_text(encoding="utf-8"))
+    if not component:  # recipe ablation: seed 2027, early stop 5, mỗi lượt một trục
+        spec["train"].update({"patience": PATIENCE, "seed": SEED, "epochs": 15, "mixup_prob": 0.0, "mixup_alpha": 0.0})
+        spec["student"]["layer_decay"] = 1.0
+        config["runtime"]["seed"] = SEED
+    if no_gate:
+        spec["model"]["use_gate"] = False
     for key, value in overrides(name).items():
         section, field = key.split(".")
         spec[section][field] = value
+        if section == "loss":  # JSON loss ghi đè yaml (online_pipeline.loss_config)
+            config.setdefault("loss", {})[field] = value
     yaml_path = out / "kdmoe.yaml"
     yaml_path.write_text(yaml.safe_dump(spec, sort_keys=False, allow_unicode=True), encoding="utf-8")
-    config = json.loads(BASE_JSON.read_text(encoding="utf-8"))
     config["paths"].update({"student_config": str(yaml_path), "output": str(out / "train"), "dataset": DATASET})
-    config["runtime"]["seed"] = SEED
-    config["_ablation"] = {"variant": name, "overrides": overrides(name), "base_json": BASE_JSON.name,
-                           "base_yaml": BASE_YAML.name, "seed": SEED, "patience": PATIENCE}
+    config["_ablation"] = {"variant": name, "overrides": overrides(name), "base_json": base_json.name,
+                           "base_yaml": base_yaml.name, "seed": config["runtime"]["seed"],
+                           "patience": spec["train"]["patience"], "use_gate": spec["model"]["use_gate"]}
     (out / "config.json").write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
     return config
 
@@ -95,8 +119,10 @@ def main() -> None:
     name = sys.argv[1]
     smoke = "--smoke" in sys.argv
     eval_only = "--eval-only" in sys.argv
+    no_gate = "--no-gate" in sys.argv
+    overrides(name)  # tên lượt sai -> ValueError trước khi tạo thư mục
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-    out = OUT_ROOT / (name + ("_smoke" if smoke else ""))
+    out = out_root(name, no_gate) / (name + ("_smoke" if smoke else ""))
     if (out / "DONE").is_file():
         print("already done", out, flush=True)
         return
@@ -108,7 +134,7 @@ def main() -> None:
     if eval_only or trained:
         print("skip training:", "eval-only" if eval_only else "already trained", flush=True)
     else:
-        config = build(name, out)
+        config = build(name, out, no_gate)
         print("VARIANT", name, json.dumps(overrides(name)), "->", out, flush=True)
         train(config, smoke=smoke)
     if smoke:
