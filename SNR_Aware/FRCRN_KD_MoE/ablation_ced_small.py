@@ -1,11 +1,12 @@
 """Ablation layer decay / mixup / hệ số KD + chạy lại bảng thành phần cho BEATs-CED-Small (user 2026-11-20, 2026-11-24).
 
     python -u ablation_ced_small.py <variant> [--smoke] [--no-gate] [--eval-only]
-      base | ld0p3 | ld0p7 | ld0p82 | ld0p92 | mx<P>a<ALPHA> (vd. mx0p4a0p1, mx1a1) | kd<W> (vd. kd0p1, kd1)
+      base | ld0p3 | ld0p7 | ld0p82 | ld0p92 | mx<P>a<ALPHA> (vd. mx0p4a0p1, mx1a1) | kd<W> (vd. kd0p1, kd1) | crd<W>
       c1_ce | c2_logit | c3_mgd | c4_crd | c5_logit_mgd | c6_logit_crd
 
 --no-gate (user 2026-11-24): model.use_gate false - bỏ MaskGate, NoiseHead đọc token thường; ghi vào thư mục *_nogate riêng.
 kd<W>: loss.kd_weight = W (ghi vào cả yaml lẫn JSON, vì JSON loss ghi đè yaml), giữ CE 1, T 4, CRD 0.8; recipe ablation.
+crd<W>: loss.crd_weight = W (yaml loss + JSON relationkd, vì relationkd của JSON ghi đè yaml), giữ CE 1, KD logit 1, T 4.
 c1..c6: chạy lại nguyên 6 config train_ced_small_ce9sa_<k>.json (seed 2026, 15 epoch, không early stop), không theo recipe
 ablation; dùng với --no-gate -> output/components_ce9sa_nogate/ced_small/<variant>/.
 
@@ -52,6 +53,8 @@ def overrides(name: str) -> dict:
     if name.startswith("mx"):
         p, a = name[2:].split("a")
         return {"train.mixup_prob": float(p.replace("p", ".")), "train.mixup_alpha": float(a.replace("p", "."))}
+    if name.startswith("crd"):
+        return {"loss.crd_weight": float(name[3:].replace("p", "."))}
     if name.startswith("kd"):
         return {"loss.kd_weight": float(name[2:].replace("p", "."))}
     raise ValueError(name)
@@ -72,7 +75,9 @@ def build(name: str, out: Path, no_gate: bool) -> dict:
     for key, value in overrides(name).items():
         section, field = key.split(".")
         spec[section][field] = value
-        if section == "loss":  # JSON loss ghi đè yaml (online_pipeline.loss_config)
+        if field == "crd_weight":  # mục relationkd của JSON ghi đè yaml (relationkd.relation_settings)
+            config.setdefault("relationkd", {})[field] = value
+        elif section == "loss":  # JSON loss ghi đè yaml (online_pipeline.loss_config)
             config.setdefault("loss", {})[field] = value
     yaml_path = out / "kdmoe.yaml"
     yaml_path.write_text(yaml.safe_dump(spec, sort_keys=False, allow_unicode=True), encoding="utf-8")
