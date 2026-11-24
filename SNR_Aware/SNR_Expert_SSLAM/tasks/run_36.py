@@ -613,6 +613,33 @@ def apply_mixup(config: dict, spec: str) -> dict:
     return config
 
 
+def apply_no_film(config: dict) -> dict:
+    """Student without the SNR FiLM on the pooled embedding, into `<outputs.dir>_nofilm`;
+    the teacher (never FiLM) is still read from the base folder. Pass it to test36 too,
+    so the scored model is built the same way."""
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs["dir"] = f"{outputs['dir']}_nofilm"
+    config["student"]["film"]["enabled"] = False
+    print(f"film=False outputs={outputs['dir']} teacher_from={outputs['teacher_dir']}",
+          flush=True)
+    return config
+
+
+def apply_kd_weight(config: dict, weight: float) -> dict:
+    """Logit-KD weight a_kd (loss = r_ce CE + a_kd KD + b_crd CRD) instead of the run's 1.0,
+    into `<outputs.dir>_kdw<weight>`; only for runs that already use logit KD."""
+    if config["loss"]["a_kd"] <= 0:
+        raise SystemExit(f"--kd-weight needs a run with logit KD, not {config['run']}")
+    outputs = config["outputs"]
+    outputs.setdefault("teacher_dir", outputs["dir"])
+    outputs["dir"] = f"{outputs['dir']}_kdw{_tag(weight)}"
+    config["loss"]["a_kd"] = weight
+    print(f"a_kd={weight} outputs={outputs['dir']} teacher_from={outputs['teacher_dir']}",
+          flush=True)
+    return config
+
+
 def apply_full_test(config: dict) -> dict:
     """Score already-trained students on EVERY SNR level, not only the band.
 
@@ -723,11 +750,17 @@ def main() -> None:
     parser.add_argument("--mixup", metavar="P,ALPHA",
                         help="Student mixup probability and Beta alpha, into "
                              "<outputs.dir>_mx<P>a<ALPHA>.")
+    parser.add_argument("--no-film", action="store_true",
+                        help="Student without the SNR FiLM, into <outputs.dir>_nofilm "
+                             "(student36 and test36 alike).")
+    parser.add_argument("--kd-weight", type=float,
+                        help="Logit-KD weight a_kd of a KD run, into <outputs.dir>_kdw<w>.")
     arguments = parser.parse_args()
     if arguments.stage == "teacher36" and (arguments.teacher_dir or arguments.crd_n_data
                                            or arguments.sam or arguments.ban_dir
                                            or arguments.layer_decay is not None
-                                           or arguments.mixup):
+                                           or arguments.mixup or arguments.no_film
+                                           or arguments.kd_weight is not None):
         parser.error("--teacher-dir / --crd-n-data / --sam / --ban-dir change the student only.")
     if arguments.patience is not None and arguments.stage == "teacher36":
         parser.error("--patience changes the student only; the teacher keeps its own.")
@@ -760,6 +793,10 @@ def main() -> None:
         config = apply_layer_decay(config, arguments.layer_decay)
     if arguments.mixup:
         config = apply_mixup(config, arguments.mixup)
+    if arguments.no_film:
+        config = apply_no_film(config)
+    if arguments.kd_weight is not None:
+        config = apply_kd_weight(config, arguments.kd_weight)
     if arguments.epochs is not None:  # --full-test and --seed build on its folder
         config = apply_epochs(config, arguments.epochs)
     if arguments.patience is not None:
