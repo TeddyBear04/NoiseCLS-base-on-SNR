@@ -350,7 +350,7 @@ Smoke test lần đầu dừng ở `teacher36` vì
 `ValueError: some parameters appear in more than one parameter group` — BEATs dùng chung
 bias vị trí tương đối giữa các tầng. Đã sửa (`cbc0269`), **chưa chạy lại**.
 
-Lệnh (từ `SNR_Aware/SNR_Expert_SSLAM`, sau `git pull`), chạy smoke trước:
+Lệnh (từ `SNR_Aware/BEATs-BEATs`, sau `git pull`), chạy smoke trước:
 
 ```bash
 python -u main.py teacher36 --config config/train_config_high_beats.json
