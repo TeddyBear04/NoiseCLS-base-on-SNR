@@ -6,15 +6,15 @@ import json
 import torch
 from torch import nn
 
-from SNR_Aware.FRCRN_KD_MoE.online_pipeline import (
+from SNR_Aware.BEATs_CED_Small.online_pipeline import (
     HERE,
     load_config,
     loss_config,
     validate_config,
 )
-from SNR_Aware.FRCRN_KD_MoE.src.train.kdmoe_trainer import KDMoETrainer
-from SNR_Aware.FRCRN_KD_MoE.src.utils.checkpoint import save_checkpoint
-from SNR_Aware.FRCRN_KD_MoE.src.utils.ema import EMA
+from SNR_Aware.BEATs_CED_Small.src.train.kdmoe_trainer import KDMoETrainer
+from SNR_Aware.BEATs_CED_Small.src.utils.checkpoint import save_checkpoint
+from SNR_Aware.BEATs_CED_Small.src.utils.ema import EMA
 
 OTHER_FOLDERS = ("MLNC", "SNR_Expert_SSLAM", "BEATs_Experts", "Mid_Expert", "noise_pipeline")
 
@@ -125,7 +125,7 @@ def test_ce9_recipe_yaml():
     """Recipe ce9 (MLNC vuong_mix_dataset_v2 ce9_original_run.json, ced_tiny) áp vào KD-MoE CED-Tiny."""
     import yaml
 
-    from SNR_Aware.FRCRN_KD_MoE.src.train.config import KDMoETrainConfig
+    from SNR_Aware.BEATs_CED_Small.src.train.config import KDMoETrainConfig
 
     train = KDMoETrainConfig.from_yaml(CE9_YAML)
     assert (train.lr, train.weight_decay, train.epochs, train.stage1_epochs) == (3e-5, 0.01, 15, 0)
@@ -139,7 +139,7 @@ def test_ce9_recipe_yaml():
 
 
 def test_ced_head_lr_scale_applies_to_new_modules_only():
-    from SNR_Aware.FRCRN_KD_MoE.ced import CEDKDMoE
+    from SNR_Aware.BEATs_CED_Small.ced import CEDKDMoE
 
     model = object.__new__(CEDKDMoE)
     model._student = {"layer_decay": 1.0, "head_lr_scale": 10.0}
