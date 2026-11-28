@@ -58,25 +58,35 @@ def band_rows(rows: list, config: dict) -> list:
 
 
 def validation_rows_of(corpus: Corpus, config: dict, split: str) -> list:
-    """Rows of `split`, minus the leaked clips when that split is the validation one.
+    """Rows of `split`, minus the leaked clips when that split is filtered.
 
     `dataset.validation_exclude_noise_ytids` names a file of noise_ytid values that
     sit in AudioSet's labelled train set. BEATs (AS2M fine-tuned) has already seen
     those clips with their labels, so they would flatter every backbone pretrained
     on AudioSet; dropping them leaves the 3,064 unseen validation clips (of 6,480).
+    `dataset.test_exclude_noise_ytids` does the same for the test split (3,253 of
+    6,480 clips kept), so test is scored on the same kind of clips as validation.
+    Configs without that key keep the whole test split, as before.
     """
     rows = corpus.by_split[split]
-    path = config["dataset"].get("validation_exclude_noise_ytids")
-    if not path or split != config["dataset"]["validation_split"]:
+    dataset = config["dataset"]
+    if split == dataset["validation_split"]:
+        path, expected, name = (dataset.get("validation_exclude_noise_ytids"),
+                                dataset.get("validation_expected_count"), "validation")
+    elif split == dataset.get("test_split", "test"):
+        path, expected, name = (dataset.get("test_exclude_noise_ytids"),
+                                dataset.get("test_expected_count"), "test")
+    else:
+        return rows
+    if not path:
         return rows
     leaked = {line.strip() for line in (HERE / path).read_text(encoding="utf-8").splitlines()
               if line.strip() and not line.startswith("#")}
     kept = [row for row in rows if row["noise_ytid"] not in leaked]
-    print(f"validation: {len(kept)} of {len(rows)} clips kept "
+    print(f"{name}: {len(kept)} of {len(rows)} clips kept "
           f"({len(rows) - len(kept)} with a noise_ytid in AudioSet train dropped)", flush=True)
-    expected = config["dataset"].get("validation_expected_count")
     if expected and len(kept) != expected and not config["runtime"]["smoke_test"]:
-        raise ValueError(f"validation has {len(kept)} clips after the filter, expected {expected}")
+        raise ValueError(f"{name} has {len(kept)} clips after the filter, expected {expected}")
     return kept
 
 

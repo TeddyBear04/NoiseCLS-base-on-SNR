@@ -1,6 +1,17 @@
 #!/bin/bash
 # 6 run BEATs (CE, attention, KD logit, CRD, KD+CRD, attention+KD+CRD) + teacher theo một recipe,
-# chấm trên validation sạch 3.064 clip (config: dataset.validation_exclude_noise_ytids), rồi report36.
+# chấm trên validation sạch 3.064 clip (config: dataset.validation_exclude_noise_ytids) và trên test
+# (config ce15_rh*: test sạch 3.253 clip, dataset.test_exclude_noise_ytids), rồi report36 cho từng tập.
+# Kết quả: validation -> <outputs.dir>_validation/, test -> <outputs.dir>/ (student_<run>_test.json,
+# _predictions.npz; report36 ghi CSV vào results/ của từng thư mục).
+#
+# Bảng thành phần trong bài (4 run x 2 đầu vào, user 2026-11-28 cần thêm số test):
+#   CFG=config/train_config_beats_ce15_rh.json       ROLE=paper bash run_beats_recipe.sh   # raw mixture
+#   CFG=config/train_config_beats_ce15_rh_frcrn.json ROLE=paper bash run_beats_recipe.sh   # FRCRN residual
+#   (paper = teacher -> baseline CE -> KD logit -> CRD -> KD + CRD -> report val + test, một máy;
+#   chia hai máy thì a4 + b4 rồi ROLE=report). Bản FRCRN cần cache n_hat
+#   đủ 3 split train/validation/test trong student.nhat_dir - dựng bằng scripts/frcrn_cache.py của
+#   BEATs_CED_Small (nhánh BEATs-CED-Small); script dừng ngay nếu thiếu.
 #
 #   CFG=config/train_config_beats_review3.json ROLE=all bash run_beats_recipe.sh     # cả 6 run trên một máy
 #   CFG=config/train_config_beats_ce15.json    ROLE=all bash run_beats_recipe.sh
@@ -14,7 +25,7 @@
 #   Máy b chờ file <outputs.dir>/teacher_noise_best.pt.ok: chép teacher_noise_best.pt từ máy a sang
 #   cùng đường dẫn rồi ghi sha256 vào file .ok - để bốn run KD/CRD dùng CHUNG một teacher.
 #   Báo cáo chung: gom student_*_{predictions.npz,test.json,history.json,params.json} của
-#   <outputs.dir>_validation hai máy về một chỗ, chạy lại bước report (ROLE=report).
+#   <outputs.dir>_validation và <outputs.dir> hai máy về một chỗ, chạy lại bước report (ROLE=report).
 #
 # Biến môi trường: PY (mặc định /tmp/uv-venv/bin/python nếu có, không thì python),
 # DATASET (mặc định giữ dataset.path của config), W (thư mục log, mặc định output/<tên config>).
@@ -22,7 +33,7 @@
 set -u
 cd "$(dirname "$0")" || exit 1
 CFG=${CFG:?CFG=config/train_config_beats_<recipe>.json}
-ROLE=${ROLE:?ROLE=all|a|b|report}
+ROLE=${ROLE:?ROLE=all|paper|a|b|a4|b4|a3|b3|report}
 if [ -z "${PY:-}" ]; then [ -x /tmp/uv-venv/bin/python ] && PY=/tmp/uv-venv/bin/python || PY=python; fi
 NAME=$(basename "$CFG" .json)
 W=${W:-output/$NAME}; mkdir -p "$W/logs" "$W/done"
@@ -57,27 +68,43 @@ c["outputs"]["dir"] += "_smoke"
 json.dump(c, open(smoke, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
 PYEOF
 OUT=$($PY -c "import json,sys;print(json.load(open(sys.argv[1]))['outputs']['dir'])" "$RUN_CFG")
+# Student nghe n_hat: cache phải có cả split test, không thì bước test của run đầu tiên mới vỡ (sau hàng giờ train).
+NHAT=$($PY -c "import json,sys;s=json.load(open(sys.argv[1]))['student'];print(s.get('nhat_dir','') if s.get('input')=='nhat' else '')" "$RUN_CFG")
+if [ -n "$NHAT" ]; then
+  for split in train validation test; do
+    [ -f "$NHAT/frcrn_$split.npy" ] && [ -f "$NHAT/frcrn_$split.json" ] || {
+      log "THIẾU cache n_hat $NHAT/frcrn_$split.{npy,json} - dựng bằng scripts/frcrn_cache.py của BEATs_CED_Small"; exit 1; }
+  done
+fi
 
-train_eval() {  # train_eval <run>: train rồi chấm trên validation (đã lọc)
+train_eval() {  # train_eval <run>: train rồi chấm trên validation và test (đều đã lọc)
   step ${1}_train $PY -u main.py student36 --config $RUN_CFG --run $1
   step ${1}_val   $PY -u main.py test36    --config $RUN_CFG --run $1 --eval-split validation
+  step ${1}_test  $PY -u main.py test36    --config $RUN_CFG --run $1
+}
+smoke_eval() {  # smoke_eval <tiền tố> <run>: chấm bản smoke trên cả hai tập
+  step ${1}_val  $PY -u main.py test36 --config $SM --run $2 --eval-split validation
+  step ${1}_test $PY -u main.py test36 --config $SM --run $2
 }
 teacher_part() {
   step smoke_teacher $PY -u main.py teacher36 --config $SM
   step smoke_student $PY -u main.py student36 --config $SM --run run8_attn_kd_crd
-  step smoke_val     $PY -u main.py test36    --config $SM --run run8_attn_kd_crd --eval-split validation
+  smoke_eval smoke run8_attn_kd_crd
   log SMOKE_OK
   step teacher $PY -u main.py teacher36 --config $RUN_CFG
   log TEACHER_DONE
 }
 ce_part() {
   step smoke_ce_student $PY -u main.py student36 --config $SM --run run7_attn
-  step smoke_ce_val     $PY -u main.py test36    --config $SM --run run7_attn --eval-split validation
+  smoke_eval smoke_ce run7_attn
   log SMOKE_CE_OK
   train_eval run1_baseline
   train_eval run7_attn
 }
-report() { step report_val $PY -u main.py report36 --config $RUN_CFG --eval-split validation; }
+report() {
+  step report_val  $PY -u main.py report36 --config $RUN_CFG --eval-split validation
+  step report_test $PY -u main.py report36 --config $RUN_CFG
+}
 
 case $ROLE in
   all)
@@ -104,20 +131,27 @@ case $ROLE in
     for run in run3c_kd_only run3_kd_crd; do train_eval $run; done ;;
   b3)  # máy b = baseline CE -> (chờ teacher của máy a) -> CRD
     step smoke_ce_student $PY -u main.py student36 --config $SM --run run1_baseline
-    step smoke_ce_val     $PY -u main.py test36    --config $SM --run run1_baseline --eval-split validation
+    smoke_eval smoke_ce run1_baseline
     log SMOKE_CE_OK
     train_eval run1_baseline
     T=$OUT/teacher_noise_best.pt
     until [ -f $T.ok ]; do sleep 60; done
     log "teacher có mặt: $(cat $T.ok)"
     train_eval run3b_crd_only ;;
+  paper)  # 4 run của bảng thành phần trong bài trên một máy, chung một teacher, rồi report val + test
+    teacher_part
+    step smoke_ce_student $PY -u main.py student36 --config $SM --run run1_baseline
+    smoke_eval smoke_ce run1_baseline
+    log SMOKE_CE_OK
+    for run in run1_baseline run3c_kd_only run3b_crd_only run3_kd_crd; do train_eval $run; done
+    report ;;
   b4)  # baseline CE (không cần teacher)
     step smoke_ce_student $PY -u main.py student36 --config $SM --run run1_baseline
-    step smoke_ce_val     $PY -u main.py test36    --config $SM --run run1_baseline --eval-split validation
+    smoke_eval smoke_ce run1_baseline
     log SMOKE_CE_OK
     train_eval run1_baseline ;;
   report)
-    rm -f "$W/done/report_val"; report ;;
-  *) echo "ROLE phải là all|a|b|a4|b4|a3|b3|report"; exit 1 ;;
+    rm -f "$W/done/report_val" "$W/done/report_test"; report ;;
+  *) echo "ROLE phải là all|paper|a|b|a4|b4|a3|b3|report"; exit 1 ;;
 esac
 log "ROLE_DONE $ROLE"

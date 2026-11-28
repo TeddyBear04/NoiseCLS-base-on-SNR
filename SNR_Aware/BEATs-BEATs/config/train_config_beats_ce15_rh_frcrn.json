@@ -16,6 +16,9 @@
     "test_split": "test",
     "validation_exclude_noise_ytids": "config/audioset_train_noise_ytids.txt",
     "validation_expected_count": 3064,
+    "test_exclude_noise_ytids": "config/audioset_train_noise_ytids.txt",
+    "test_expected_count": 3253,
+    "_test_note": "Test = the 3,253 of 6,480 test clips whose noise_ytid is NOT in AudioSet's labelled train set (same filter as validation). Scored once, after training; never used to select.",
     "_validation_note": "Validation = the 3,064 of 6,480 clips whose noise_ytid is NOT in AudioSet's labelled train set (the same 'clean' subset as FRCRN_KD_MoE and mix-dataset-v2 'eval'). Train is all 30,240 clips; test is never used to select."
   },
   "backbone": {
