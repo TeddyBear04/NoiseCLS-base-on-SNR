@@ -19,6 +19,10 @@ stop patience 5 (15 epoch, chọn val acc). Mỗi lượt đổi MỘT trục: s
 cùng + embedding giữ lr) hoặc train.mixup_prob / mixup_alpha (KDMoETrainer._mixup). Cặp yaml/JSON của lượt được sinh vào
 output/ablation_s2027/ced_small/<variant>/; chấm trọng số best_raw (stage2/best.pt) trên validation sạch 3.064 clip
 (noise_ytid ngoài AudioSet train), ghi result.json + val_predictions.npz.
+
+Test (user 2026-11-28): cùng trọng số best_raw chấm thêm trên test sạch 3.253 clip (cùng bộ lọc AudioSet train), ghi vào
+result.json["test"] + test_predictions.npz; test không tham gia chọn epoch. Lượt đã xong (DONE) mà result.json chưa có
+"test" thì chạy lại chỉ bước chấm (không train lại); --eval-only cũng chỉ chấm.
 """
 from __future__ import annotations
 
@@ -101,34 +105,82 @@ def build(name: str, out: Path, no_gate: bool) -> dict:
 
 
 def run_dir(out: Path) -> Path:
-    """online_pipeline.train ghi vào <paths.output>/train/stage2 -> tìm stage2 ở cả hai mức."""
-    for d in (out / "train" / "train", out / "train"):
+    """online_pipeline.train ghi vào <paths.output>/train/stage2 (smoke: .../smoke/stage2) -> tìm stage2 ở các mức."""
+    for d in (out / "train" / "train", out / "train", out / "train" / "smoke"):
         if (d / "stage2" / "best.pt").is_file():
             return d
     return out / "train" / "train"
 
 
+EXPECTED_CLEAN = {"validation": 3064, "test": 3253}
+
+
+def ensure_test_cache(device) -> None:
+    """Cache n_hat của split test (lượt train trước 2026-11-28 chỉ dựng train + validation)."""
+    from evaluate import CONFIG, load_frcrn
+    from scripts.frcrn_cache import FRCRN_CACHE_DIR, build_frcrn_cache, build_frcrn_snr
+
+    if (FRCRN_CACHE_DIR / "frcrn_test.json").is_file() and (FRCRN_CACHE_DIR / "frcrn_test.snr.npy").is_file():
+        return
+    log = logging.getLogger("ablation")
+    separator = load_frcrn(CONFIG / "frcrn.yaml", HERE / "model" / "frcrn_best.pt", device)
+    build_frcrn_cache(separator, device, log, splits=("test",))
+    build_frcrn_snr(log, splits=("test",))
+    del separator
+
+
+def evaluate_split(model, split: str, out: Path, device) -> dict:
+    from evaluate import SNRS, metrics, predict
+
+    p = predict(model, split, "fp32_cache", None, device)
+    clean = ~p["leaked"]
+    if int(clean.sum()) != EXPECTED_CLEAN[split]:
+        raise ValueError(f"{split}: {int(clean.sum())} clean clips, expected {EXPECTED_CLEAN[split]}")
+    np.savez_compressed(out / f"{'val' if split == 'validation' else split}_predictions.npz",
+                        prob=p["prob"][clean], label=p["label"][clean], snr=p["snr"][clean], sample_id=p["id"][clean])
+    return {"subset": f"{split} clean ({EXPECTED_CLEAN[split]})", "weights": "best_raw",
+            "overall": metrics(p, clean),
+            "by_snr": {str(s): metrics(p, clean & (p["snr"] == s)) for s in SNRS}}
+
+
 def evaluate_best(out: Path) -> dict:
+    """Validation ở mức gốc (overall/by_snr, như các lượt cũ) + test trong result["test"]; cùng trọng số best_raw."""
     import torch
 
     os.environ["MLNC_MIXTURE_36L"] = DATASET
-    from evaluate import SNRS, build_model, metrics, predict, weight_sets
+    from evaluate import build_model, weight_sets
 
     device = torch.device("cuda")
+    ensure_test_cache(device)
     model = build_model(out / "kdmoe.yaml").to(device)
     model.load_state_dict(weight_sets(run_dir(out))["best_raw"])
     model.eval()
-    p = predict(model, "validation", "fp32_cache", None, device)
-    clean = ~p["leaked"]
-    result = {"subset": "validation clean (3064)", "weights": "best_raw",
-              "overall": metrics(p, clean),
-              "by_snr": {str(s): metrics(p, clean & (p["snr"] == s)) for s in SNRS}}
-    np.savez_compressed(out / "val_predictions.npz", prob=p["prob"][clean], label=p["label"][clean],
-                        snr=p["snr"][clean], sample_id=p["id"][clean])
+    result = evaluate_split(model, "validation", out, device)
+    result["test"] = evaluate_split(model, "test", out, device)
     stage2 = run_dir(out) / "stage2" / "result.json"
     if stage2.is_file():
         result["train_result"] = json.loads(stage2.read_text(encoding="utf-8"))
     return result
+
+
+def smoke_test(out: Path) -> None:
+    """Smoke: dựng cache test đầy đủ + chấm trọng số smoke trên test, để bước test của lượt thật không vỡ sau 15 epoch."""
+    import torch
+
+    from evaluate import build_model, weight_sets
+
+    device = torch.device("cuda")
+    ensure_test_cache(device)
+    model = build_model(out / "kdmoe.yaml").to(device)
+    model.load_state_dict(weight_sets(run_dir(out))["best_raw"])
+    model.eval()
+    o = evaluate_split(model, "test", out, device)["overall"]
+    print(f"smoke test n={o['n']} acc={o['accuracy']:.4f}", flush=True)
+
+
+def has_test(out: Path) -> bool:
+    path = out / "result.json"
+    return path.is_file() and "test" in json.loads(path.read_text(encoding="utf-8"))
 
 
 def main() -> None:
@@ -139,7 +191,7 @@ def main() -> None:
     overrides(name)  # tên lượt sai -> ValueError trước khi tạo thư mục
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
     out = out_root(name, no_gate) / (name + ("_smoke" if smoke else ""))
-    if (out / "DONE").is_file():
+    if (out / "DONE").is_file() and (smoke or has_test(out)):
         print("already done", out, flush=True)
         return
     out.mkdir(parents=True, exist_ok=True)
@@ -155,12 +207,15 @@ def main() -> None:
         train(config, smoke=smoke)
     if smoke:
         print("SMOKE_TRAIN_OK", flush=True)
+        smoke_test(out)
+        print("SMOKE_TEST_OK", flush=True)
         return
     result = evaluate_best(out)
     (out / "result.json").write_text(json.dumps(result, indent=2, default=float), encoding="utf-8")
-    o = result["overall"]
-    print(f"RESULT {name} acc={o['accuracy']:.4f} prec={o['precision_macro']:.4f} rec={o['recall_macro']:.4f} "
-          f"f1={o['macro_f1']:.4f} mAP={o['mAP']:.4f} n={o['n']}", flush=True)
+    for tag, part in (("RESULT", result), ("TEST", result["test"])):
+        o = part["overall"]
+        print(f"{tag} {name} acc={o['accuracy']:.4f} prec={o['precision_macro']:.4f} rec={o['recall_macro']:.4f} "
+              f"f1={o['macro_f1']:.4f} mAP={o['mAP']:.4f} n={o['n']}", flush=True)
     (out / "DONE").touch()
 
 

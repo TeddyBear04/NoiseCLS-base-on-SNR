@@ -2,6 +2,11 @@
 
 `build_frcrn_cache` và `download_checkpoint` chép nguyên văn từ MLNC (scripts/run_kdmoe.py,
 scripts/load_pretrain.py), bỏ phần Drive/finetune của MLNC không dùng ở đây.
+
+Dựng riêng cache (vd. cho BEATs-BEATs bản FRCRN, student.nhat_dir trỏ vào đây), từ thư mục BEATs_CED_Small:
+
+    python -m scripts.frcrn_cache --dataset /marimo/dataset/mix-dataset            # train + validation + test
+    python -m scripts.frcrn_cache --dataset /marimo/dataset/mix-dataset --splits test
 """
 
 from __future__ import annotations
@@ -21,7 +26,7 @@ from src.model.frcrn import FRCRNSeparator
 from src.model.kdmoe import frcrn_snr_db
 
 ROOT = Path(__file__).resolve().parents[1]
-SPLITS = ("train", "validation")
+SPLITS = ("train", "validation", "test")  # test: chấm cuối trên test sạch (user 2026-11-28); không dùng để chọn
 CLIP_SECONDS = 4.0
 FRCRN_CACHE_DIR = ROOT / "output" / "frcrn_cache_fp32"
 PRETRAINED_DIR = ROOT / "pretrained"
@@ -137,3 +142,30 @@ def download_checkpoint(url: str, out_dir: Path = PRETRAINED_DIR) -> Path:
                 progress.update(len(chunk))
     partial.rename(destination)
     return destination
+
+
+def main() -> None:
+    import argparse
+    import os
+
+    parser = argparse.ArgumentParser(description="Dựng cache n_hat = FRCRN(mixture) fp32 + SNR FRCRN theo split")
+    parser.add_argument("--dataset", required=True, help="thư mục mix-dataset (manifest.csv, labels.txt, wav)")
+    parser.add_argument("--splits", nargs="+", default=list(SPLITS), choices=SPLITS)
+    parser.add_argument("--checkpoint", type=Path, default=ROOT / "model" / "frcrn_best.pt")
+    parser.add_argument("--frcrn-config", type=Path, default=ROOT / "config" / "frcrn.yaml")
+    parser.add_argument("--out", type=Path, default=FRCRN_CACHE_DIR)
+    parser.add_argument("--workers", type=int, default=8)
+    arguments = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+    os.environ["MLNC_MIXTURE_36L"] = arguments.dataset
+    from online_pipeline import load_frcrn  # import muộn: online_pipeline cũng import module này
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    separator = load_frcrn(arguments.frcrn_config, arguments.checkpoint, device)
+    splits = tuple(arguments.splits)
+    build_frcrn_cache(separator, device, logger, cache_dir=arguments.out, num_workers=arguments.workers, splits=splits)
+    build_frcrn_snr(logger, cache_dir=arguments.out, num_workers=arguments.workers, splits=splits)
+
+
+if __name__ == "__main__":
+    main()
